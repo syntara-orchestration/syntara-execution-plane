@@ -1,0 +1,97 @@
+services:
+  database:
+    image: ${POSTGRES_IMAGE:-quay.io/sclorg/postgresql-15-c9s}
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_USER: ${POSTGRESQL_USER:-admin}
+      POSTGRESQL_PASSWORD: ${POSTGRESQL_PASSWORD:-admin}
+      POSTGRESQL_DATABASE: postgres
+      POSTGRESQL_ADMIN_PASSWORD: ${POSTGRESQL_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ep_postgres_data:/var/lib/pgsql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U $${POSTGRESQL_USER:-admin} -d postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  database-init:
+    image: ${POSTGRES_IMAGE:-quay.io/sclorg/postgresql-15-c9s}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        psql -h database -U postgres -d postgres
+        -v ep_migrator_password="$${EP_DB_MIGRATOR_PASSWORD}"
+        -v ep_runtime_password="$${EP_DB_RUNTIME_PASSWORD}"
+        -f /scripts/create_database.sql
+    environment:
+      PGPASSWORD: ${POSTGRESQL_ADMIN_PASSWORD:-admin}
+      EP_DB_MIGRATOR_PASSWORD: ${EP_DB_MIGRATOR_PASSWORD:-ep-migrator}
+      EP_DB_RUNTIME_PASSWORD: ${EP_DB_RUNTIME_PASSWORD:-ep-runtime}
+    volumes:
+      - ./containers/postgres/create_database.sql:/scripts/create_database.sql:ro,z
+    depends_on:
+      database:
+        condition: service_healthy
+
+  migrate:
+    image: ${EP_IMAGE:-localhost/execution-plane:latest}
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: [alembic, -c, alembic.ini, upgrade, head]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://execution_plane_migrator:${EP_DB_MIGRATOR_PASSWORD:-ep-migrator}@database:5432/execution_plane
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+
+  api:
+    image: ${EP_IMAGE:-localhost/execution-plane:latest}
+    restart: unless-stopped
+    command: [execution-plane-api]
+    ports:
+      - "127.0.0.1:${EP_API_PORT:-8001}:8443"
+    environment:
+      EP_API_HOST: 0.0.0.0
+      EP_API_PORT: 8443
+      EP_API_TLS_CERT_PATH: /run/secrets/ep-api/tls.crt
+      EP_API_TLS_KEY_PATH: /run/secrets/ep-api/tls.key
+      EP_API_TLS_CLIENT_CA_PATH: /run/secrets/ep-api/ca.pem
+      EP_DATABASE_URL: postgresql+asyncpg://execution_plane_runtime:${EP_DB_RUNTIME_PASSWORD:-ep-runtime}@database:5432/execution_plane
+      EP_CREDENTIAL_ENCRYPTION_KEY: ${EP_CREDENTIAL_ENCRYPTION_KEY:?Set a base64url-encoded 32-byte EP key}
+      EP_AO_JWT_PUBLIC_KEY_PATH: /run/secrets/ao-jwt-public.pem
+      EP_AO_JWT_ISSUER: ${EP_AO_JWT_ISSUER:?Set the exact AO JWT issuer URL}
+      EP_AO_CLIENT_ID: ${EP_AO_CLIENT_ID:-syntara-orchestration}
+    volumes:
+      - ${EP_AO_JWT_PUBLIC_KEY_FILE:?Set path to AO's public JWT key on the host}:/run/secrets/ao-jwt-public.pem:ro,z
+      - ${EP_API_TLS_CERT_FILE:-../syntara/backend/.secrets/certs/execution-plane.crt}:/run/secrets/ep-api/tls.crt:ro,z
+      - ${EP_API_TLS_KEY_FILE:-../syntara/backend/.secrets/certs/execution-plane.key}:/run/secrets/ep-api/tls.key:ro,z
+      - ${EP_API_TLS_CLIENT_CA_FILE:-../syntara/backend/.secrets/certs/ca.pem}:/run/secrets/ep-api/ca.pem:ro,z
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python3, -c, "import ssl,urllib.request; c=ssl.create_default_context(cafile='/run/secrets/ep-api/ca.pem'); urllib.request.urlopen('https://localhost:8443/healthz/ready',context=c)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  worker:
+    image: ${EP_IMAGE:-localhost/execution-plane:latest}
+    restart: unless-stopped
+    command: [execution-plane-worker]
+    environment:
+      EP_DATABASE_URL: postgresql+asyncpg://execution_plane_runtime:${EP_DB_RUNTIME_PASSWORD:-ep-runtime}@database:5432/execution_plane
+      EP_CREDENTIAL_ENCRYPTION_KEY: ${EP_CREDENTIAL_ENCRYPTION_KEY:?Set a base64url-encoded 32-byte EP key}
+      EP_COMPLETION_CALLBACK_URL: ${EP_COMPLETION_CALLBACK_URL:-}
+      EP_WORKLOAD_RUNNER_IMAGE: ${EP_WORKLOAD_RUNNER_IMAGE:-}
+      EP_WORKLOAD_ALLOWED_EGRESS_CIDRS: ${EP_WORKLOAD_ALLOWED_EGRESS_CIDRS:-[]}
+      EP_WORKLOAD_FORBIDDEN_EGRESS_CIDRS: ${EP_WORKLOAD_FORBIDDEN_EGRESS_CIDRS:-[]}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  ep_postgres_data:

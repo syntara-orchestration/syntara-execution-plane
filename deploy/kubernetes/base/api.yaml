@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: execution-plane-api
+  labels:
+    app.kubernetes.io/name: execution-plane
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    app.kubernetes.io/name: execution-plane
+    app.kubernetes.io/component: api
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: execution-plane-api
+  labels:
+    app.kubernetes.io/name: execution-plane
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: execution-plane
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: execution-plane
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/syntara-orchestration/execution-plane:latest
+          imagePullPolicy: IfNotPresent
+          command: [execution-plane-api]
+          ports:
+            - name: https
+              containerPort: 8443
+          env:
+            - name: EP_API_HOST
+              value: 0.0.0.0
+            - name: EP_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: execution-plane-db
+                  key: runtime-url
+            - name: EP_CREDENTIAL_ENCRYPTION_KEY_PATH
+              value: /run/secrets/ep/credential-encryption-key
+            - name: EP_AO_JWT_PUBLIC_KEY_PATH
+              value: /run/secrets/ao/jwt-public.pem
+            - name: EP_AO_JWT_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: execution-plane-config
+                  key: ao-jwt-issuer
+            - name: EP_AO_CLIENT_ID
+              value: syntara-orchestration
+            - name: EP_API_PORT
+              value: "8443"
+            - name: EP_API_TLS_CERT_PATH
+              value: /run/secrets/server/tls.crt
+            - name: EP_API_TLS_KEY_PATH
+              value: /run/secrets/server/tls.key
+            - name: EP_API_TLS_CLIENT_CA_PATH
+              value: /run/secrets/ao/ca.pem
+          volumeMounts:
+            - name: ep-key
+              mountPath: /run/secrets/ep
+              readOnly: true
+            - name: ao-auth
+              mountPath: /run/secrets/ao
+              readOnly: true
+            - name: server-tls
+              mountPath: /run/secrets/server
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: https
+              scheme: HTTPS
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: https
+              scheme: HTTPS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: ep-key
+          secret:
+            secretName: execution-plane-keys
+            items:
+              - key: credential-encryption-key
+                path: credential-encryption-key
+        - name: ao-auth
+          secret:
+            secretName: execution-plane-ao-auth
+            items:
+            - key: jwt-public.pem
+              path: jwt-public.pem
+            - key: ca.pem
+              path: ca.pem
+        - name: server-tls
+          secret:
+            secretName: execution-plane-api-tls
