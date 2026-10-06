@@ -88,7 +88,7 @@ Per-integration Kubernetes API trust roots are stored encrypted in EP.
 The target-cluster service account needs `create/get/delete` on Jobs, `list` on
 Pods, `get` on `pods/portforward`, and `create/get/list/patch/delete` on
 NetworkPolicies. It does not need workload Secret, Pod-log, or Pod-exec
-permissions.
+permissions. That Role is `deploy/kubernetes/execution-target/rbac.yaml`.
 `EP_WORKLOAD_ALLOWED_EGRESS_CIDRS` is an operator-reviewed JSON list of
 destinations the workload may reach; without it, workloads can resolve DNS but
 have no general egress. If a whole IP family is allowed, also set
@@ -100,9 +100,10 @@ API trust roots and submitted invocation payloads are encrypted at rest by EP.
 Local helper scripts under `tools/` cover the rest of a first bring-up. EP does
 not issue tokens; `tools/generate_jwt_for_ep.py` signs an AO service JWT with the
 local or sibling Syntara ES256 key. Submit requires a `project_id` claim.
-`tools/deploy_kind_execution_target.py` creates a kind cluster, installs workload
-RBAC, and registers it through a cluster binding. `tools/submit_work_item.py`
-posts a script work item to the local API.
+`tools/deploy_kind_execution_target.py` creates a kind cluster, applies
+`deploy/kubernetes/execution-target/rbac.yaml`, and registers it through a
+cluster binding. `tools/submit_work_item.py` posts a script work item to the
+local API.
 
 ```bash
 make setup
@@ -125,7 +126,8 @@ Makefile aliases: `make generate-token`, `make kind-target`, and `make submit-wo
 The Kubernetes base manifests are in `deploy/kubernetes/base`; provide the
 database URLs, AES key, AO JWT verification key, callback mTLS material, server
 TLS certificate, and AO callback/JWT issuer URLs as Kubernetes Secrets and a
-ConfigMap before applying them. AO supplies the node image reference in the
+ConfigMap before applying them. Target-cluster dispatcher RBAC is
+`deploy/kubernetes/execution-target/rbac.yaml`. AO supplies the node image reference in the
 request and must pin it by digest. EP applies a NetworkPolicy before creating the
 Job; it denies ingress and permits only DNS plus configured egress CIDRs. Verify
 that the target cluster's CNI enforces NetworkPolicy before enabling script

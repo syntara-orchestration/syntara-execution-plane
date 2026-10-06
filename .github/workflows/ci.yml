@@ -118,15 +118,16 @@ jobs:
       - uses: ./.github/actions/ep-setup
 
       # Stand up a throwaway kind cluster. The dispatcher ServiceAccount and RBAC
-      # in execution-plane-init.yaml grant the bearer token the permissions the
-      # vanilla-k8s transport needs (pod list, portforward, job CRUD).
+      # in deploy/kubernetes/execution-target/rbac.yaml grant the bearer token
+      # the permissions the vanilla-k8s transport needs (pod list, portforward,
+      # job CRUD).
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
           cluster_name: integration-test
 
       - name: Provision dispatcher ServiceAccount and RBAC
-        run: kubectl apply -f docs/feature-branch-assets/execution-plane-init.yaml
+        run: kubectl apply -f deploy/kubernetes/execution-target/rbac.yaml
 
       # The transport runs node pods with imagePullPolicy: IfNotPresent. Load the
       # image onto the kind node up front so the pod starts immediately rather

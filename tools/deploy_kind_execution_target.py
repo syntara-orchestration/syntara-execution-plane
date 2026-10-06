@@ -8,7 +8,7 @@ Cluster plus a default vanilla-Kubernetes ExecutionTarget.
 This script:
 
 1. Creates a kind cluster (or reuses one with the same name).
-2. Installs a workload namespace, ServiceAccount, and RBAC.
+2. Applies deploy/kubernetes/execution-target/rbac.yaml (syntara-dispatcher).
 3. Attaches the running EP worker container to the kind network so the
    in-cluster API IP is reachable from podman-compose.
 4. Upserts the cluster binding against the local EP API.
@@ -41,58 +41,19 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from execution_plane.work_item_client import ep_service_token
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CLUSTER_NAME = "ep-kind"
-DEFAULT_NAMESPACE = "execution"
+DEFAULT_NAMESPACE = "execution-plane"
+DISPATCHER_SA = "syntara-dispatcher"
 DEFAULT_BINDING_NAME = "kind-local"
 DEFAULT_API_URL = "https://127.0.0.1:8001"
 DEFAULT_WAIT_SECONDS = 90
 KIND_NETWORK = "kind"
 CONTROL_PLANE_PORT = 6443
 EP_CA_PATH = PROJECT_ROOT / ".secrets" / "certs" / "ca.pem"
-
-WORKLOAD_RBAC = """
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {namespace}
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: execution-plane
-  namespace: {namespace}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: execution-plane
-  namespace: {namespace}
-rules:
-  - apiGroups: [""]
-    resources: ["secrets", "pods", "pods/log"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: execution-plane
-  namespace: {namespace}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: execution-plane
-subjects:
-  - kind: ServiceAccount
-    name: execution-plane
-    namespace: {namespace}
-"""
+WORKLOAD_RBAC_PATH = PROJECT_ROOT / "deploy" / "kubernetes" / "execution-target" / "rbac.yaml"
 
 
 def _run(args: list[str], *, input_text: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -160,9 +121,15 @@ def kubectl(
 
 
 def apply_workload_rbac(kubeconfig: Path, namespace: str) -> None:
-    """Install the namespace and the EP worker's in-cluster permissions."""
-    print(f"[INFO] Applying workload RBAC in namespace {namespace}")
-    kubectl(kubeconfig, "apply", "-f", "-", input_text=WORKLOAD_RBAC.format(namespace=namespace))
+    """Install the namespace and the dispatcher Role from the shared target manifest."""
+    if not WORKLOAD_RBAC_PATH.is_file():
+        msg = f"Workload RBAC manifest not found: {WORKLOAD_RBAC_PATH}"
+        raise FileNotFoundError(msg)
+    print(f"[INFO] Applying {WORKLOAD_RBAC_PATH} in namespace {namespace}")
+    manifest = WORKLOAD_RBAC_PATH.read_text()
+    if namespace != DEFAULT_NAMESPACE:
+        manifest = manifest.replace(DEFAULT_NAMESPACE, namespace)
+    kubectl(kubeconfig, "apply", "-f", "-", input_text=manifest)
 
 
 def service_account_token(kubeconfig: Path, namespace: str) -> str:
@@ -171,7 +138,7 @@ def service_account_token(kubeconfig: Path, namespace: str) -> str:
         kubeconfig,
         "create",
         "token",
-        "execution-plane",
+        DISPATCHER_SA,
         "--namespace",
         namespace,
         "--duration",
@@ -181,14 +148,15 @@ def service_account_token(kubeconfig: Path, namespace: str) -> str:
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
     print("[INFO] kubectl create token failed; falling back to a bound service-account secret")
+    secret_name = f"{DISPATCHER_SA}-token"
     secret_manifest = f"""
 apiVersion: v1
 kind: Secret
 metadata:
-  name: execution-plane-token
+  name: {secret_name}
   namespace: {namespace}
   annotations:
-    kubernetes.io/service-account.name: execution-plane
+    kubernetes.io/service-account.name: {DISPATCHER_SA}
 type: kubernetes.io/service-account-token
 """
     kubectl(kubeconfig, "apply", "-f", "-", input_text=secret_manifest)
@@ -197,7 +165,7 @@ type: kubernetes.io/service-account-token
             kubeconfig,
             "get",
             "secret",
-            "execution-plane-token",
+            secret_name,
             "--namespace",
             namespace,
             "-o",
@@ -268,16 +236,6 @@ def connect_worker_to_kind_network() -> str | None:
     else:
         print(f"[WARN] Could not connect {worker} to {KIND_NETWORK}: {connected.stderr.strip()}")
     return worker
-
-
-def ep_service_token() -> str:
-    """Mint an AO service JWT with cluster-binding write scope."""
-    result = _run([sys.executable, str(PROJECT_ROOT / "tools" / "generate_jwt_for_ep.py")])
-    token = result.stdout.strip()
-    if not token:
-        msg = "generate_jwt_for_ep.py produced an empty token"
-        raise RuntimeError(msg)
-    return token
 
 
 def _ssl_context() -> ssl.SSLContext:
@@ -445,7 +403,11 @@ def main() -> int:
         epilog=__doc__,
     )
     parser.add_argument("--cluster-name", default=DEFAULT_CLUSTER_NAME)
-    parser.add_argument("--namespace", default=DEFAULT_NAMESPACE)
+    parser.add_argument(
+        "--namespace",
+        default=DEFAULT_NAMESPACE,
+        help="Workload namespace (rewritten into the shared RBAC manifest when not the default)",
+    )
     parser.add_argument("--binding-name", default=DEFAULT_BINDING_NAME)
     parser.add_argument("--api-url", default=os.environ.get("EP_API_URL", DEFAULT_API_URL))
     parser.add_argument("--wait-seconds", type=int, default=DEFAULT_WAIT_SECONDS)

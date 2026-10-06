@@ -1,0 +1,560 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  annotations:
+    build.appstudio.openshift.io/repo: "{{source_url}}?rev={{revision}}"
+    build.appstudio.redhat.com/commit_sha: "{{revision}}"
+    build.appstudio.redhat.com/pull_request_number: "{{pull_request_number}}"
+    build.appstudio.redhat.com/target_branch: "{{target_branch}}"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+    pipelinesascode.tekton.dev/max-keep-runs: "2"
+    pipelinesascode.tekton.dev/on-cel-expression: >-
+      event == "pull_request" && target_branch == "devel"
+  creationTimestamp: null
+  labels:
+    appstudio.openshift.io/application: ansible-automation-orchestrator-devel
+    appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-devel
+    pipelines.appstudio.openshift.io/type: test
+  name: automation-orchestrator-ep-kind-prepare-devel-pull-request
+  namespace: nexus-tenant
+spec:
+  timeouts:
+    pipeline: "6h"
+    tasks: "5h"
+    finally: "1h"
+  params:
+    - name: git-url
+      value: "{{source_url}}"
+    - name: pipeline-github-org
+      value: "{{repo_owner}}"
+    - name: pipeline-github-repo
+      value: "{{repo_name}}"
+    - name: pipeline-github-pr-revision
+      value: "{{revision}}"
+    - name: pipeline-github-pr-number
+      value: "{{pull_request_number}}"
+    - name: aap-dev-revision
+      value: fix/ao-overlay-execution-plane
+    - name: ao-revision
+      value: devel
+  taskRunTemplate:
+    serviceAccountName: konflux-integration-runner
+  pipelineSpec:
+    description: |
+      Prototype: reuse the ao-api-tests Kind cluster (provision + deploy-ao at
+      ao-revision, not this Execution Plane PR). Copy this Execution Plane
+      revision onto the Kind VM before deploy-ao so aap-dev can build the ep
+      image, then prepare namespace execution-plane and run the hello-world
+      demo. Does not run API tests.
+
+      Promote prepare-execution-plane into aap-konflux-pipelines when this path
+      is proven; then restore a bundle pipelineRef.
+    params:
+      - name: git-url
+        type: string
+      - name: pipeline-github-org
+        type: string
+      - name: pipeline-github-repo
+        type: string
+      - name: pipeline-github-pr-revision
+        type: string
+      - name: pipeline-github-pr-number
+        type: string
+      - name: oci-container-repo
+        type: string
+        default: "quay.io/aap-ci/pipeline-artifacts/$(params.pipeline-github-org)/$(params.pipeline-github-repo)"
+      - name: aap-dev-git-url
+        type: string
+        default: https://github.com/ansible/aap-dev.git
+      - name: aap-dev-revision
+        type: string
+        default: main
+      - name: ao-revision
+        type: string
+        description: >
+          Branch, tag, or SHA of syntara-orchestration/syntara for deploy-ao.
+          Independent of this Execution Plane pull request.
+        default: devel
+      - name: ao-pr-number
+        type: string
+        description: >
+          Optional syntara PR number so deploy-ao can fetch a fork head SHA.
+          Leave empty to check out ao-revision from the base syntara repo.
+        default: ""
+      - name: oci-secret
+        type: string
+        default: quay-aap-ci-pipeline-artifacts-publisher
+      - name: mapt-aws-secret
+        type: string
+        default: aws-mapt-credentials
+      - name: registry-credentials-secret
+        type: string
+        default: aap-registry-credentials
+      - name: bundle-secret-name
+        type: string
+        default: quay-aap-ci-viewer
+      - name: aap-dev-git-auth-secret
+        type: string
+        default: github-aap-pde-ci-bot-credentials-ansible
+      - name: ao-github-app-secret
+        type: string
+        default: orchestrator-ci-for-konflux-gh-app
+      - name: ao-backend-replicas
+        type: string
+        default: "2"
+      - name: mapt-provision-tags
+        type: string
+        default: "github_repo=$(params.pipeline-github-org)/$(params.pipeline-github-repo),managed_by=konflux,github_pr_number=$(params.pipeline-github-pr-number)"
+      - name: mapt-provision-arch
+        type: string
+        default: ""
+      - name: mapt-provision-cpus
+        type: string
+        default: ""
+      - name: mapt-provision-memory
+        type: string
+        default: ""
+      - name: mapt-provision-compute-sizes
+        type: string
+        default: "m6a.4xlarge,m6i.4xlarge,m5a.4xlarge,m5.4xlarge"
+      - name: mapt-provision-nested-virt
+        type: string
+        default: "false"
+      - name: mapt-provision-spot
+        type: string
+        default: "false"
+      - name: mapt-provision-spot-increase-rate
+        type: string
+        default: "80"
+      - name: mapt-provision-spot-eviction-tolerance
+        type: string
+        default: "lowest"
+      - name: mapt-provision-kind-k8s-version
+        type: string
+        default: "v1.32"
+      - name: mapt-provision-debug
+        type: string
+        default: "false"
+      - name: mapt-deprovision-debug
+        type: string
+        default: "false"
+      - name: mapt-deprovision-force-destroy
+        type: string
+        default: "true"
+      - name: mapt-provision-extra-port-mappings
+        type: string
+        default: >-
+          '[{\"containerPort\":30001,\"hostPort\":30001,\"protocol\":\"TCP\"}]'
+    tasks:
+      - name: provision-kind-cluster
+        taskRef:
+          resolver: git
+          params:
+            - name: url
+              value: https://github.com/konflux-ci/tekton-integration-catalog.git
+            - name: revision
+              value: 7498aca5a87a0a71e062386c211b2dc1a5cb26f5
+            - name: pathInRepo
+              value: tasks/mapt-oci/kind-aws-spot/provision/0.2/kind-aws-provision.yaml
+        params:
+          - name: secret-aws-credentials
+            value: $(params.mapt-aws-secret)
+          - name: cluster-access-secret-name
+            value: kubeconfig-$(context.pipelineRun.name)
+          - name: id
+            value: $(context.pipelineRun.name)
+          - name: ownerKind
+            value: PipelineRun
+          - name: ownerName
+            value: $(context.pipelineRun.name)
+          - name: ownerUid
+            value: $(context.pipelineRun.uid)
+          - name: arch
+            value: $(params.mapt-provision-arch)
+          - name: cpus
+            value: $(params.mapt-provision-cpus)
+          - name: memory
+            value: $(params.mapt-provision-memory)
+          - name: compute-sizes
+            value: $(params.mapt-provision-compute-sizes)
+          - name: nested-virt
+            value: $(params.mapt-provision-nested-virt)
+          - name: spot
+            value: $(params.mapt-provision-spot)
+          - name: spot-increase-rate
+            value: $(params.mapt-provision-spot-increase-rate)
+          - name: spot-eviction-tolerance
+            value: $(params.mapt-provision-spot-eviction-tolerance)
+          - name: version
+            value: $(params.mapt-provision-kind-k8s-version)
+          - name: tags
+            value: $(params.mapt-provision-tags)
+          - name: debug
+            value: $(params.mapt-provision-debug)
+          - name: oci-ref
+            value: $(params.oci-container-repo):$(context.pipelineRun.name)-provision-kind-cluster
+          - name: oci-credentials
+            value: $(params.oci-secret)
+          - name: ssh-credentials-secret-name
+            value: ssh-credentials-$(context.pipelineRun.name)
+          - name: extra-port-mappings
+            value: $(params.mapt-provision-extra-port-mappings)
+
+      - name: stage-ep-source
+        runAfter:
+          - provision-kind-cluster
+        timeout: "10m"
+        params:
+          - name: ssh-credentials-secret
+            value: ssh-credentials-$(context.pipelineRun.name)
+          - name: ao-github-app-secret
+            value: $(params.ao-github-app-secret)
+          - name: pipeline-github-org
+            value: $(params.pipeline-github-org)
+          - name: pipeline-github-repo
+            value: $(params.pipeline-github-repo)
+          - name: pipeline-github-pr-revision
+            value: $(params.pipeline-github-pr-revision)
+          - name: pipeline-github-pr-number
+            value: $(params.pipeline-github-pr-number)
+        taskSpec:
+          description: |
+            Copy this Execution Plane revision to $HOME/syntara-execution-plane
+            on the Kind VM before deploy-ao. aap-dev has no published ep nightly
+            and builds localhost:5001/<ns>/ep from that checkout.
+          params:
+            - name: ssh-credentials-secret
+              type: string
+            - name: ao-github-app-secret
+              type: string
+            - name: pipeline-github-org
+              type: string
+            - name: pipeline-github-repo
+              type: string
+            - name: pipeline-github-pr-revision
+              type: string
+            - name: pipeline-github-pr-number
+              type: string
+          volumes:
+            - name: ssh-credentials-volume
+              secret:
+                secretName: $(params.ssh-credentials-secret)
+            - name: nexus-github-app-volume
+              secret:
+                secretName: $(params.ao-github-app-secret)
+          steps:
+            - name: stage
+              image: quay.io/aap-ci/tekton-catalog/task-runner/ansible:0.1@sha256:6625997cac261e12aa0437ff2b0b0aa0275a4fa8ff3f833c21f8f029880d5c88
+              volumeMounts:
+                - name: ssh-credentials-volume
+                  mountPath: /credentials/ssh
+                - name: nexus-github-app-volume
+                  mountPath: /credentials/nexus-github-app
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                SSH_KEY=/tmp/id_rsa
+                cp /credentials/ssh/id_rsa "${SSH_KEY}"
+                chmod 600 "${SSH_KEY}"
+
+                SSH_HOST=$(cat /credentials/ssh/host)
+                SSH_USER=$(cat /credentials/ssh/username 2>/dev/null || echo "ec2-user")
+                SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+                GH_APP_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-id)
+                GH_INSTALL_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-install-id)
+                GH_PRIVATE_KEY=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-private-key)
+
+                KEY_FILE=$(mktemp)
+                chmod 600 "${KEY_FILE}"
+                printf '%s' "${GH_PRIVATE_KEY}" > "${KEY_FILE}"
+
+                NOW=$(date +%s)
+                HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+                PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW - 60))" "$((NOW + 540))" "${GH_APP_ID}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+                SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" | openssl dgst -sha256 -sign "${KEY_FILE}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+                rm -f "${KEY_FILE}"
+
+                JWT="${HEADER}.${PAYLOAD}.${SIG}"
+                GH_TOKEN=$(curl -sS -X POST \
+                  -H "Authorization: Bearer ${JWT}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/app/installations/${GH_INSTALL_ID}/access_tokens" | jq -r '.token')
+                unset JWT GH_PRIVATE_KEY
+
+                if [ -z "${GH_TOKEN}" ] || [ "${GH_TOKEN}" = "null" ]; then
+                  echo "ERROR: Failed to obtain GitHub App installation token" >&2
+                  exit 1
+                fi
+
+                EP_DIR=/tmp/syntara-execution-plane
+                rm -rf "${EP_DIR}"
+                echo "=== Cloning execution-plane at $(params.pipeline-github-pr-revision) ==="
+                git clone "https://x-access-token:${GH_TOKEN}@github.com/$(params.pipeline-github-org)/$(params.pipeline-github-repo).git" "${EP_DIR}"
+                if [ -n "$(params.pipeline-github-pr-number)" ]; then
+                  git -C "${EP_DIR}" fetch origin "refs/pull/$(params.pipeline-github-pr-number)/head"
+                fi
+                git -C "${EP_DIR}" checkout "$(params.pipeline-github-pr-revision)"
+                unset GH_TOKEN
+
+                echo "=== Staging execution-plane source at ${SSH_USER}@${SSH_HOST}:\$HOME/syntara-execution-plane ==="
+                ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+                  "rm -rf \$HOME/syntara-execution-plane && mkdir -p \$HOME/syntara-execution-plane"
+                tar -C "${EP_DIR}" --exclude='.git' -czf - . \
+                  | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+                    "tar -xzf - -C \$HOME/syntara-execution-plane"
+                ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+                  "test -f \$HOME/syntara-execution-plane/Containerfile"
+
+      - name: deploy-ao
+        runAfter:
+          - stage-ep-source
+        params:
+          - name: cluster-access-secret
+            value: kubeconfig-$(context.pipelineRun.name)
+          - name: ssh-credentials-secret
+            value: ssh-credentials-$(context.pipelineRun.name)
+          - name: registry-credentials-secret
+            value: $(params.registry-credentials-secret)
+          - name: aap-dev-git-url
+            value: $(params.aap-dev-git-url)
+          - name: aap-dev-revision
+            value: $(params.aap-dev-revision)
+          - name: aap-dev-git-auth-secret
+            value: $(params.aap-dev-git-auth-secret)
+          - name: ao-github-app-secret
+            value: $(params.ao-github-app-secret)
+          - name: ao-revision
+            value: $(params.ao-revision)
+          - name: ao-pr-number
+            value: $(params.ao-pr-number)
+          - name: ao-backend-replicas
+            value: $(params.ao-backend-replicas)
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: deploy-ao-using-aap-dev
+            - name: bundle
+              value: quay.io/aap-ci/tekton-catalog/task/deploy-ao-using-aap-dev:0.1@sha256:0db7eac3406f8aefedb810c8d545d868b47b4214b90cd848b7def9e8cd26df68
+            - name: kind
+              value: task
+            - name: secret
+              value: $(params.bundle-secret-name)
+
+      - name: prepare-execution-plane
+        runAfter:
+          - deploy-ao
+        timeout: "25m"
+        params:
+          - name: ssh-credentials-secret
+            value: ssh-credentials-$(context.pipelineRun.name)
+        taskSpec:
+          description: |
+            Run docs/feature-branch-assets/konflux-prepare-execution-plane.sh
+            from the Execution Plane checkout staged before deploy-ao. Applies
+            dispatcher RBAC, deploys the standalone EP API/worker from the
+            aap-dev ep image (no AO operator change), registers the Kind
+            cluster through the EP API, pre-pulls the script-node image, and
+            enables script dispatch on myao-worker.
+          params:
+            - name: ssh-credentials-secret
+              type: string
+          results:
+            - name: namespace
+              description: Kubernetes namespace prepared for cold-start pods.
+            - name: cluster
+              description: Kind cluster name that hosts AO and the new namespace.
+          volumes:
+            - name: ssh-credentials-volume
+              secret:
+                secretName: $(params.ssh-credentials-secret)
+          steps:
+            - name: prepare
+              image: quay.io/aap-ci/tekton-catalog/task-runner/ansible:0.1@sha256:6625997cac261e12aa0437ff2b0b0aa0275a4fa8ff3f833c21f8f029880d5c88
+              volumeMounts:
+                - name: ssh-credentials-volume
+                  mountPath: /credentials/ssh
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                SSH_KEY=/tmp/id_rsa
+                cp /credentials/ssh/id_rsa "${SSH_KEY}"
+                chmod 600 "${SSH_KEY}"
+
+                SSH_HOST=$(cat /credentials/ssh/host)
+                SSH_USER=$(cat /credentials/ssh/username 2>/dev/null || echo "ec2-user")
+                SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+                PREPARE_SCRIPT="docs/feature-branch-assets/konflux-prepare-execution-plane.sh"
+                echo "=== Preparing execution-plane namespace on Kind 27-next-ao-operator ==="
+                ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+                  set -euo pipefail
+                  export KUBECONFIG=\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig
+                  bash \$HOME/syntara-execution-plane/${PREPARE_SCRIPT}
+                "
+
+                printf '%s' execution-plane > "$(results.namespace.path)"
+                printf '%s' 27-next-ao-operator > "$(results.cluster.path)"
+
+      - name: run-hello-world-demo
+        runAfter:
+          - prepare-execution-plane
+        timeout: "15m"
+        params:
+          - name: ssh-credentials-secret
+            value: ssh-credentials-$(context.pipelineRun.name)
+        taskSpec:
+          description: |
+            Run run-hello-world-demo.sh against the AO API on the Kind cluster
+            prepared by prepare-execution-plane.
+          params:
+            - name: ssh-credentials-secret
+              type: string
+          volumes:
+            - name: ssh-credentials-volume
+              secret:
+                secretName: $(params.ssh-credentials-secret)
+          steps:
+            - name: run-demo
+              image: quay.io/aap-ci/tekton-catalog/task-runner/ansible:0.1@sha256:6625997cac261e12aa0437ff2b0b0aa0275a4fa8ff3f833c21f8f029880d5c88
+              volumeMounts:
+                - name: ssh-credentials-volume
+                  mountPath: /credentials/ssh
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                SSH_KEY=/tmp/id_rsa
+                cp /credentials/ssh/id_rsa "${SSH_KEY}"
+                chmod 600 "${SSH_KEY}"
+
+                SSH_HOST=$(cat /credentials/ssh/host)
+                SSH_USER=$(cat /credentials/ssh/username 2>/dev/null || echo "ec2-user")
+                SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+                echo "=== Running hello-world demo on Kind 27-next-ao-operator ==="
+                ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+                  set -euo pipefail
+                  export KUBECONFIG=\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig
+                  DEMO_SCRIPT=\$HOME/syntara-execution-plane/docs/feature-branch-assets/konflux-run-hello-world-demo.sh
+                  if [ ! -f \"\${DEMO_SCRIPT}\" ]; then
+                    echo \"ERROR: \${DEMO_SCRIPT} missing; prepare-execution-plane must check out Execution Plane first\" >&2
+                    exit 1
+                  fi
+                  bash \"\${DEMO_SCRIPT}\"
+                "
+
+    finally:
+      - name: collect-kubernetes-logs-on-failure
+        when:
+          - input: $(tasks.status)
+            operator: in
+            values: ["Failed"]
+        params:
+          - name: ssh-credentials-secret
+            value: ssh-credentials-$(context.pipelineRun.name)
+        taskSpec:
+          params:
+            - name: ssh-credentials-secret
+              type: string
+          volumes:
+            - name: ssh-credentials-volume
+              secret:
+                secretName: $(params.ssh-credentials-secret)
+          steps:
+            - name: collect-logs
+              image: quay.io/aap-ci/tekton-catalog/task-runner/ansible:0.1@sha256:6625997cac261e12aa0437ff2b0b0aa0275a4fa8ff3f833c21f8f029880d5c88
+              volumeMounts:
+                - name: ssh-credentials-volume
+                  mountPath: /credentials/ssh
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                SSH_KEY=/tmp/id_rsa
+                cp /credentials/ssh/id_rsa "${SSH_KEY}"
+                chmod 600 "${SSH_KEY}"
+
+                SSH_HOST=$(cat /credentials/ssh/host 2>/dev/null || echo "")
+                SSH_USER=$(cat /credentials/ssh/username 2>/dev/null || echo "ec2-user")
+
+                if [ -z "${SSH_HOST}" ]; then
+                  echo "No SSH host found in secret — cluster was not provisioned"
+                  exit 0
+                fi
+
+                SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=30)
+
+                echo "=== Collecting AO and execution-plane logs from ${SSH_HOST} ==="
+                ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+                  KUBECONFIG_PATH=\"\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig\"
+                  if [ ! -f \"\${KUBECONFIG_PATH}\" ]; then
+                    echo 'KUBECONFIG not found — AO was not deployed'
+                    exit 0
+                  fi
+                  export KUBECONFIG=\"\${KUBECONFIG_PATH}\"
+
+                  echo '=== Namespaces ==='
+                  kubectl get ns 2>&1 || true
+                  echo ''
+
+                  echo '=== execution-plane ==='
+                  kubectl get all,sa,role,rolebinding -n execution-plane -o wide 2>&1 || true
+                  echo ''
+
+                  echo '=== execution-plane-worker logs ==='
+                  kubectl logs -n execution-plane deploy/execution-plane-worker --tail=200 2>&1 || true
+                  echo ''
+
+                  echo '=== execution-plane pod describe ==='
+                  kubectl describe pods -n execution-plane 2>&1 || true
+                  echo ''
+
+                  echo '=== myao-worker script-node env ==='
+                  kubectl set env deploy/myao-worker -n aap27-next --list 2>&1 | grep -E 'APP_SCRIPT_NODES_ENABLED|APP_NODE_CONTAINER_IMAGES' || true
+                  echo ''
+
+                  echo '=== myao-worker logs ==='
+                  kubectl logs -n aap27-next deploy/myao-worker --tail=80 2>&1 || true
+                  echo ''
+
+                  echo '=== Pod status (aap27-next) ==='
+                  kubectl get pods -n aap27-next -o wide 2>&1 || true
+                  echo ''
+
+                  echo '=== Recent events ==='
+                  kubectl get events -A --sort-by=.lastTimestamp 2>&1 | tail -80 || true
+                " || echo "SSH connection failed — VM may be unreachable or already deprovisioned"
+
+      - name: deprovision-kind-cluster
+        taskRef:
+          resolver: git
+          params:
+            - name: url
+              value: https://github.com/konflux-ci/tekton-integration-catalog.git
+            - name: revision
+              value: 7498aca5a87a0a71e062386c211b2dc1a5cb26f5
+            - name: pathInRepo
+              value: tasks/mapt-oci/kind-aws-spot/deprovision/0.1/kind-aws-deprovision.yaml
+        params:
+          - name: secret-aws-credentials
+            value: $(params.mapt-aws-secret)
+          - name: id
+            value: $(context.pipelineRun.name)
+          - name: ownerName
+            value: $(context.pipelineRun.name)
+          - name: cluster-access-secret
+            value: kubeconfig-$(context.pipelineRun.name)
+          - name: oci-container
+            value: "$(params.oci-container-repo):$(context.pipelineRun.name)-deprovision-kind-cluster"
+          - name: oci-credentials
+            value: $(params.oci-secret)
+          - name: debug
+            value: $(params.mapt-deprovision-debug)
+          - name: force-destroy
+            value: $(params.mapt-deprovision-force-destroy)
