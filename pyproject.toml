@@ -79,6 +79,7 @@ ignore = ["D203", "D213", "COM812", "PLR0913", "TRY300", "FIX002"]
     "S603", "S607",
 ]
 "**/__init__.py" = ["F401", "D104"]
+"tools/**/*.py" = ["T201", "S404", "S603", "S607"]
 
 [[tool.mypy.overrides]]
 module = ["execution_plane.node_protocol.node_pb2", "execution_plane.node_protocol.node_pb2_grpc"]

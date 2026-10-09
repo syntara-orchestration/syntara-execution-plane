@@ -97,6 +97,31 @@ database address ranges that must remain unreachable. Validate enforcement with
 the target cluster's CNI before enabling workloads. Per-integration Kubernetes
 API trust roots and submitted invocation payloads are encrypted at rest by EP.
 
+Local helper scripts under `tools/` cover the rest of a first bring-up. EP does
+not issue tokens; `tools/generate_jwt_for_ep.py` signs an AO service JWT with the
+local or sibling Syntara ES256 key. Submit requires a `project_id` claim.
+`tools/deploy_kind_execution_target.py` creates a kind cluster, installs workload
+RBAC, and registers it through a cluster binding. `tools/submit_work_item.py`
+posts a script work item to the local API.
+
+```bash
+make setup
+uvx podman-compose up --build -d
+
+# Service token for curl. Submit needs --project-id.
+uv run python tools/generate_jwt_for_ep.py
+uv run python tools/generate_jwt_for_ep.py --project-id 00000000-0000-0000-0000-000000000001
+
+# Kind cluster + default ExecutionTarget (needs kind and kubectl)
+uv run python tools/deploy_kind_execution_target.py
+
+# Submit a script work item; --wait polls until it is terminal
+uv run python tools/submit_work_item.py
+uv run python tools/submit_work_item.py --language bash --code 'echo hello' --wait
+```
+
+Makefile aliases: `make generate-token`, `make kind-target`, and `make submit-work`.
+
 The Kubernetes base manifests are in `deploy/kubernetes/base`; provide the
 database URLs, AES key, AO JWT verification key, callback mTLS material, server
 TLS certificate, and AO callback/JWT issuer URLs as Kubernetes Secrets and a

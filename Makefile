@@ -1,4 +1,4 @@
-.PHONY: install test test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down
+.PHONY: install test test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target submit-work
 
 install:
 	uv sync --locked --all-groups
@@ -40,3 +40,12 @@ compose-up: setup
 
 compose-down:
 	uvx podman-compose -f compose.yaml down
+
+generate-token:
+	uv run python tools/generate_jwt_for_ep.py
+
+kind-target:
+	uv run python tools/deploy_kind_execution_target.py
+
+submit-work:
+	uv run python tools/submit_work_item.py
