@@ -21,7 +21,6 @@ from execution_plane.api.schemas import (
     ClusterBindingRead,
     ClusterBindingUpsert,
     ExecutionTargetRead,
-    WorkItemCancelRequest,
     WorkItemRead,
     WorkItemSubmit,
 )
@@ -30,7 +29,6 @@ from execution_plane.execution_target.execution_target_registry import Execution
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.models.cluster_binding import ClusterBinding
 from execution_plane.work_store import (
-    IdempotencyConflictError,
     WorkItemNotFoundError,
     WorkStore,
 )
@@ -93,21 +91,11 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     ) -> WorkItemRead:
         store = WorkStore.from_engine(request.app.state.ep_engine)
         payload = {"workload_type": submission.workload_type, **submission.payload}
-        if identity.project_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Project scope is required for submission",
-            )
-        try:
-            item = await store.dispatch(
-                client_id=identity.client_id,
-                project_id=identity.project_id,
-                request_id=submission.request_id,
-                work_correlation_id=submission.work_correlation_id,
-                payload=payload,
-            )
-        except IdempotencyConflictError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        item = await store.dispatch(
+            client_id=identity.client_id,
+            item_id=submission.id,
+            payload=payload,
+        )
         return await _work_item_read(store, item)
 
     @app.get("/v1/work-items", response_model=list[WorkItemRead])
@@ -117,12 +105,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
     ) -> list[WorkItemRead]:
         store = WorkStore.from_engine(request.app.state.ep_engine)
-        if identity.all_projects:
-            items = await store.list_for_client(client_id=identity.client_id, limit=limit)
-        elif identity.project_id is not None:
-            items = await store.list_scoped(client_id=identity.client_id, project_id=identity.project_id, limit=limit)
-        else:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project scope is required")
+        items = await store.list_for_client(client_id=identity.client_id, limit=limit)
         return [WorkItemRead.model_validate(item) for item in items]
 
     @app.get(
@@ -132,11 +115,10 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     )
     async def list_execution_targets(
         request: Request,
-        identity: Annotated[ServiceIdentity, Depends(require_scope("execution-targets:read"))],
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
     ) -> list[ExecutionTargetRead]:
         registry = ExecutionTargetRegistry(ExecutionTargetStore.from_engine(request.app.state.ep_engine))
-        targets = await registry.list(limit=limit, project_id=None if identity.all_projects else identity.project_id)
+        targets = await registry.list(limit=limit, project_id=None)
         return [ExecutionTargetRead.model_validate(target) for target in targets]
 
     @app.put(
@@ -151,11 +133,6 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
         identity: Annotated[ServiceIdentity, Depends(require_scope("cluster-bindings:write"))],
     ) -> ClusterBindingRead:
         """Persist a versioned desired state for the independently managed cluster."""
-        if not identity.all_projects:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Integration management scope is required",
-            )
         if not desired.endpoint.startswith("https://"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -237,49 +214,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             binding = await session.get(ClusterBinding, (identity.client_id, source_integration_id))
         if binding is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster binding not found")
-        if (
-            not identity.all_projects
-            and binding.project_ids is not None
-            and (identity.project_id is None or identity.project_id not in binding.project_ids)
-        ):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster binding not found")
         return _cluster_binding_read(binding)
-
-    @app.get("/v1/work-items/by-request/{request_id}", response_model=WorkItemRead)
-    async def get_work_item_by_request_id(
-        request: Request,
-        request_id: str,
-        identity: Annotated[ServiceIdentity, Depends(require_scope("work-items:read"))],
-    ) -> WorkItemRead:
-        store = WorkStore.from_engine(request.app.state.ep_engine)
-        if identity.project_id is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project scope is required")
-        item = await store.get_by_request_id(request_id, client_id=identity.client_id, project_id=identity.project_id)
-        if item is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found")
-        return await _work_item_read(store, item)
-
-    @app.post("/v1/work-items/by-request/{request_id}/cancel", response_model=WorkItemRead)
-    async def cancel_work_item_by_request_id(
-        request: Request,
-        request_id: str,
-        cancellation: WorkItemCancelRequest,
-        identity: Annotated[ServiceIdentity, Depends(require_scope("work-items:cancel"))],
-    ) -> WorkItemRead:
-        """Reconcile cancellation when AO has not yet received the work ID."""
-        store = WorkStore.from_engine(request.app.state.ep_engine)
-        if identity.project_id is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project scope is required")
-        try:
-            item = await store.request_cancel_by_request_id(
-                request_id,
-                client_id=identity.client_id,
-                project_id=identity.project_id,
-                work_correlation_id=cancellation.work_correlation_id,
-            )
-        except WorkItemNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found") from exc
-        return await _work_item_read(store, item)
 
     @app.get("/v1/work-items/{work_id}", response_model=WorkItemRead)
     async def get_work_item(
@@ -288,9 +223,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
         identity: Annotated[ServiceIdentity, Depends(require_scope("work-items:read"))],
     ) -> WorkItemRead:
         store = WorkStore.from_engine(request.app.state.ep_engine)
-        if identity.project_id is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project scope is required")
-        item = await store.get(work_id, client_id=identity.client_id, project_id=identity.project_id)
+        item = await store.get(work_id, client_id=identity.client_id)
         if item is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found")
         return await _work_item_read(store, item)
@@ -302,10 +235,8 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
         identity: Annotated[ServiceIdentity, Depends(require_scope("work-items:cancel"))],
     ) -> WorkItemRead:
         store = WorkStore.from_engine(request.app.state.ep_engine)
-        if identity.project_id is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project scope is required")
         try:
-            item = await store.request_cancel(work_id, client_id=identity.client_id, project_id=identity.project_id)
+            item = await store.request_cancel(work_id, client_id=identity.client_id)
         except WorkItemNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found") from exc
         return await _work_item_read(store, item)

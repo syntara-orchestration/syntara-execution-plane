@@ -34,27 +34,14 @@ class WorkItem(SQLModel, table=True):
 
     __tablename__ = "work_items"
     __table_args__ = (
-        sa.Index("ix_work_items_work_correlation_id", "work_correlation_id"),
         sa.Index("ix_work_items_status", "status"),
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),
-        sa.UniqueConstraint("client_id", "project_id", "request_id", name="uq_work_items_request_scope"),
         {"schema": EP_SCHEMA},
     )
 
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    id: uuid.UUID = Field(primary_key=True)
 
-    # Authenticated client and project scope are stored on every record. The API
-    # derives client_id from the service token and validates project_id against
-    # its signed authorization context.
     client_id: str = Field(sa_column=Column(String(128), nullable=False))
-    project_id: uuid.UUID
-
-    # Stable caller key. Transport and activity retries must reuse this value.
-    request_id: str = Field(sa_column=Column(String(200), nullable=False))
-    request_hash: str = Field(sa_column=Column(String(64), nullable=False))
-
-    # Opaque caller correlation handle, with no Temporal-specific meaning.
-    work_correlation_id: uuid.UUID
 
     status: WorkItemStatus = Field(
         default=WorkItemStatus.PENDING,

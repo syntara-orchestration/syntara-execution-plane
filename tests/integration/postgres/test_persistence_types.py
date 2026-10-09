@@ -83,7 +83,6 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:  #
     engine = create_async_engine(database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     integration_id = uuid.uuid4()
-    request_id = f"persistence-round-trip-{uuid.uuid4()}"
     project_ids = [uuid.uuid4(), uuid.uuid4()]
     now = datetime.now(UTC)
     binding_key = ("postgres-type-test", integration_id)
@@ -107,11 +106,8 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:  #
                 )
             )
             item = WorkItem(
+                id=uuid.uuid4(),
                 client_id=binding_key[0],
-                project_id=project_ids[0],
-                request_id=request_id,
-                request_hash="test-hash",
-                work_correlation_id=uuid.uuid4(),
                 payload={"invocation": {"version": 1}},
                 status=WorkItemStatus.CLAIMED,
                 claimed_at=now,
@@ -141,7 +137,6 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:  #
         dispatched = await work_store.get(
             work_item_id,
             client_id=binding_key[0],
-            project_id=project_ids[0],
         )
         assert dispatched is not None
         assert dispatched.status is WorkItemStatus.DISPATCHED

@@ -99,8 +99,6 @@ async def test_dispatch_owns_session_and_commits_notification() -> None:
     item = await store.dispatch(
         "test-client",
         uuid.uuid4(),
-        "request-1",
-        uuid.uuid4(),
         {"input_config": {}},
     )
 
@@ -118,10 +116,6 @@ async def test_set_result_reloads_item_by_id() -> None:
     item = WorkItem(
         id=uuid.uuid4(),
         client_id="test-client",
-        project_id=uuid.uuid4(),
-        request_id="request-1",
-        request_hash="request-hash",
-        work_correlation_id=uuid.uuid4(),
         created_at=datetime.now(UTC),
     )
     session = _Session(item)
@@ -147,7 +141,6 @@ async def test_is_target_drained_checks_claimed_and_dispatched_work() -> None:
     assert await store.is_target_drained(target_id) is True
     active_item = WorkItem(
         id=uuid.uuid4(),
-        work_correlation_id=uuid.uuid4(),
         activity_handle="handle",
         execution_target_id=target_id,
         status=WorkItemStatus.CLAIMED,
@@ -164,7 +157,6 @@ async def test_claim_one_assigns_an_eligible_target_in_the_claim_transaction() -
     store = _store()
     item = WorkItem(
         id=uuid.uuid4(),
-        work_correlation_id=uuid.uuid4(),
         activity_handle="handle",
         status=WorkItemStatus.PENDING,
         created_at=datetime.now(UTC),
@@ -194,10 +186,6 @@ async def test_uncertain_dispatch_records_reconciliation_callback() -> None:
     item = WorkItem(
         id=uuid.uuid4(),
         client_id="test-client",
-        project_id=uuid.uuid4(),
-        request_id="request-uncertain",
-        request_hash="request-hash",
-        work_correlation_id=uuid.uuid4(),
         status=WorkItemStatus.DISPATCHED,
         claim_owner_id=owner_id,
         claim_generation=3,

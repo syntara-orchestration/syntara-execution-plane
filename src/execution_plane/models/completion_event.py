@@ -23,8 +23,6 @@ class CompletionEvent(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     work_item_id: uuid.UUID = Field(foreign_key=f"{EP_SCHEMA}.work_items.id")
     client_id: str = Field(sa_column=Column(String(128), nullable=False))
-    project_id: uuid.UUID
-    request_id: str = Field(sa_column=Column(String(200), nullable=False))
     state_revision: int = Field(default=1, sa_column=Column(Integer, nullable=False))
     status: str = Field(sa_column=Column(String(32), nullable=False))
     result: dict[str, Any] = Field(sa_column=Column(JSONB, nullable=False))

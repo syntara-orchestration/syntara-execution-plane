@@ -16,8 +16,7 @@ from execution_plane.models.work_item import WorkItemStatus
 class WorkItemSubmit(BaseModel):
     """Script work accepted from a trusted client."""
 
-    request_id: str = Field(min_length=1, max_length=200)
-    work_correlation_id: uuid.UUID
+    id: uuid.UUID
     workload_type: Literal["script"] = "script"
     payload: dict[str, Any]
 
@@ -59,12 +58,6 @@ class WorkItemSubmit(BaseModel):
             msg = "payload.output_config must be an object or null"
             raise ValueError(msg)
         return payload
-
-
-class WorkItemCancelRequest(BaseModel):
-    """Correlation metadata for cancellation that races initial submission."""
-
-    work_correlation_id: uuid.UUID
 
 
 class ClusterBindingUpsert(BaseModel):
@@ -112,9 +105,6 @@ class WorkItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    project_id: uuid.UUID
-    request_id: str
-    work_correlation_id: uuid.UUID
     status: WorkItemStatus
     result: dict[str, Any] | None
     created_at: datetime
@@ -152,9 +142,7 @@ class CompletionEventRequest(BaseModel):
     event_id: uuid.UUID
     event_schema_version: Literal[1] = 1
     client_id: str
-    project_id: uuid.UUID
     work_id: uuid.UUID
-    request_id: str
     state_revision: int
     status: WorkItemStatus
     result: dict[str, Any]

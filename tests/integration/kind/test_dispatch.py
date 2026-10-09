@@ -47,9 +47,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(ep_cluster
     """
     database_url = os.environ["EP_TEST_DATABASE_URL"]
     settings = get_ep_settings()
-    project_id = uuid.uuid4()
     client_id = "ep-it-dispatch"
-    request_id = f"dispatch-{uuid.uuid4()}"
 
     async with (
         WorkStore.from_database_url(database_url) as work_store,
@@ -58,9 +56,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(ep_cluster
     ):
         item = await work_store.dispatch(
             client_id=client_id,
-            project_id=project_id,
-            request_id=request_id,
-            work_correlation_id=uuid.uuid4(),
+            item_id=uuid.uuid4(),
             payload={
                 "image": _NODE_IMAGE,
                 "invocation": _SCRIPT_INVOCATION,
@@ -77,7 +73,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(ep_cluster
 
         await _process_item(claimed, work_store, target_store, worker_managers, settings)
 
-        final_item = await work_store.get(item.id, client_id=client_id, project_id=project_id)
+        final_item = await work_store.get(item.id, client_id=client_id)
 
     assert final_item is not None
     assert final_item.status is WorkItemStatus.COMPLETED, (

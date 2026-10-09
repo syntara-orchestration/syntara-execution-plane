@@ -72,9 +72,7 @@ class CompletionEventDelivery:
         body = CompletionEventRequest(
             event_id=event.id,
             client_id=event.client_id,
-            project_id=event.project_id,
             work_id=event.work_item_id,
-            request_id=event.request_id,
             state_revision=event.state_revision,
             status=WorkItemStatus(event.status),
             result=event.result,

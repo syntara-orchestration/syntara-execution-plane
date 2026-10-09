@@ -25,7 +25,7 @@ def _payload(**invocation_overrides: object) -> dict[str, Any]:
 
 
 def test_work_item_submit_accepts_a_versioned_node_invocation() -> None:
-    WorkItemSubmit(request_id="req-1", work_correlation_id=uuid4(), payload=_payload())
+    WorkItemSubmit(id=uuid4(), payload=_payload())
 
 
 def test_non_object_credentials_raise_validation_error_not_type_error() -> None:
@@ -34,8 +34,7 @@ def test_non_object_credentials_raise_validation_error_not_type_error() -> None:
         match=r"invocation\.credentials must be an object",
     ) as caught:
         WorkItemSubmit(
-            request_id="req-1",
-            work_correlation_id=uuid4(),
+            id=uuid4(),
             payload=_payload(credentials="not-an-object"),
         )
     assert not isinstance(caught.value.__cause__, TypeError)
@@ -45,7 +44,6 @@ def test_non_object_credentials_raise_validation_error_not_type_error() -> None:
 def test_work_item_submit_rejects_non_object_invocation_fields(field: str) -> None:
     with pytest.raises(ValidationError, match=rf"invocation\.{field} must be an object"):
         WorkItemSubmit(
-            request_id="req-1",
-            work_correlation_id=uuid4(),
+            id=uuid4(),
             payload=_payload(**{field: "not-an-object"}),
         )

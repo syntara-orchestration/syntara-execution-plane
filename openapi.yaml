@@ -166,65 +166,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /v1/work-items/by-request/{request_id}:
-    get:
-      summary: Get Work Item By Request Id
-      operationId: get_work_item_by_request_id_v1_work_items_by_request__request_id__get
-      security:
-      - HTTPBearer: []
-      parameters:
-      - name: request_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Request Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkItemRead'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /v1/work-items/by-request/{request_id}/cancel:
-    post:
-      summary: Cancel Work Item By Request Id
-      description: Reconcile cancellation when AO has not yet received the work ID.
-      operationId: cancel_work_item_by_request_id_v1_work_items_by_request__request_id__cancel_post
-      security:
-      - HTTPBearer: []
-      parameters:
-      - name: request_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Request Id
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/WorkItemCancelRequest'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkItemRead'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /v1/work-items/{work_id}:
     get:
       summary: Get Work Item
@@ -576,34 +517,12 @@ components:
       - msg
       - type
       title: ValidationError
-    WorkItemCancelRequest:
-      properties:
-        work_correlation_id:
-          type: string
-          format: uuid
-          title: Work Correlation Id
-      type: object
-      required:
-      - work_correlation_id
-      title: WorkItemCancelRequest
-      description: Correlation metadata for cancellation that races initial submission.
     WorkItemRead:
       properties:
         id:
           type: string
           format: uuid
           title: Id
-        project_id:
-          type: string
-          format: uuid
-          title: Project Id
-        request_id:
-          type: string
-          title: Request Id
-        work_correlation_id:
-          type: string
-          format: uuid
-          title: Work Correlation Id
         status:
           $ref: '#/components/schemas/WorkItemStatus'
         result:
@@ -650,9 +569,6 @@ components:
       type: object
       required:
       - id
-      - project_id
-      - request_id
-      - work_correlation_id
       - status
       - result
       - created_at
@@ -678,15 +594,10 @@ components:
       description: Lifecycle states of a dispatched work item.
     WorkItemSubmit:
       properties:
-        request_id:
-          type: string
-          maxLength: 200
-          minLength: 1
-          title: Request Id
-        work_correlation_id:
+        id:
           type: string
           format: uuid
-          title: Work Correlation Id
+          title: Id
         workload_type:
           type: string
           const: script
@@ -698,8 +609,7 @@ components:
           title: Payload
       type: object
       required:
-      - request_id
-      - work_correlation_id
+      - id
       - payload
       title: WorkItemSubmit
       description: Script work accepted from a trusted client.

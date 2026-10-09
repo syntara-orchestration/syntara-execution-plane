@@ -5,7 +5,6 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
-from uuid import UUID
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -21,11 +20,9 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 class ServiceIdentity(BaseModel):
-    """Verified calling service and project scope from an AO-signed token."""
+    """Verified calling service identity from an AO-signed token."""
 
     client_id: str
-    project_id: UUID | None
-    all_projects: bool = False
     scopes: frozenset[str]
 
 
@@ -56,17 +53,12 @@ async def get_service_identity(
             options={"require": ["exp", "iat", "iss", "aud", "client_id"]},
         )
         client_id = str(claims["client_id"])
-        all_projects = claims.get("all_projects") is True
-        project_id_claim = claims.get("project_id")
-        project_id = UUID(str(project_id_claim)) if project_id_claim is not None else None
         scopes = frozenset(str(claims.get("scope", "")).split())
     except (jwt.InvalidTokenError, KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token") from exc
     if client_id != settings.ao_client_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service client is not enabled")
-    if project_id is None and not all_projects:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project scope is required")
-    return ServiceIdentity(client_id=client_id, project_id=project_id, all_projects=all_projects, scopes=scopes)
+    return ServiceIdentity(client_id=client_id, scopes=scopes)
 
 
 def require_scope(scope: str) -> Callable[..., Awaitable[ServiceIdentity]]:
