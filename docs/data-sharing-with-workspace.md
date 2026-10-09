@@ -3,16 +3,11 @@
 This document is the **workspace** contract: successive WorkItems in
 one Automation Orchestrator (AO) workflow share a directory.
 
-Collecting named files after a WorkItem exits (listed outputs,
-S3 artifacts) is a **different** contract:
-[collect-of-workitem-execution-results.md](collect-of-workitem-execution-results.md).
-
 - Ticket: [AAP-94189](https://redhat.atlassian.net/browse/AAP-94189)
 - Feature: [ANSTRAT-1803](https://redhat.atlassian.net/browse/ANSTRAT-1803)
 - Parent epic: [AAP-82060](https://redhat.atlassian.net/browse/AAP-82060)
 - Labels contract: [labels.md](labels.md)
 - Placement examples: [examples/](examples/)
-- Collect WorkItem execution results: [collect-of-workitem-execution-results.md](collect-of-workitem-execution-results.md)
 
 ## What this document is
 
@@ -88,9 +83,8 @@ AO execution (one workspace UUID, passed to each WorkItem)
    commit SHA for Git. EP does not ask AO "where is that file?" and
    does not ask Git "what is `main` today?"
 3. **JSON result ≠ file bytes.** `WorkItem.result` stays a small
-   JSON blob (stdout, return code). Large files go to object
-   storage as [listed outputs](collect-of-workitem-execution-results.md), not as workspace
-   contents.
+   JSON blob (stdout, return code). Large files stay in the
+   workspace, not stuffed into the result.
 
 ## Who creates the workspace
 
@@ -243,8 +237,7 @@ cluster). The alternative is to publish a **full copy** of
 `/workspace` to object storage (S3) when a writer exits, and
 hydrate `/workspace` from that snapshot on the next WorkItem.
 
-That snapshot is the **whole tree**, not
-[listed outputs](collect-of-workitem-execution-results.md). Any ExecutionTarget that can
+That snapshot is the **whole tree**. Any ExecutionTarget that can
 reach the bucket can run the next WorkItem. AO does not have to keep
 those nodes on the same cluster.
 
@@ -258,10 +251,10 @@ AO execution
   node C  access=copy  →  cluster-3  →  hydrates a private writable copy
 ```
 
-Unlike listed `outputs`, this PUT **can** gate the next WorkItem
-when that item runs on another target: it cannot hydrate until the
-snapshot is `available`. A successor on the **same volume** still
-does not wait on S3.
+This PUT **can** gate the next WorkItem when that item runs on
+another target: it cannot hydrate until the snapshot is
+`available`. A successor on the **same volume** still does not wait
+on S3.
 
 | System | Pros | Cons |
 |---|---|---|
@@ -341,12 +334,10 @@ WorkItem whose activity is HTTP:
 by this contract. The activity must write the body to a filesystem
 path (for example `dest`), not only into `WorkItem.result`.
 
-A later node that does not share the workspace pulls
-[listed outputs](collect-of-workitem-execution-results.md),
-not through a second HTTP-activity WorkItem. A different
+A later node that does not share the workspace does not pull
+bytes through a second HTTP-activity WorkItem. A different
 target cannot mount that UUID; AO either shares a workspace on that
-target, uses an object-store snapshot, or the next node fetches the
-listed artifacts from object storage.
+target or uses an object-store snapshot.
 
 ### Git
 
@@ -395,8 +386,8 @@ start-of-run step on the playbook WorkItem.
 
 OpenShell has no volume attach. HTTP and Git activities still run;
 they cannot leave files on a workspace for the next WorkItem.
-Cross-run files on that backend go through
-[listed outputs](collect-of-workitem-execution-results.md) or stay in that one container.
+Cross-run files on that backend go through an object-store snapshot
+or stay in that one container.
 
 [Example 02](examples/02-data-sharing-with-workspace.md) is three WorkItems on one
 volume workspace. Files under `/workspace` are still there for the
@@ -404,9 +395,7 @@ next WorkItem. There is no `data.inputs` list.
 
 ## Payload shape
 
-Illustrative keys only. Not the final field design. A WorkItem may
-also carry `outputs`; that field is defined in
-[collect-of-workitem-execution-results.md](collect-of-workitem-execution-results.md).
+Illustrative keys only. Not the final field design.
 
 ```json
 {
@@ -493,7 +482,6 @@ them there.
 | **HTTP or Git activity** writing into `/workspace` | K8s and Podman (needs the workspace volume) | The activity itself yes; workspace is one `rw` holder per id |
 | **Workspace volume** (globally unique UUID, one ET) at `/workspace` | K8s PVC and Podman volume | One `rw` holder per id: concurrency 1. `ro` / `copy` may overlap. |
 | **Workspace snapshot** (full tree to S3, hydrate anywhere) | All backends that can reach the bucket (incl. OpenShell) | `rw` serial; `ro` / `copy` may run in parallel |
-| **Listed outputs** | All backends | See [collect-of-workitem-execution-results.md](collect-of-workitem-execution-results.md) |
 
 OpenShell has no volume attach. A shared `/workspace` on OpenShell is
 the object-store snapshot path; HTTP and Git activities cannot leave
@@ -546,7 +534,6 @@ sequenceDiagram
 
 | Omitted | Why |
 |---|---|
-| Listed outputs / S3 artifacts | [collect-of-workitem-execution-results.md](collect-of-workitem-execution-results.md) |
 | Placement / selectors | [labels.md](labels.md) |
 | Live PVC / Podman volume or disk capacity as a selector | Not a label. Open question in labels.md. |
 | AO file upload, conversion, RBAC | [file-storage.md](https://github.com/syntara-orchestration/syntara/blob/devel/backend/docs/file-storage.md) |
@@ -554,7 +541,7 @@ sequenceDiagram
 | Inferring `rw` / `ro` from Extension SDK path-typed inputs/outputs | AO sets `access` explicitly. |
 | Customer S3 IAM setup | Platform / credential work. |
 | Git write-back (commit, push, PR) | Git activity is clone into `/workspace`. |
-| Cross-target **volume** | A volume lives on exactly one ExecutionTarget. Cross-target: object-store snapshot, or listed outputs. |
+| Cross-target **volume** | A volume lives on exactly one ExecutionTarget. Cross-target: object-store snapshot. |
 | Per-workspace size override | Size is the ExecutionTarget default. Not on the WorkItem. |
 | `data.inputs` | Use a Git or HTTP WorkItem that writes into `/workspace`. |
 | Streaming stdout as files | Still `WorkItem.result` / log plumbing |
@@ -598,8 +585,6 @@ Extension, not this contract.
   object-store snapshot instead of a PVC. Each places via
   selectors. Reuse hydrates `/workspace` from S3 and does **not** pin
   the ExecutionTarget. The next `rw` WorkItem waits for the snapshot.
-- **[collect-of-workitem-execution-results.md](collect-of-workitem-execution-results.md):** named files collected
-  after exit, not the live workspace tree.
 - **[labels.md](labels.md):** HTTP and Git activity params and
   workspace UUID are not labels. Reuse of a volume workspace shrinks
   the eligible set to the ExecutionTarget that holds the volume;
@@ -626,8 +611,7 @@ Extension, not this contract.
   the user through AO (ExecutionTarget default if omitted). Clock is
   last unmount. Size comes from the ExecutionTarget.
 - **[Work Store](work-store.md):** `WorkItem.result` stays small JSON.
-  Artifact bytes from listed outputs are not a JSONB column; see
-  [collect-of-workitem-execution-results.md](collect-of-workitem-execution-results.md).
+  Large files stay in the workspace.
 - **[file-storage.md](https://github.com/syntara-orchestration/syntara/blob/devel/backend/docs/file-storage.md):** AO S3 for uploads. AO
   turns file ids into HTTP(S) URLs for the HTTP activity. EP does
   not import `FileManager`.

@@ -31,8 +31,7 @@ still goes through the reconciler.
 ## What this example is
 
 A concrete inventory of an **object-store workspace**. The snapshot is
-the **whole tree**, not [listed outputs](../collect-of-workitem-execution-results.md) (those
-are named files after exit). Any ExecutionTarget that can reach the
+the **whole tree**. Any ExecutionTarget that can reach the
 bucket can run the next WorkItem.
 
 `access` is `rw` on all three (the default). Exclusive `rw` is serial:
@@ -338,6 +337,5 @@ sequenceDiagram
 | Selectors that match nothing | [Example 05](05-no-matching-targets.md) |
 | OpenShell sandbox policy | [Example 04](04-openshell-sandbox-policy.md). Snapshot hydrate is how OpenShell can share `/workspace`. |
 | `ro` / `copy` in parallel | [data-sharing-with-workspace.md](../data-sharing-with-workspace.md). After a generation is `available`, many `ro` or `copy` WorkItems may run. |
-| Listed `outputs` / S3 artifacts | [collect-of-workitem-execution-results.md](../collect-of-workitem-execution-results.md). Listed files, not the whole tree. |
 | Snapshot format (tar vs prefix) | Open question in [data-sharing-with-workspace.md](../data-sharing-with-workspace.md) |
 | AO workflow / node / Execution Profile rows | Not visible to EP |
