@@ -23,78 +23,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-import jwt
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ISSUER = "http://localhost:8000"
-DEFAULT_AUDIENCE = "execution-plane"
-DEFAULT_CLIENT_ID = "syntara-orchestration"
-DEFAULT_TTL = timedelta(hours=8)
-DEFAULT_SCOPES = (
-    "work-items:read",
-    "work-items:submit",
-    "work-items:cancel",
-    "execution-targets:read",
-    "cluster-bindings:read",
-    "cluster-bindings:write",
+from execution_plane.work_item_client import (
+    DEFAULT_JWT_AUDIENCE,
+    DEFAULT_JWT_CLIENT_ID,
+    DEFAULT_JWT_ISSUER,
+    DEFAULT_TOKEN_SCOPES,
+    DEFAULT_TOKEN_TTL,
+    ep_service_token,
+    resolve_private_key_path,
+    service_token_claims,
 )
-CANDIDATE_PRIVATE_KEYS = (
-    PROJECT_ROOT / ".secrets" / "jwt-primary.pem",
-    PROJECT_ROOT.parent / "syntara" / "backend" / ".secrets" / "jwt-primary.pem",
-)
-
-
-def _resolve_private_key_path(explicit: Path | None) -> Path:
-    """Prefer an explicit path, then a local key, then a sibling Syntara key."""
-    if explicit is not None:
-        return explicit
-    env_path = os.environ.get("EP_AO_JWT_PRIVATE_KEY_FILE")
-    if env_path:
-        return Path(env_path)
-    for candidate in CANDIDATE_PRIVATE_KEYS:
-        if candidate.is_file():
-            return candidate
-    searched = ", ".join(str(path) for path in CANDIDATE_PRIVATE_KEYS)
-    msg = (
-        "AO JWT private key not found. Pass --private-key, set "
-        f"EP_AO_JWT_PRIVATE_KEY_FILE, or place jwt-primary.pem at one of: {searched}"
-    )
-    raise FileNotFoundError(msg)
-
-
-def build_claims(
-    *,
-    issuer: str,
-    audience: str,
-    client_id: str,
-    scopes: list[str],
-    project_id: UUID | None,
-    all_projects: bool,
-    now: datetime,
-    ttl: timedelta,
-) -> dict[str, object]:
-    """Return JWT claims accepted by execution_plane.api.auth."""
-    if project_id is None and not all_projects:
-        msg = "Token needs --project-id or --all-projects"
-        raise ValueError(msg)
-    claims: dict[str, object] = {
-        "iss": issuer,
-        "aud": audience,
-        "client_id": client_id,
-        "scope": " ".join(scopes),
-        "iat": now,
-        "exp": now + ttl,
-    }
-    if project_id is not None:
-        claims["project_id"] = str(project_id)
-    if all_projects:
-        claims["all_projects"] = True
-    return claims
-
-
-def mint_token(private_key_pem: str, claims: dict[str, object]) -> str:
-    """Sign claims with AO's ES256 private key."""
-    return jwt.encode(claims, private_key_pem, algorithm="ES256")
 
 
 def main() -> int:
@@ -109,9 +47,9 @@ def main() -> int:
         type=Path,
         help="AO ES256 private key PEM (default: local or sibling Syntara jwt-primary.pem)",
     )
-    parser.add_argument("--issuer", default=os.environ.get("EP_AO_JWT_ISSUER", DEFAULT_ISSUER))
-    parser.add_argument("--audience", default=os.environ.get("EP_SERVICE_JWT_AUDIENCE", DEFAULT_AUDIENCE))
-    parser.add_argument("--client-id", default=os.environ.get("EP_AO_CLIENT_ID", DEFAULT_CLIENT_ID))
+    parser.add_argument("--issuer", default=os.environ.get("EP_AO_JWT_ISSUER", DEFAULT_JWT_ISSUER))
+    parser.add_argument("--audience", default=os.environ.get("EP_SERVICE_JWT_AUDIENCE", DEFAULT_JWT_AUDIENCE))
+    parser.add_argument("--client-id", default=os.environ.get("EP_AO_CLIENT_ID", DEFAULT_JWT_CLIENT_ID))
     parser.add_argument(
         "--scope",
         action="append",
@@ -125,31 +63,43 @@ def main() -> int:
         default=None,
         help="Grant every project (default: on when --project-id is omitted)",
     )
-    parser.add_argument("--ttl-hours", type=float, default=DEFAULT_TTL.total_seconds() / 3600)
+    parser.add_argument("--ttl-hours", type=float, default=DEFAULT_TOKEN_TTL.total_seconds() / 3600)
     parser.add_argument("--json", action="store_true", help="Print token and claims as JSON")
     args = parser.parse_args()
 
     all_projects = args.project_id is None if args.all_projects is None else args.all_projects
-    scopes = args.scopes if args.scopes else list(DEFAULT_SCOPES)
+    scopes = args.scopes if args.scopes else list(DEFAULT_TOKEN_SCOPES)
+    now = datetime.now(UTC)
+    ttl = timedelta(hours=args.ttl_hours)
 
     try:
-        key_path = _resolve_private_key_path(args.private_key)
-        claims = build_claims(
+        key_path = resolve_private_key_path(args.private_key)
+        token = ep_service_token(
+            args.project_id,
+            all_projects=all_projects,
+            private_key=key_path,
             issuer=args.issuer,
             audience=args.audience,
             client_id=args.client_id,
             scopes=scopes,
-            project_id=args.project_id,
-            all_projects=all_projects,
-            now=datetime.now(UTC),
-            ttl=timedelta(hours=args.ttl_hours),
+            now=now,
+            ttl=ttl,
         )
-        token = mint_token(key_path.read_text(encoding="utf-8"), claims)
-    except (FileNotFoundError, ValueError, OSError) as exc:
+    except (FileNotFoundError, ValueError, OSError, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     if args.json:
+        claims = service_token_claims(
+            args.project_id,
+            all_projects=all_projects,
+            issuer=args.issuer,
+            audience=args.audience,
+            client_id=args.client_id,
+            scopes=scopes,
+            now=now,
+            ttl=ttl,
+        )
         serializable = {
             key: (value.isoformat() if isinstance(value, datetime) else value) for key, value in claims.items()
         }

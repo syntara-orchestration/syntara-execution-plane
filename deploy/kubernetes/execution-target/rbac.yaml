@@ -1,3 +1,8 @@
+# Target-cluster RBAC for the Execution Plane dispatcher ServiceAccount.
+# Applied by tools/deploy_kind_execution_target.py, the CI kind job, and
+# docs/feature-branch-assets/konflux-prepare-execution-plane.sh.
+# Keep verbs aligned with the vanilla-k8s transport: Jobs, list Pods,
+# pods/portforward, and NetworkPolicies. Do not add Pod create, logs, or Secrets.
 ---
 apiVersion: v1
 kind: Namespace

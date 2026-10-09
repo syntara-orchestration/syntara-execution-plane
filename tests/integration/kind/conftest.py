@@ -12,7 +12,7 @@ cluster locally) and its coordinates are passed in through the environment:
 
 The ``test-integration-postgres-kind`` CI job provisions a kind cluster and
 exports all of these. Local developers can point at any running cluster that
-satisfies the RBAC in ``docs/feature-branch-assets/execution-plane-init.yaml``.
+satisfies the RBAC in ``deploy/kubernetes/execution-target/rbac.yaml``.
 
 The shared PostgreSQL fixtures (``migrated_database`` etc.) come from the parent
 ``tests/integration/conftest.py``.
