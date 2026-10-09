@@ -45,23 +45,13 @@ _CLUSTER_NAME = "integration-test"
 _CLI_ACTOR_ID = uuid.UUID(int=0)
 
 
-def ep_cluster_configured() -> bool:
-    """Return True when kind cluster coordinates are present in the environment."""
-    return bool(os.environ.get(_EP_IT_ENDPOINT) and os.environ.get(_EP_IT_TOKEN))
-
-
 @pytest.fixture(scope="session")
 async def ep_cluster(migrated_database: str) -> AsyncGenerator[Cluster, None]:
     """Provision a kind cluster as an ACTIVE Cluster+ExecutionTarget in the test DB.
 
-    Skips when ``EP_IT_K8S_ENDPOINT`` / ``EP_IT_K8S_TOKEN`` are absent so that
-    the PostgreSQL-only tests still run on runners without a cluster.
-
+    Requires ``EP_IT_K8S_ENDPOINT`` and ``EP_IT_K8S_TOKEN`` in the environment.
     Yields the provisioned ``Cluster`` and tears it down at the end of the session.
     """
-    if not ep_cluster_configured():
-        pytest.skip("EP_IT_K8S_ENDPOINT and EP_IT_K8S_TOKEN must be set for cluster dispatch tests")
-
     endpoint = os.environ[_EP_IT_ENDPOINT]
     token = os.environ[_EP_IT_TOKEN]
     namespace = os.environ.get(_EP_IT_NAMESPACE, _DEFAULT_NAMESPACE)

@@ -1,17 +1,42 @@
-"""Shared fixtures for execution-plane unit tests."""
+"""Shared fixtures for execution-plane integration tests.
 
-from collections.abc import Generator
+Every test under ``tests/integration`` requires a real PostgreSQL database.
+Set ``EP_TEST_DATABASE_URL`` to a disposable asyncpg-compatible URL before
+running; tests fail immediately if it is absent.
+
+Cluster-dispatch tests have an additional Kubernetes dependency and live under
+``tests/integration/kind`` with their own ``conftest.py`` (the ``ep_cluster``
+fixture). Postgres-only tests live under ``tests/integration/postgres``.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
 
 import pytest
 
-from execution_plane.config import get_ep_settings
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.fixture(autouse=True)
-def ep_settings_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
-    """Set the minimum required env vars for EPSettings and clear lru_caches."""
-    monkeypatch.setenv("EP_DATABASE_URL", "postgresql+asyncpg://user:password@localhost/test")
-    monkeypatch.setenv("EP_CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-    get_ep_settings.cache_clear()
-    yield
-    get_ep_settings.cache_clear()
+@pytest.fixture(scope="session")
+def integration_database_url() -> str:
+    """Return the disposable PostgreSQL URL; fail immediately if absent."""
+    url = os.environ.get("EP_TEST_DATABASE_URL")
+    if not url:
+        pytest.fail("EP_TEST_DATABASE_URL must be set to run integration tests")
+    return url
+
+
+@pytest.fixture(scope="session")
+def migrated_database(integration_database_url: str) -> str:
+    """Run alembic migrations against the test database and return the URL."""
+    env = {**os.environ, "DATABASE_URL": integration_database_url}
+    subprocess.run(
+        ["uv", "run", "alembic", "-c", "alembic.ini", "upgrade", "head"],
+        check=True,
+        env=env,
+        cwd=_REPO_ROOT,
+    )
+    return integration_database_url
