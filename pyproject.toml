@@ -58,7 +58,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
 markers = ["integration: marks tests that require a real PostgreSQL database and/or Kubernetes cluster"]
 
 [tool.ruff]

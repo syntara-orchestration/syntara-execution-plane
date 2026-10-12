@@ -14,7 +14,7 @@ from alembic.script import ScriptDirectory
 if TYPE_CHECKING:
     from types import ModuleType
 
-_WAIT_SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "wait_for_ep_database.py"
+_WAIT_SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "wait_for_ep_database.py"
 
 
 def _load_wait_module() -> ModuleType:

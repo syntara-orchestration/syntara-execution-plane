@@ -23,7 +23,16 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run ruff format --check src tests
       - run: uv run mypy --strict src
-      - run: uv run pytest
+      - run: uv run pytest tests/unit
+      - name: Ensure all tests are inside a recognised subfolder
+        run: |
+          orphans=$(find tests -maxdepth 1 -name "*.py" ! -name "__init__.py" ! -name "conftest.py")
+          if [ -n "$orphans" ]; then
+            echo "Tests found directly under tests/ will not run in CI:"
+            echo "$orphans"
+            echo "Place unit tests in tests/unit/, postgres integration tests in tests/postgres/, and kind integration tests in tests/kind/"
+            exit 1
+          fi
 
   # Regenerates openapi.yaml and fails if the committed file differs.
   # To fix: run `uv run python tools/export_openapi.py` and commit the result.
@@ -85,7 +94,7 @@ jobs:
       - uses: ./.github/actions/ep-setup
 
       - name: Run PostgreSQL persistence tests
-        run: uv run pytest tests/integration/postgres -v
+        run: uv run pytest tests/postgres -v
 
   # Runs the end-to-end dispatch test, which requires both PostgreSQL and a
   # live kind (Kubernetes-in-Docker) cluster. Kept as a separate job so the
@@ -153,7 +162,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run cluster dispatch integration tests
-        run: uv run pytest tests/integration/kind -m integration -v --timeout=600
+        run: uv run pytest tests/kind -m integration -v --timeout=600
 
       - name: Upload test logs on failure
         if: failure()
