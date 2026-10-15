@@ -610,7 +610,7 @@ dev = [
     { name = "coverage", specifier = ">=7.13.0,<8.0.0" },
     { name = "grpcio-tools", specifier = "==1.78.0" },
     { name = "jsonschema", specifier = ">=4.18.0" },
-    { name = "junitparser", specifier = ">=4.0.0,<5.0.0" },
+    { name = "junitparser", specifier = ">=5.0.3,<5.1.0" },
     { name = "mypy", specifier = ">=1.18.0,<1.19.0" },
     { name = "pytest", specifier = ">=9.0.0,<10.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.3.0,<2.0.0" },
@@ -988,11 +988,11 @@ wheels = [
 
 [[package]]
 name = "junitparser"
-version = "4.0.2"
+version = "5.0.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/aa/97/954ee1ef04e50d8494e9f5d82d4051ed71a7618aa2c1514c1b3f24691174/junitparser-4.0.2.tar.gz", hash = "sha256:d5d07cece6d4a600ff3b7b96c8db5ffa45a91eed695cb86c45c3db113c1ca0f8", size = 25646, upload-time = "2025-06-24T04:37:32.664Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/c9/edeb58b0565b74ba0ffedf822d63aa40368bb4ff2da49751768eea696f5a/junitparser-5.0.3.tar.gz", hash = "sha256:f824ec1b7afbf2fd3b6813b87967b02fcda750e135d27be17cae497147419a04", size = 12120, upload-time = "2026-09-01T06:13:00.32Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/87/b444f934f62ee2a1be45bb52563cf17a66b0d790eba43af4df9929e7107f/junitparser-4.0.2-py3-none-any.whl", hash = "sha256:94c3570e41fcaedc64cc3c634ca99457fe41a84dd1aa8ff74e9e12e66223a155", size = 14592, upload-time = "2025-06-24T04:37:31.322Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/36/dbb6f74621890e5daa831c5f474b81e8b773298adf5ea835c03215a9359c/junitparser-5.0.3-py3-none-any.whl", hash = "sha256:553535b8cd1672a9c8bd2c7326ae1ae69279267fbc562106b5aa44d3c5f769af", size = 15000, upload-time = "2026-09-01T06:12:58.01Z" },
 ]
 
 [[package]]
