@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import and_, case, or_, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col
 
@@ -26,6 +26,15 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 _NOTIFY_CHANNEL = "execution_plane_work_items"
+
+
+def _parse_sort_value(field: str, value: str) -> Any:  # noqa: ANN401
+    """Convert a cursor's string sort_value back to the column's native Python type."""
+    if field in {"created_at", "claimed_at", "completed_at"}:
+        return datetime.fromisoformat(value)
+    if field == "id":
+        return uuid.UUID(value)
+    return value
 
 
 class WorkItemNotFoundError(LookupError):
@@ -91,16 +100,64 @@ class WorkStore(StoreBase):
             )
             return result.scalar_one_or_none()
 
-    async def list_for_client(self, *, client_id: str, limit: int) -> list[WorkItem]:
+    async def list_for_client(
+        self,
+        *,
+        client_id: str,
+        limit: int,
+        cursor: dict[str, Any] | None = None,
+        sort_field: str = "created_at",
+        sort_direction: str = "desc",
+    ) -> list[WorkItem]:
         """Return bounded work for the authenticated client."""
+        if sort_field not in WorkItem.__sortable_fields__:
+            msg = f"Invalid sort field for work items: {sort_field}"
+            raise ValueError(msg)
+
+        sort_col = col(getattr(WorkItem, sort_field))
+        id_col = col(WorkItem.id)
+        asc_dir = sort_direction == "asc"
+        statement = select(WorkItem).where(col(WorkItem.client_id) == client_id)
+
+        if cursor:
+            anchor_id = uuid.UUID(cast("str", cursor["id"]))
+            sort_value_str = cast("str", cursor.get("sort_value") or cursor.get("created_at", ""))
+            anchor_val = _parse_sort_value(sort_field, sort_value_str)
+            going_backward = cursor.get("direction") == "prev"
+
+            if going_backward:
+                if asc_dir:
+                    statement = statement.where(
+                        (sort_col < anchor_val) | ((sort_col == anchor_val) & (id_col < anchor_id))
+                    ).order_by(sort_col.desc(), id_col.desc())
+                else:
+                    statement = statement.where(
+                        (sort_col > anchor_val) | ((sort_col == anchor_val) & (id_col > anchor_id))
+                    ).order_by(sort_col.asc(), id_col.asc())
+            elif asc_dir:
+                statement = statement.where(
+                    (sort_col > anchor_val) | ((sort_col == anchor_val) & (id_col > anchor_id))
+                ).order_by(sort_col.asc(), id_col.asc())
+            else:
+                statement = statement.where(
+                    (sort_col < anchor_val) | ((sort_col == anchor_val) & (id_col < anchor_id))
+                ).order_by(sort_col.desc(), id_col.desc())
+        elif asc_dir:
+            statement = statement.order_by(sort_col.asc(), id_col.asc())
+        else:
+            statement = statement.order_by(sort_col.desc(), id_col.desc())
+
+        async with self._session_context() as session:
+            result = await session.execute(statement.limit(limit))
+            return list(result.scalars().all())
+
+    async def count_for_client(self, *, client_id: str) -> int:
+        """Return total work item count for the authenticated client."""
         async with self._session_context() as session:
             result = await session.execute(
-                select(WorkItem)
-                .where(col(WorkItem.client_id) == client_id)
-                .order_by(col(WorkItem.created_at).desc())
-                .limit(limit)
+                select(func.count()).select_from(WorkItem).where(col(WorkItem.client_id) == client_id)
             )
-            return list(result.scalars().all())
+            return result.scalar_one()
 
     async def claim_one(self) -> WorkItem | None:
         """Claim queued work or safely recover a pre-dispatch claim lease."""

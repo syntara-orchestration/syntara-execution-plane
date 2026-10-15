@@ -67,4 +67,5 @@ class ClusterRead(BaseModel):
     enabled: bool
     labels: dict[str, str]
     project_ids: list[uuid.UUID] | None
+    created_at: datetime
     updated_at: datetime

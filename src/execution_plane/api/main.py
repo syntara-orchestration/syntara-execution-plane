@@ -20,7 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from execution_plane.api.auth import ServiceIdentity, get_service_identity, require_scope
 from execution_plane.api.openapi import configure_command_openapi
-from execution_plane.api.schemas import ClusterRead, ExecutionTargetRead, WorkItemRead
+from execution_plane.api.pagination import EPListParams, ResourcesResponse, generate_response
+from execution_plane.api.schemas import ClusterRead, ExecutionTargetRead, WorkItemRead  # noqa: TC001
 from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.commands.queries import EPResourceQueries
@@ -79,7 +80,7 @@ def strict_json(data: bytes) -> object:
         raise ValueError(error) from None
 
 
-def create_app() -> FastAPI:  # noqa: C901
+def create_app() -> FastAPI:  # noqa: C901, PLR0915
     """Replace legacy mutations with commands; expose only resource state."""
     app = FastAPI(
         title="Execution Plane API",
@@ -108,7 +109,7 @@ def create_app() -> FastAPI:  # noqa: C901
             raise HTTPException(status_code=503, detail="Database unavailable") from None
         return {"status": "ready"}
 
-    @app.get("/v1/capabilities", response_model=CapabilitiesRead)
+    @app.get("/v1/capabilities")
     async def capabilities(
         _identity: Annotated[ServiceIdentity, Depends(require_scope("capabilities:read"))],
     ) -> CapabilitiesRead:
@@ -116,8 +117,8 @@ def create_app() -> FastAPI:  # noqa: C901
 
     @app.post(
         "/v1/commands",
-        response_model=TransportReceipt,
         status_code=202,
+        responses={422: {"description": "Invalid or unsupported command"}},
     )
     async def receive_command(
         request: Request, identity: Annotated[ServiceIdentity, Depends(get_service_identity)]
@@ -151,15 +152,34 @@ def create_app() -> FastAPI:  # noqa: C901
             raise HTTPException(status_code=404, detail="Resource not found") from None
         return TransportReceipt(message_id=message.message_id, resource=result.resource)
 
-    @app.get("/v1/work-items", response_model=list[WorkItemRead])
+    @app.get("/v1/work-items", responses={422: {"description": "Invalid query parameters or cursor"}})
     async def work_items(
         request: Request,
         identity: Annotated[ServiceIdentity, Depends(require_scope("work-items:read"))],
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-    ) -> list[WorkItemRead]:
-        return await EPResourceQueries(request.app.state.ep_engine, identity.client_id).work_items(limit)
+        params: Annotated[EPListParams, Query()],
+    ) -> ResourcesResponse[WorkItemRead]:
+        sort_raw = params.sort or "-created_at"
+        if sort_raw.startswith("-"):
+            sort_field, sort_direction = sort_raw[1:], "desc"
+        else:
+            sort_field, sort_direction = sort_raw, "asc"
+        queries = EPResourceQueries(request.app.state.ep_engine, identity.client_id)
+        try:
+            raw = await queries.work_items(
+                params.limit,
+                cursor=params.cursor,
+                sort_field=sort_field,
+                sort_direction=sort_direction,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        trimmed, next_cur, prev_cur = generate_response(
+            raw, params.limit, params.cursor, sort_field=sort_field, sort_direction=sort_direction
+        )
+        total = await queries.count_work_items() if params.include_total else None
+        return ResourcesResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
 
-    @app.get("/v1/work-items/{resource_id}", response_model=WorkItemRead)
+    @app.get("/v1/work-items/{resource_id}")
     async def work_item(
         request: Request,
         resource_id: UUID,
@@ -167,15 +187,24 @@ def create_app() -> FastAPI:  # noqa: C901
     ) -> WorkItemRead:
         return await EPResourceQueries(request.app.state.ep_engine, identity.client_id).work_item(resource_id)
 
-    @app.get("/v1/clusters", response_model=list[ClusterRead])
+    @app.get("/v1/clusters", responses={422: {"description": "Invalid query parameters or cursor"}})
     async def clusters(
         request: Request,
         identity: Annotated[ServiceIdentity, Depends(require_scope("clusters:read"))],
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-    ) -> list[ClusterRead]:
-        return await EPResourceQueries(request.app.state.ep_engine, identity.client_id).clusters(limit)
+        params: Annotated[EPListParams, Query()],
+    ) -> ResourcesResponse[ClusterRead]:
+        queries = EPResourceQueries(request.app.state.ep_engine, identity.client_id)
+        try:
+            raw = await queries.clusters(params.limit, cursor=params.cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        trimmed, next_cur, prev_cur = generate_response(
+            raw, params.limit, params.cursor, sort_field="created_at", sort_direction="asc"
+        )
+        total = await queries.count_clusters() if params.include_total else None
+        return ResourcesResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
 
-    @app.get("/v1/clusters/{resource_id}", response_model=ClusterRead)
+    @app.get("/v1/clusters/{resource_id}")
     async def cluster(
         request: Request,
         resource_id: UUID,
@@ -183,15 +212,24 @@ def create_app() -> FastAPI:  # noqa: C901
     ) -> ClusterRead:
         return await EPResourceQueries(request.app.state.ep_engine, identity.client_id).cluster(resource_id)
 
-    @app.get("/v1/execution-targets", response_model=list[ExecutionTargetRead])
+    @app.get("/v1/execution-targets", responses={422: {"description": "Invalid query parameters or cursor"}})
     async def targets(
         request: Request,
         identity: Annotated[ServiceIdentity, Depends(require_scope("execution-targets:read"))],
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-    ) -> list[ExecutionTargetRead]:
-        return await EPResourceQueries(request.app.state.ep_engine, identity.client_id).targets(limit)
+        params: Annotated[EPListParams, Query()],
+    ) -> ResourcesResponse[ExecutionTargetRead]:
+        queries = EPResourceQueries(request.app.state.ep_engine, identity.client_id)
+        try:
+            raw = await queries.targets(params.limit, cursor=params.cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        trimmed, next_cur, prev_cur = generate_response(
+            raw, params.limit, params.cursor, sort_field="created_at", sort_direction="asc"
+        )
+        total = await queries.count_targets() if params.include_total else None
+        return ResourcesResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
 
-    @app.get("/v1/execution-targets/{resource_id}", response_model=ExecutionTargetRead)
+    @app.get("/v1/execution-targets/{resource_id}")
     async def target(
         request: Request,
         resource_id: UUID,

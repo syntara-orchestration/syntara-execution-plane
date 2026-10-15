@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar
 
 import sqlalchemy as sa
 from sqlalchemy import Column, String
@@ -33,6 +33,14 @@ class WorkItem(SQLModel, table=True):
     """A unit of work accepted and managed by the Execution Plane service."""
 
     __tablename__ = "work_items"
+    __sortable_fields__: ClassVar[list[str]] = [
+        "created_at",
+        "status",
+        "resource_cleanup_status",
+        "id",
+        "completed_at",
+        "claimed_at",
+    ]
     __table_args__ = (
         sa.Index("ix_work_items_status", "status"),
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),

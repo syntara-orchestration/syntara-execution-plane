@@ -108,9 +108,9 @@ async def test_work_queries_recover_large_results_without_command_history(comman
     assert read.json()["result"] == result
     assert read.json()["result_omitted"] is False
     assert (await client.get(f"/v1/work-items/{other_id}")).status_code == 404
-    listing = await client.get("/v1/work-items", params={"limit": 200})
+    listing = await client.get("/v1/work-items", params={"limit": 100})
     assert str(other_id) not in listing.text
-    row = next(item for item in listing.json() if item["id"] == str(work_id))
+    row = next(item for item in listing.json()["resources"] if item["id"] == str(work_id))
     assert row["result"] is None
     assert row["result_omitted"] is True
     assert "private-secret" not in read.text

@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import Column, DateTime, Index, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -16,6 +17,7 @@ class ClusterBinding(SQLModel, table=True):
     """EP-owned desired state for one client integration and its compute target."""
 
     __tablename__ = "cluster_bindings"
+    __sortable_fields__: ClassVar[list[str]] = ["created_at"]
     __table_args__ = (Index("ix_cluster_bindings_reconcile", "status", "updated_at"), {"schema": EP_SCHEMA})
 
     client_id: str = Field(sa_column=Column(String(128), primary_key=True))

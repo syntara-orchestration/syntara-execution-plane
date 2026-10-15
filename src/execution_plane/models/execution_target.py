@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import Column, Index, UniqueConstraint, text
 from sqlalchemy import Enum as SAEnum
@@ -43,6 +43,7 @@ class ExecutionTarget(SQLModel, table=True):
     """A registered compute environment where worker pods run."""
 
     __tablename__ = "execution_targets"
+    __sortable_fields__: ClassVar[list[str]] = ["created_at"]
     __table_args__ = (
         UniqueConstraint("cluster_id", "name", name="execution_targets_cluster_name_key"),
         Index("ix_execution_targets_name", "name"),
