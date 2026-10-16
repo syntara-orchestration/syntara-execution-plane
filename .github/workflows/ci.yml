@@ -26,7 +26,7 @@ jobs:
       - run: make test-coverage TEST_ARGS='--ignore=tests/integration -m "not e2e"'
       - name: Upload unit coverage and test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ep-coverage-unit
           path: |
@@ -122,7 +122,7 @@ jobs:
 
       - name: Upload PostgreSQL coverage and test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ep-coverage-postgres
           path: |
@@ -204,7 +204,7 @@ jobs:
 
       - name: Upload Kubernetes coverage and test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ep-coverage-kind
           path: |
@@ -262,14 +262,14 @@ jobs:
         run: printf '%s\n' "$PR_NUMBER" > pr-number.txt
       - name: Upload PR number
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ep-pr-number
           path: pr-number.txt
           if-no-files-found: error
           retention-days: 7
       - name: Upload combined reports
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ep-coverage-combined
           path: |
