@@ -28,6 +28,7 @@ from execution_plane.execution_target_reconciler.placement import WorkerManagerR
 from execution_plane.models.execution_target import BackendType
 from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItemStatus
+from execution_plane.work_item_client import build_payload
 from execution_plane.work_store import WorkStore
 from execution_plane.worker import _place_reserved_item, _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
@@ -38,16 +39,6 @@ if TYPE_CHECKING:
 _NODE_IMAGE = "quay.io/ahetheri/syntara-node-script:migration-test"
 _WORKLOAD_WAIT_SECONDS = 5
 _JOB_WAIT_TIMEOUT_SECONDS = 30
-
-_SCRIPT_INVOCATION = {
-    "version": 1,
-    "operation": "execute",
-    "inputs": {"language": "bash", "code": "echo ep-integration-ok"},
-    "credentials": {"resolved": {}},
-    "workflow_context": {},
-    "settings": {},
-    "timeout_seconds": 120,
-}
 
 _SLEEP_SCRIPT_INVOCATION = {
     "version": 1,
@@ -108,6 +99,7 @@ def _worker_managers(
     return registry
 
 
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_work_item_dispatched_to_kind_cluster_reaches_completed(ep_cluster: Cluster) -> None:
@@ -129,10 +121,13 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(ep_cluster
         item = await work_store.dispatch(
             client_id=client_id,
             item_id=uuid.uuid4(),
-            payload={
-                "image": _NODE_IMAGE,
-                "invocation": _SCRIPT_INVOCATION,
-            },
+            payload=build_payload(
+                language="bash",
+                code="echo ep-integration-ok",
+                timeout_seconds=120,
+                environment={},
+                image=_NODE_IMAGE,
+            ),
         )
 
         worker_managers = _worker_managers(target_store, cluster_store, work_store, settings)

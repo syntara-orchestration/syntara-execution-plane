@@ -325,3 +325,83 @@ async def test_failed_target_creation_rolls_back_and_default_targets_are_protect
         await client.post("/v1/commands", json=command_message("execution_target.register", payload))
     async with sessions() as session:
         assert await session.get(ExecutionTarget, target_id) is None
+
+
+def _cluster_register_payload(key) -> dict[str, object]:
+    return {
+        "resource_key": str(key),
+        "desired_revision": 1,
+        "name": "test",
+        "endpoint": "https://cluster.test",
+        "namespace": "ep",
+        "credential": "private-secret",
+    }
+
+
+@pytest.mark.parametrize("omitted", ["name", "endpoint", "namespace"])
+async def test_cluster_register_requires_each_shared_config_field(command_client, omitted):
+    """Every required field in the shared ClusterConfigBase shape is enforced end to end."""
+    client, sessions = command_client
+    key = uuid4()
+    payload = _cluster_register_payload(key)
+    del payload[omitted]
+    response = await client.post("/v1/commands", json=command_message("cluster.register", payload))
+    assert response.status_code == 422, response.text
+    assert "private-secret" not in response.text
+    async with sessions() as session:
+        assert await session.get(ClusterBinding, ("ao", key)) is None
+
+
+async def test_cluster_register_persists_the_full_shared_shape(command_client):
+    """A valid command round-trips every shared field into the binding, unchanged."""
+    client, sessions = command_client
+    key, project = uuid4(), uuid4()
+    payload = {
+        **_cluster_register_payload(key),
+        "project_ids": [str(project)],
+        "labels": {"team": "platform"},
+    }
+    created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
+    assert created.status_code == 202, created.text
+    async with sessions() as session:
+        row = await session.get(ClusterBinding, ("ao", key))
+    assert row.name == "test"
+    assert row.endpoint == "https://cluster.test"
+    assert row.namespace == "ep"
+    assert row.credential == "private-secret"
+    assert row.ca_certificate is None
+    assert row.project_ids == [project]
+    assert row.labels == {"team": "platform"}
+    assert row.enabled is True
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("endpoint", "http://cluster.test"),
+        ("endpoint", "https://user:pw@cluster.test"),
+        ("ca_certificate", "not-a-valid-pem"),
+    ],
+)
+async def test_cluster_register_rejects_invalid_field_values(command_client, field, value):
+    """The field and model validators still fire after fields moved to the base."""
+    client, sessions = command_client
+    key = uuid4()
+    payload = {**_cluster_register_payload(key), field: value}
+    response = await client.post("/v1/commands", json=command_message("cluster.register", payload))
+    assert response.status_code == 422, response.text
+    assert "private-secret" not in response.text
+    async with sessions() as session:
+        assert await session.get(ClusterBinding, ("ao", key)) is None
+
+
+async def test_enabled_cluster_binding_requires_a_credential(command_client):
+    """The cross-field model validator rejects an enabled binding without a credential."""
+    client, sessions = command_client
+    key = uuid4()
+    payload = _cluster_register_payload(key)
+    del payload["credential"]  # enabled defaults to True
+    response = await client.post("/v1/commands", json=command_message("cluster.register", payload))
+    assert response.status_code == 422, response.text
+    async with sessions() as session:
+        assert await session.get(ClusterBinding, ("ao", key)) is None

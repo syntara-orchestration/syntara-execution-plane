@@ -8,12 +8,11 @@ from pydantic import Field, StrictBool, StrictStr, field_validator, model_valida
 
 from execution_plane_client.commands import ResourceRevision, validate_endpoint
 from execution_plane_client.commands.base import CommandPayload
+from execution_plane_client.protocol import WireModel
 
 
-class ClusterRegister(ResourceRevision, CommandPayload):
-    """Create or replace the complete desired configuration of a binding."""
-
-    command_type: ClassVar[str] = "cluster.register"
+class ClusterConfigBase(WireModel):
+    """Desired configuration fields shared across all cluster-binding commands."""
 
     name: Annotated[StrictStr, Field(min_length=1, max_length=255)]
     endpoint: Annotated[StrictStr, Field(max_length=2048)]
@@ -23,6 +22,12 @@ class ClusterRegister(ResourceRevision, CommandPayload):
     project_ids: list[UUID] | None = None
     labels: dict[str, str] = Field(default_factory=dict)
     enabled: StrictBool = True
+
+
+class ClusterRegister(ClusterConfigBase, ResourceRevision, CommandPayload):
+    """Create or replace the complete desired configuration of a binding."""
+
+    command_type: ClassVar[str] = "cluster.register"
 
     @field_validator("endpoint")
     @classmethod

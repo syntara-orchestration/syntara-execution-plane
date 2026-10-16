@@ -14,10 +14,12 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from pydantic import ValidationError
 
 from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItemStatus
 from execution_plane.worker_manager.vanilla_k8s.transport import TransportError, run_job
+from execution_plane_client.commands.work import WorkExecute
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
@@ -80,7 +82,7 @@ class VanillaK8sWorkerManager:
         self._work_store = work_store
         self._settings = settings
 
-    async def dispatch(self, work_item: WorkItem) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
+    async def dispatch(self, work_item: WorkItem) -> dict[str, Any]:  # noqa: C901, PLR0915
         """Allocate the worker, stream its result, and persist the WorkItem outcome.
 
         Returns ``{"output": ...}`` on success. Raises:
@@ -97,16 +99,14 @@ class VanillaK8sWorkerManager:
             message = "Assigned execution target is unavailable"
             raise RetryableDispatchError(message)
 
-        payload = work_item.payload or {}
-        invocation = payload.get("invocation")
-        image = payload.get("image")
-        if not isinstance(invocation, dict) or not isinstance(image, str) or not image:
-            message = "Work item payload is missing 'invocation' or 'image'"
-            raise WorkItemPayloadError(message)
-        output_config: dict[str, str] | None = payload.get("output_config")
-        if output_config is not None and not isinstance(output_config, dict):
-            message = "Work item payload has an invalid 'output_config'"
-            raise WorkItemPayloadError(message)
+        try:
+            command = WorkExecute.model_validate(work_item.payload or {})
+        except ValidationError as exc:
+            message = "Work item payload is not a valid work.execute command"
+            raise WorkItemPayloadError(message) from exc
+        image = command.image
+        invocation = command.invocation.model_dump(mode="json")
+        output_config = command.output_config
         cluster = await self._cluster_store.get(target.cluster_id, include_secret=True)
         if cluster is None or not cluster.enabled:
             message = "Assigned cluster is unavailable"

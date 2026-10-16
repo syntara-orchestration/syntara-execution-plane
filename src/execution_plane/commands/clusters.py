@@ -9,12 +9,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.models.cluster_binding import ClusterBinding
 from execution_plane_client.commands.base import CommandPayload
-from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
+from execution_plane_client.commands.clusters import (
+    ClusterConfigBase,
+    ClusterDelete,
+    ClusterRegister,
+    ClusterUpdate,
+)
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
-
-_CONFIG_FIELDS = ("name", "endpoint", "namespace", "credential", "ca_certificate", "project_ids", "labels", "enabled")
 
 
 class ResourceNotFoundError(LookupError):
@@ -24,6 +27,15 @@ class ResourceNotFoundError(LookupError):
 class ClusterCommandHandler:
     """Retain resource revisions, never command identities or envelopes."""
 
+    @property
+    def _config_fields(self) -> tuple[str, ...]:
+        """Resolve the shared configuration shape from the command at call time.
+
+        The persisted binding mirrors these fields; sourcing them from the command
+        keeps the two in lockstep without a second hand-maintained list.
+        """
+        return tuple(ClusterConfigBase.model_fields)
+
     async def handle(  # noqa: PLR0912 - Validate and apply binding revisions within one transaction.
         self, message: MessageEnvelope, payload: CommandPayload, context: EPCommandContext
     ) -> HandlingResult:
@@ -31,6 +43,7 @@ class ClusterCommandHandler:
         del message
         if not isinstance(payload, ClusterRegister | ClusterUpdate | ClusterDelete):
             raise UnsupportedCommand
+        config_fields = self._config_fields
         sessions = async_sessionmaker(context.engine, expire_on_commit=False)
         async with sessions.begin() as session:
             # Lock the domain identity even when its binding does not yet exist.
@@ -40,7 +53,7 @@ class ClusterCommandHandler:
             if isinstance(payload, ClusterUpdate | ClusterDelete):
                 if binding is None:
                     raise ResourceNotFoundError
-                values = {field: getattr(binding, field) for field in _CONFIG_FIELDS}
+                values = {field: getattr(binding, field) for field in config_fields}
                 if isinstance(payload, ClusterUpdate):
                     values.update(payload.model_dump(exclude_unset=True, exclude={"resource_key", "desired_revision"}))
                 else:
@@ -54,7 +67,7 @@ class ClusterCommandHandler:
             if binding is not None and desired.desired_revision < binding.revision:
                 raise ProtocolConflict
             if binding is not None and desired.desired_revision == binding.revision:
-                if any(getattr(binding, key) != getattr(desired, key) for key in _CONFIG_FIELDS):
+                if any(getattr(binding, key) != getattr(desired, key) for key in config_fields):
                     raise ProtocolConflict
             else:
                 now = datetime.now(UTC)
@@ -65,11 +78,11 @@ class ClusterCommandHandler:
                         created_at=now,
                         updated_at=now,
                         revision=desired.desired_revision,
-                        **{key: getattr(desired, key) for key in _CONFIG_FIELDS},
+                        **{key: getattr(desired, key) for key in config_fields},
                     )
                     session.add(binding)
                 else:
-                    for key in _CONFIG_FIELDS:
+                    for key in config_fields:
                         setattr(binding, key, getattr(desired, key))
                     binding.revision = desired.desired_revision
                     binding.status = "pending"
