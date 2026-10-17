@@ -75,6 +75,12 @@ jobs:
         with:
           repository: ${{ github.event.workflow_run.head_repository.full_name }}
           ref: ${{ github.event.workflow_run.head_sha }}
+          # Safe opt-in: workflow_run loads this trusted default-branch
+          # definition, all actions are pinned, PR/run identity is validated,
+          # scanner configuration comes from the base repository, SonarCloud is
+          # pinned, credentials are not persisted, and no fork-provided scripts
+          # are executed. The pinned scanner only consumes source and reports.
+          allow-unsafe-pr-checkout: true
           path: pr
           fetch-depth: 0
           show-progress: false
