@@ -38,7 +38,7 @@ EP_WORKER_DEPLOY="${EP_WORKER_DEPLOY:-${AO_NAME}-execution-plane-worker}"
 SA_NAME="${SA_NAME:-syntara-dispatcher}"
 CLUSTER_NAME="${CLUSTER_NAME:-27-next-ao-operator}"
 ENDPOINT="${ENDPOINT:-https://kubernetes.default.svc}"
-NODE_IMAGE="${NODE_IMAGE:-quay.io/ahetheri/syntara-node-script:migration-test}"
+NODE_IMAGE="${NODE_IMAGE:-localhost/syntara-sdk-script:dev}"
 CREDENTIAL_REF="${CREDENTIAL_REF:-}"
 AO_API_BASE="${AO_API_BASE:-https://127.0.0.1:8443}"
 WORK_DIR=""
@@ -221,14 +221,46 @@ _node_exec() {
   node=$(_kind_node_container)
   if command -v podman >/dev/null 2>&1 && podman inspect "${node}" >/dev/null 2>&1; then
     podman exec "${node}" "$@"
-    return 0
+    return
   fi
   if command -v docker >/dev/null 2>&1 && docker inspect "${node}" >/dev/null 2>&1; then
     docker exec "${node}" "$@"
-    return 0
+    return
   fi
   echo "ERROR: Kind node container ${node} not found" >&2
   return 1
+}
+
+_container_runtime() {
+  if command -v podman >/dev/null 2>&1; then
+    printf '%s' podman
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    printf '%s' docker
+    return 0
+  fi
+  echo "ERROR: podman or docker is required to load node images" >&2
+  return 1
+}
+
+_node_has_image() {
+  local image=$1
+  _node_exec crictl inspecti -q "${image}" >/dev/null
+}
+
+_build_and_load_node_image() {
+  local image=$1
+  local runtime archive
+  runtime=$(_container_runtime)
+  archive="${WORK_DIR}/node-image.tar"
+
+  echo "=== Building local script image ${image} ==="
+  "${runtime}" build -f "${REPO_ROOT}/tests/fixtures/sdk_script/Containerfile" \
+    -t "${image}" "${REPO_ROOT}/tests/fixtures/sdk_script"
+  echo "=== Loading ${image} into Kind cluster ${CLUSTER_NAME} ==="
+  "${runtime}" save --output "${archive}" "${image}"
+  kind load image-archive "${archive}" --name "${CLUSTER_NAME}"
 }
 
 _prepull_node_image() {
@@ -236,9 +268,19 @@ _prepull_node_image() {
   local node
   node=$(_kind_node_container)
   echo "=== Pre-pull ${image} on Kind node ${node} ==="
-  _node_exec crictl pull "${image}"
+  if ! _node_has_image "${image}"; then
+    if [[ "${image}" == "localhost/syntara-sdk-script:dev" ]]; then
+      _build_and_load_node_image "${image}"
+    else
+      _node_exec crictl pull "${image}"
+    fi
+  fi
+  if ! _node_has_image "${image}"; then
+    echo "ERROR: ${image} is not present on Kind node ${node}" >&2
+    exit 1
+  fi
   _node_exec crictl images
-  echo "pre-pulled ${image} on ${node}"
+  echo "prepared ${image} on ${node}"
 }
 
 _allow_ep_callback_identity() {

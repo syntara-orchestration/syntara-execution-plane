@@ -27,14 +27,11 @@ commands or provide command-status or command-children endpoints.
     "payload": {
       "image": "registry.example/node:latest",
       "invocation": {
-        "version": 1,
-        "operation": "execute",
+        "workflow_run_id": "workflow-1",
+        "step_revision_id": "script.v1",
         "inputs": {"language": "python", "code": "print('hello')"},
-        "credentials": {},
-        "workflow_context": {},
-        "settings": {},
-        "timeout_seconds": 60,
-        "max_output_bytes": 1048576
+        "runtime_context": {},
+        "timeout_seconds": 60
       }
     }
   }
@@ -46,6 +43,11 @@ The envelope and nested command IDs must match. Work commands use that UUID as
 stored. HTTP 202 returns `received`, `message_id` and an optional `resource`
 reference. It confirms application of the domain request, not completion of a
 job, cluster setup or draining.
+
+The workload image must implement the [SDK container service](workload-protocol.md)
+and advertise the requested step revision. EP assigns the attempt invocation ID.
+Script environment variables belong in `inputs.environment`; secret-file
+delivery is deferred. The former NodeService invocation shape is no longer accepted.
 
 The caller authenticates using the existing ES256 service JWT and deployed TLS
 configuration. `source_id` and `scope.client_id` must match its verified

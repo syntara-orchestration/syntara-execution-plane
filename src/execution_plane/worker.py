@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import asyncpg  # type: ignore[import-untyped]
@@ -134,6 +135,7 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
             logger.warning("Node returned a terminal failure", work_item_id=wi_id, error=str(exc))
             return
         result: dict[str, Any] = {"error": str(exc), "error_type": exc.error_type}
+        result.update(exc.details)
         if exc.output is not None:
             result["output"] = exc.output
         await work_progress.set_result(
@@ -171,20 +173,29 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
         logger.exception("Worker outcome needs reconciliation", work_item_id=wi_id, error_type=type(e).__name__)
 
 
-async def _dispatch_item(
-    dispatch_event: asyncio.Event,
-    inflight: dict[asyncio.Task[None], None],
+def _start_dispatch_task(
     params: _ProcessItemKwargs,
+    inflight: dict[asyncio.Task[None], None],
+    dispatch_event: asyncio.Event,
+    *,
+    name: str,
+) -> asyncio.Task[None]:
+    """Start a dispatch task and keep a strong reference until it completes."""
+    task = asyncio.create_task(_process_item(**params), name=name)
+    inflight[task] = None
+    task.add_done_callback(partial(_finish_dispatch_task, inflight=inflight, dispatch_event=dispatch_event))
+    return task
+
+
+def _finish_dispatch_task(
+    task: asyncio.Task[None],
+    *,
+    inflight: dict[asyncio.Task[None], None],
+    dispatch_event: asyncio.Event,
 ) -> None:
-    """Wrap _process_item for fire-and-forget use: track self in inflight, signal on completion."""
-    task = asyncio.current_task()
-    assert task is not None  # noqa: S101
-    inflight[task] = None  # None value = dispatching in progress
-    try:
-        await _process_item(**params)
-    finally:
-        del inflight[task]
-        dispatch_event.set()
+    """Release a completed dispatch slot and wake the polling loop."""
+    inflight.pop(task, None)
+    dispatch_event.set()
 
 
 async def _listen_loop(database_url: str, dispatch_event: asyncio.Event) -> None:
@@ -251,18 +262,16 @@ async def _poll_loop(
             if item is None:
                 break
             logger.info("Claimed work item", work_item_id=str(item.id))
-            asyncio.create_task(  # noqa: RUF006 — _dispatch_item self-registers in inflight
-                _dispatch_item(
-                    dispatch_event,
-                    inflight,
-                    {
-                        "item": item,
-                        "work_progress": work_progress,
-                        "target_queries": target_queries,
-                        "worker_managers": worker_managers,
-                        "settings": settings,
-                    },
-                ),
+            _start_dispatch_task(
+                {
+                    "item": item,
+                    "work_progress": work_progress,
+                    "target_queries": target_queries,
+                    "worker_managers": worker_managers,
+                    "settings": settings,
+                },
+                inflight,
+                dispatch_event,
                 name=f"ep-dispatch-{item.id}",
             )
 

@@ -150,17 +150,10 @@ jobs:
       # The transport runs node pods with imagePullPolicy: IfNotPresent. Load the
       # image onto the kind node up front so the pod starts immediately rather
       # than racing a cold registry pull against the dispatch startup deadline.
-      - name: Load the script node image onto the kind node
+      - name: Build and load the SDK script test workload
         run: |
-          image="quay.io/ahetheri/syntara-node-script:migration-test"
-          # The image is multi-arch, but the runner's Docker CLI lacks
-          # `pull --all-platforms`. Pull the amd64 child manifest and restore
-          # the tag so Kind exports a single-platform image.
-          digest="$(docker manifest inspect "$image" | jq -r \
-            '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest')"
-          test -n "$digest"
-          docker pull "$image@$digest"
-          docker tag "$image@$digest" "$image"
+          image="localhost/syntara-sdk-script:dev"
+          docker build -f tests/fixtures/sdk_script/Containerfile -t "$image" tests/fixtures/sdk_script
           kind load docker-image "$image" --name integration-test
 
       - name: Export cluster coordinates for the test suite
@@ -217,7 +210,9 @@ jobs:
         with:
           enable-cache: true
       # Reporting needs development tools, not the editable EP packages.
-      - run: uv sync --locked --only-group dev --no-build
+      # uv still prepares metadata for the locked SDK source archives while
+      # resolving the project, so allow their build backends to run.
+      - run: uv sync --locked --only-group dev
       - name: Download coverage from each test job
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

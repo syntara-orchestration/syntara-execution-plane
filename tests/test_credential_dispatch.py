@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.config import EPSettings
 from execution_plane.credential_resolution.resolver import (
@@ -76,12 +77,10 @@ def _resources() -> tuple[Cluster, ExecutionTarget, WorkItem]:
         payload={
             "image": "registry.example/node",
             "invocation": {
+                "workflow_run_id": "workflow-1",
+                "step_revision_id": "script.v1",
                 "inputs": {},
-                "credentials": {},
-                "workflow_context": {},
-                "settings": {},
                 "timeout_seconds": 60,
-                "max_output_bytes": 1024,
             },
         },
         created_at=now,
@@ -124,14 +123,24 @@ async def test_dispatch_resolves_the_cluster_reference_and_passes_the_token_to_k
 
     def run_job(*, target: dict[str, Any], **_kwargs: object) -> dict[str, Any]:
         calls.append({"target": target})
-        return {"result": {"StatusCode": 0, "Result": {}}}
+        return {
+            "kind": "result",
+            "result": ContainerResult(
+                "sha256:" + "a" * 64,
+                output={},
+                status_code=0,
+                error_code="",
+                error_message="",
+            ),
+        }
 
     monkeypatch.setattr(manager_module, "run_job", run_job)
     manager = _manager(settings, resolver, resources)
 
     result = await manager.dispatch(work_item)
 
-    assert result == {"output": {}}
+    assert result["output"] == {}
+    assert result["status_code"] == 0
     assert calls[0] == {"credential_ref": cluster.credential_ref, "client_id": cluster.source_client_id}
     assert calls[1]["target"]["token"] == "resolved-token"  # noqa: S105
     assert target.credential_ref != cluster.credential_ref

@@ -15,14 +15,10 @@ from execution_plane_client.commands.work import WorkExecute
 
 def _payload(**invocation_overrides: object) -> dict[str, Any]:
     invocation: dict[str, Any] = {
-        "version": 1,
-        "operation": "execute",
+        "workflow_run_id": "workflow-1",
+        "step_revision_id": "script.v1",
         "inputs": {},
-        "credentials": {},
-        "workflow_context": {},
-        "settings": {},
         "timeout_seconds": 60,
-        "max_output_bytes": 1024,
     }
     invocation.update(invocation_overrides)
     return {"invocation": invocation, "image": "registry.example/node:latest"}
@@ -65,13 +61,40 @@ def test_work_item_read_excludes_completion_delivery_internals() -> None:
 def test_non_object_credentials_raise_validation_error_not_type_error() -> None:
     with pytest.raises(
         ValidationError,
-        match=r"invocation\.credentials",
+        match=r"invocation\.inputs",
     ) as caught:
-        WorkExecute.model_validate(_payload(credentials="not-an-object"))
+        WorkExecute.model_validate(_payload(inputs="not-an-object"))
     assert not isinstance(caught.value.__cause__, TypeError)
 
 
-@pytest.mark.parametrize("field", ["inputs", "credentials", "workflow_context", "settings"])
+@pytest.mark.parametrize("field", ["inputs", "runtime_context"])
 def test_work_item_submit_rejects_non_object_invocation_fields(field: str) -> None:
+    payload = _payload(**{field: "not-an-object"})
     with pytest.raises(ValidationError, match=rf"invocation\.{field}"):
-        WorkExecute.model_validate(_payload(**{field: "not-an-object"}))
+        WorkExecute.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["credentials", "credential_file_paths", "workflow_context", "settings", "version"])
+def test_legacy_and_unmounted_credential_fields_are_rejected(field: str) -> None:
+    payload = _payload(**{field: {}})
+    with pytest.raises(ValidationError, match=rf"invocation\.{field}"):
+        WorkExecute.model_validate(payload)
+
+
+def test_script_environment_variables_remain_inputs() -> None:
+    payload = WorkExecute.model_validate(_payload(inputs={"environment": {"GREETING": "hello"}}))
+    assert payload.invocation.inputs["environment"] == {"GREETING": "hello"}
+
+
+@pytest.mark.parametrize("field", ["workflow_run_id", "step_revision_id"])
+@pytest.mark.parametrize("value", ["", "bad/id", "*", "x" * 257])
+def test_sdk_identities_are_validated_before_dispatch(field: str, value: str) -> None:
+    payload = _payload(**{field: value})
+    with pytest.raises(ValidationError, match=rf"invocation\.{field}"):
+        WorkExecute.model_validate(payload)
+
+
+def test_sdk_timeout_limit_is_validated_before_dispatch() -> None:
+    payload = _payload(timeout_seconds=86_401)
+    with pytest.raises(ValidationError, match="timeout_seconds"):
+        WorkExecute.model_validate(payload)

@@ -18,17 +18,15 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import portforward
 
-from execution_plane.node_protocol.client import NodeRpcError, invoke
-from execution_plane.node_protocol.codec import CHANNEL_OPTIONS, MAX_MESSAGE_BYTES, PORT, encode_request
 from execution_plane.worker_manager.vanilla_k8s.forward import forward_socket
+from execution_plane.worker_manager.vanilla_k8s.sdk_adaptor import CHANNEL_OPTIONS, PORT, WorkloadRpcError, invoke
+from execution_plane_client.commands.work import WorkloadInvocation
 
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable
 
 logger = structlog.stdlib.get_logger(__name__)
-
-MAX_FRAME_BYTES = MAX_MESSAGE_BYTES
 
 
 def _network_contains(
@@ -309,10 +307,11 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
     """Execute once in a cold-start Job; application data travels only over gRPC."""
     name = "syntara-node-" + hashlib.sha256(attempt_id.encode()).hexdigest()[:32]
     namespace = target["namespace"]
-    request = encode_request(invocation, attempt_id)
-    if request.ByteSize() > MAX_FRAME_BYTES:
-        message = "Node invocation exceeds transport limit"
-        raise TransportError(message)
+    try:
+        WorkloadInvocation.model_validate(invocation)
+    except ValueError:
+        message = "Workload invocation is invalid"
+        raise TransportError(message) from None
     with tempfile.TemporaryDirectory(prefix="syntara-node-") as directory:
         config = client.Configuration()
         config.host = target["base_url"]
@@ -506,7 +505,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                             )
                             on_result(frame)
                             return frame
-                    except NodeRpcError as exc:
+                    except WorkloadRpcError as exc:
                         # Running can precede the listener. A refused kubelet
                         # connection needs a new port-forward, before Execute only.
                         if not exc.retryable or time.monotonic() >= grpc_deadline:
@@ -517,7 +516,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                         with suppress(Exception):
                             connection.close()
                         connection = None
-            except NodeRpcError as exc:
+            except WorkloadRpcError as exc:
                 pending_transport_error = TransportError(
                     str(exc),
                     retryable=exc.retryable,

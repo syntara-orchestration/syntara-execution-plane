@@ -6,7 +6,7 @@ import asyncio
 import os
 import signal
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, cast
 
 import pytest
 
@@ -230,29 +230,32 @@ async def test_run_worker_completes_cleanup_after_shutdown_signal(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_dispatch_item_registers_and_clears_inflight(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_dispatch_task_is_owned_and_released(monkeypatch: pytest.MonkeyPatch) -> None:
     from execution_plane import worker
 
     snapshots: list[int] = []
-    inflight: dict[asyncio.Task, None] = {}
+    inflight: dict[asyncio.Task[None], None] = {}
     dispatch_event = asyncio.Event()
-    params = {
-        "item": object(),
-        "work_progress": object(),
-        "target_queries": object(),
-        "worker_managers": object(),
-        "settings": object(),
-    }
+    params = cast(
+        "worker._ProcessItemKwargs",
+        {
+            "item": object(),
+            "work_progress": object(),
+            "target_queries": object(),
+            "worker_managers": object(),
+            "settings": object(),
+        },
+    )
 
     async def fake_process_item(**_kwargs: object) -> None:
         snapshots.append(len(inflight))
 
     monkeypatch.setattr(worker, "_process_item", fake_process_item)
 
-    await asyncio.create_task(
-        worker._dispatch_item(dispatch_event, inflight, params),  # type: ignore[arg-type]
-        name="test-dispatch",
-    )
+    task = worker._start_dispatch_task(params, inflight, dispatch_event, name="test-dispatch")
+
+    assert task in inflight
+    await task
 
     assert snapshots == [1], "task should be in inflight while _process_item runs"
     assert len(inflight) == 0, "task should remove itself on completion"
@@ -260,18 +263,21 @@ async def test_dispatch_item_registers_and_clears_inflight(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_dispatch_item_signals_and_clears_inflight_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_dispatch_task_is_released_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
     from execution_plane import worker
 
-    inflight: dict[asyncio.Task, None] = {}
+    inflight: dict[asyncio.Task[None], None] = {}
     dispatch_event = asyncio.Event()
-    params = {
-        "item": object(),
-        "work_progress": object(),
-        "target_queries": object(),
-        "worker_managers": object(),
-        "settings": object(),
-    }
+    params = cast(
+        "worker._ProcessItemKwargs",
+        {
+            "item": object(),
+            "work_progress": object(),
+            "target_queries": object(),
+            "worker_managers": object(),
+            "settings": object(),
+        },
+    )
 
     async def fake_process_item(**_kwargs: object) -> None:
         msg = "boom"
@@ -279,10 +285,8 @@ async def test_dispatch_item_signals_and_clears_inflight_on_error(monkeypatch: p
 
     monkeypatch.setattr(worker, "_process_item", fake_process_item)
 
-    task = asyncio.create_task(
-        worker._dispatch_item(dispatch_event, inflight, params),  # type: ignore[arg-type]
-        name="test-dispatch-error",
-    )
+    task = worker._start_dispatch_task(params, inflight, dispatch_event, name="test-dispatch-error")
+
     with pytest.raises(ValueError, match="boom"):
         await task
 

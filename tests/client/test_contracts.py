@@ -74,12 +74,10 @@ def test_completion_is_a_command_with_a_parent():
 
 @pytest.mark.parametrize("bad", [True, 0, -1])
 def test_invocation_rejects_invalid_timeout(bad):
-    from execution_plane_client.commands.work import NodeInvocation
+    from execution_plane_client.commands.work import WorkloadInvocation
 
     with pytest.raises(ValidationError):
-        NodeInvocation(
-            inputs={}, credentials={}, workflow_context={}, settings={}, timeout_seconds=bad, max_output_bytes=1024
-        )
+        WorkloadInvocation(workflow_run_id="workflow-1", step_revision_id="script.v1", inputs={}, timeout_seconds=bad)
 
 
 def test_cluster_commands_use_uuid_credential_refs():

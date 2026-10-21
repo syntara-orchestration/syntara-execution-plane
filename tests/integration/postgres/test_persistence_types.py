@@ -196,14 +196,10 @@ async def test_dispatch_duplicate_id_raises() -> None:
 _VALID_INVOCATION_PAYLOAD = {
     "image": "quay.io/example/node:latest",
     "invocation": {
-        "version": 1,
-        "operation": "execute",
+        "workflow_run_id": "workflow-1",
+        "step_revision_id": "script.v1",
         "inputs": {},
-        "credentials": {},
-        "workflow_context": {},
-        "settings": {},
         "timeout_seconds": 300,
-        "max_output_bytes": 1048576,
     },
 }
 

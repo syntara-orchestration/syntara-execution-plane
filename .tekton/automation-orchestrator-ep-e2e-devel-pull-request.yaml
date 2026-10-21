@@ -37,7 +37,9 @@ spec:
     - name: ao-operator-revision
       value: AAP-90779-ep-from-source
     - name: ao-revision
-      value: feat/ANSTRAT-1803
+      value: 4d0f7b15e2ac91471e3947964b3e9e99e6221fde
+    - name: ao-pr-number
+      value: 1035 
   taskRunTemplate:
     serviceAccountName: konflux-integration-runner
   pipelineSpec:
@@ -604,6 +606,15 @@ spec:
                   install -m 644 /tmp/install-syntara-from-src \
                     \$HOME/aap-dev/skaffolding/addons/ao/containers/fragments/ao/install-syntara-from-src
                   grep -q git-core \$HOME/aap-dev/skaffolding/addons/ao/containers/fragments/ao/install-syntara-from-src
+
+                  # Rootless Podman defaults to a 2048 PID limit. Inside Kind,
+                  # systemd applies roughly 15% of that limit to pod cgroups,
+                  # yielding pids.max=307 and fork failures under the full AO
+                  # stack. Raise the limit before deploy-ao creates Kind.
+                  mkdir -p \$HOME/.config/containers
+                  printf '%s\n' '[containers]' 'pids_limit = 65536' \
+                    > \$HOME/.config/containers/containers.conf
+
                   AO_MK=\$HOME/aap-dev/makefiles/ao.mk
                   COMMON_MK=\$HOME/aap-dev/makefiles/common.mk
                   if ! grep -q '^AO_EXECUTION_PLANE' \"\${AO_MK}\"; then

@@ -100,8 +100,11 @@ The target was a uniquely named namespace in K3d Kubernetes `v1.31.5+k3s1`
 the EP database and Compose project were isolated and removed afterward.
 
 This was a direct EP WorkItem submission using the first-release API contract,
-which currently accepts `workload_type: "script"`; the submitted image was the
+which at that revision accepted `workload_type: "script"`; the submitted image was the
 HTTP executor. It validates EP's generic Job/gRPC execution path for that image.
+The current SDK protocol replacement requires new payloads and images; see
+[workload protocol](workload-protocol.md). That historical run does not validate
+the replacement.
 It did not run AO's native `http_request` Temporal activity, exercise AO's
 workflow-to-EP dispatch or completion notification, or test another EP workload type.
 The pod's NetworkPolicy was created with the Job, but Flannel does not enforce
