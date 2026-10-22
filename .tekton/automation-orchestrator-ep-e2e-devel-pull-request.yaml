@@ -35,17 +35,20 @@ spec:
     - name: pipeline-github-pr-number
       value: "{{pull_request_number}}"
     - name: aap-dev-revision
-      value: main
+      value: AAP-90779-ep-from-source
+    - name: ao-operator-revision
+      value: AAP-90779-ep-from-source
     - name: ao-revision
       value: devel
   taskRunTemplate:
     serviceAccountName: konflux-integration-runner
   pipelineSpec:
     description: |
-      Prototype: reuse the ao-api-tests Kind cluster (provision + deploy-ao at
-      ao-revision from aap-dev main, not this Execution Plane PR). Copy this
-      Execution Plane revision onto the Kind VM, build ./Containerfile into the
-      Kind registry, prepare namespace execution-plane, and run tests/e2e.
+      Prototype: reuse the ao-api-tests Kind cluster (provision + deploy-ao).
+      Pins aap-dev and automation-orchestrator-operator to AAP-90779-ep-from-source
+      so operator/aap-dev changes can be validated without merging those PRs.
+      Copy this Execution Plane revision onto the Kind VM, build ./Containerfile
+      into the Kind registry, prepare namespace execution-plane, and run tests/e2e.
       Does not run AO API tests.
 
       Promote prepare-execution-plane into aap-konflux-pipelines when this path
@@ -69,7 +72,25 @@ spec:
         default: https://github.com/ansible/aap-dev.git
       - name: aap-dev-revision
         type: string
-        default: main
+        default: AAP-90779-ep-from-source
+      - name: ao-operator-github-org
+        type: string
+        default: automation-nexus
+      - name: ao-operator-github-repo
+        type: string
+        default: automation-orchestrator-operator
+      - name: ao-operator-revision
+        type: string
+        description: >
+          Branch, tag, or SHA of automation-orchestrator-operator to build
+          from source via aap-dev. Independent of this Execution Plane PR.
+        default: AAP-90779-ep-from-source
+      - name: ao-operator-github-app-secret
+        type: string
+        description: >
+          GitHub App secret for cloning automation-nexus repos. Distinct from
+          ao-github-app-secret (syntara-orchestration installation).
+        default: orchestrator-ci-for-konflux-gh-app-nexus-org
       - name: ao-revision
         type: string
         description: >
@@ -314,9 +335,130 @@ spec:
                   test -f \"\${EP}/tools/ci/konflux-prepare-execution-plane.sh\"
                 "
 
+      - name: stage-operator-source
+        runAfter:
+          - provision-kind-cluster
+        timeout: "10m"
+        params:
+          - name: ssh-credentials-secret
+            value: ssh-credentials-$(context.pipelineRun.name)
+          - name: ao-operator-github-app-secret
+            value: $(params.ao-operator-github-app-secret)
+          - name: ao-operator-github-org
+            value: $(params.ao-operator-github-org)
+          - name: ao-operator-github-repo
+            value: $(params.ao-operator-github-repo)
+          - name: ao-operator-revision
+            value: $(params.ao-operator-revision)
+        taskSpec:
+          description: |
+            Copy automation-orchestrator-operator at ao-operator-revision to
+            $HOME/automation-orchestrator-operator on the Kind VM. aap-dev
+            AAP-90779-ep-from-source builds the manager from that checkout
+            because deploy-ao-using-aap-dev cannot clone the private operator
+            repo or keep it in src/sources.yaml. Uses the automation-nexus
+            GitHub App installation (not the syntara-orchestration one).
+          params:
+            - name: ssh-credentials-secret
+              type: string
+            - name: ao-operator-github-app-secret
+              type: string
+            - name: ao-operator-github-org
+              type: string
+            - name: ao-operator-github-repo
+              type: string
+            - name: ao-operator-revision
+              type: string
+          volumes:
+            - name: ssh-credentials-volume
+              secret:
+                secretName: $(params.ssh-credentials-secret)
+            - name: nexus-github-app-volume
+              secret:
+                secretName: $(params.ao-operator-github-app-secret)
+          steps:
+            - name: stage
+              image: quay.io/aap-ci/tekton-catalog/task-runner/ansible:0.1@sha256:6625997cac261e12aa0437ff2b0b0aa0275a4fa8ff3f833c21f8f029880d5c88
+              volumeMounts:
+                - name: ssh-credentials-volume
+                  mountPath: /credentials/ssh
+                - name: nexus-github-app-volume
+                  mountPath: /credentials/nexus-github-app
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+
+                SSH_KEY=/tmp/id_rsa
+                cp /credentials/ssh/id_rsa "${SSH_KEY}"
+                chmod 600 "${SSH_KEY}"
+
+                SSH_HOST=$(cat /credentials/ssh/host)
+                SSH_USER=$(cat /credentials/ssh/username 2>/dev/null || echo "ec2-user")
+                SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+                GH_APP_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-id)
+                GH_INSTALL_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-install-id)
+                GH_PRIVATE_KEY=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-private-key)
+
+                KEY_FILE=$(mktemp)
+                chmod 600 "${KEY_FILE}"
+                printf '%s' "${GH_PRIVATE_KEY}" > "${KEY_FILE}"
+
+                NOW=$(date +%s)
+                HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+                PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW - 60))" "$((NOW + 540))" "${GH_APP_ID}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+                SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" | openssl dgst -sha256 -sign "${KEY_FILE}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+                rm -f "${KEY_FILE}"
+
+                JWT="${HEADER}.${PAYLOAD}.${SIG}"
+                GH_TOKEN=$(curl -sS -X POST \
+                  -H "Authorization: Bearer ${JWT}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/app/installations/${GH_INSTALL_ID}/access_tokens" | jq -r '.token')
+                unset JWT GH_PRIVATE_KEY
+
+                if [ -z "${GH_TOKEN}" ] || [ "${GH_TOKEN}" = "null" ]; then
+                  echo "ERROR: Failed to obtain GitHub App installation token" >&2
+                  exit 1
+                fi
+
+                OP_DIR=/tmp/automation-orchestrator-operator
+                rm -rf "${OP_DIR}"
+                echo "=== Cloning operator $(params.ao-operator-github-org)/$(params.ao-operator-github-repo) at $(params.ao-operator-revision) ==="
+                git clone "https://x-access-token:${GH_TOKEN}@github.com/$(params.ao-operator-github-org)/$(params.ao-operator-github-repo).git" "${OP_DIR}"
+                git -C "${OP_DIR}" fetch --depth 1 origin "$(params.ao-operator-revision)"
+                git -C "${OP_DIR}" checkout --detach FETCH_HEAD
+                unset GH_TOKEN
+
+                echo "=== Staging operator source at ${SSH_USER}@${SSH_HOST}:\$HOME/automation-orchestrator-operator ==="
+                ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+                  "rm -rf \$HOME/automation-orchestrator-operator && mkdir -p \$HOME/automation-orchestrator-operator"
+                tar -C "${OP_DIR}" --exclude='.git' -czf - . \
+                  | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" \
+                    "tar -xzf - -C \$HOME/automation-orchestrator-operator"
+                # bundle/ is gitignored (generated by make bundle). Stage git
+                # sources; aap-dev overlays config/crd/bases onto the prebuilt bundle.
+                ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+                  set -euo pipefail
+                  OP=\$HOME/automation-orchestrator-operator
+                  if [[ ! -f \"\${OP}/Containerfile\" ]]; then
+                    echo \"ERROR: staged operator is missing Containerfile\" >&2
+                    ls -la \"\${OP}\" >&2 || true
+                    exit 1
+                  fi
+                  if [[ ! -d \"\${OP}/config/crd/bases\" ]]; then
+                    echo \"ERROR: staged operator is missing config/crd/bases\" >&2
+                    ls -la \"\${OP}\" \"\${OP}/config\" >&2 || true
+                    exit 1
+                  fi
+                  echo \"operator source staged; Containerfile + config/crd/bases present\"
+                "
+
       - name: deploy-ao
         runAfter:
           - provision-kind-cluster
+          - stage-operator-source
         params:
           - name: cluster-access-secret
             value: kubeconfig-$(context.pipelineRun.name)
