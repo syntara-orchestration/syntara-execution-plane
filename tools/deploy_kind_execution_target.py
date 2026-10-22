@@ -54,6 +54,7 @@ DEFAULT_WAIT_SECONDS = 90
 KIND_NETWORK = "kind"
 CONTROL_PLANE_PORT = 6443
 EP_CA_PATH = PROJECT_ROOT / ".secrets" / "certs" / "ca.pem"
+KIND_TOKEN_PATH = PROJECT_ROOT / ".secrets" / "kind-dispatcher.token"
 WORKLOAD_RBAC_PATH = PROJECT_ROOT / "deploy" / "kubernetes" / "execution-target" / "rbac.yaml"
 
 
@@ -147,7 +148,9 @@ def service_account_token(kubeconfig: Path, namespace: str) -> str:
         check=False,
     )
     if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
+        token = result.stdout.strip()
+        _write_dispatcher_token(token)
+        return token
     print("[INFO] kubectl create token failed; falling back to a bound service-account secret")
     secret_name = f"{DISPATCHER_SA}-token"
     secret_manifest = f"""
@@ -175,7 +178,9 @@ type: kubernetes.io/service-account-token
         data = json.loads(secret.stdout).get("data") or {}
         encoded = data.get("token")
         if encoded:
-            return base64.b64decode(encoded).decode("ascii")
+            token = base64.b64decode(encoded).decode("ascii")
+            _write_dispatcher_token(token)
+            return token
         time.sleep(1)
     msg = "Timed out waiting for a service-account token Secret"
     raise TimeoutError(msg)
@@ -214,6 +219,30 @@ def node_internal_ip(kubeconfig: Path) -> str:
     return ip
 
 
+def _write_dispatcher_token(token: str) -> None:
+    """Persist the Kind ServiceAccount token for the local credential.resolve stand-in."""
+    path = Path(os.environ.get("EP_KIND_TOKEN_FILE", str(KIND_TOKEN_PATH)))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{token}\n", encoding="utf-8")
+    path.chmod(0o600)
+    print(f"[INFO] Wrote Kind dispatcher token to {path}")
+
+
+def _ep_compose_workers(listing: str) -> list[str]:
+    """Return compose EP worker names, excluding AO Temporal workers."""
+    workers: list[str] = []
+    for name in listing.splitlines():
+        name = name.strip()
+        if not name:
+            continue
+        lowered = name.lower()
+        if "temporal" in lowered or "background" in lowered:
+            continue
+        if "execution-plane" in lowered and "worker" in lowered:
+            workers.append(name)
+    return workers
+
+
 def connect_worker_to_kind_network() -> str | None:
     """Attach the compose worker to the kind network so it can reach the API IP."""
     engine = _container_engine()
@@ -221,7 +250,7 @@ def connect_worker_to_kind_network() -> str | None:
         print(f"[WARN] {engine} not found; skip connecting the EP worker to the kind network")
         return None
     listing = _run([engine, "ps", "--format", "{{.Names}}"], check=False)
-    workers = [name for name in listing.stdout.splitlines() if "worker" in name and "execution-plane" in name]
+    workers = _ep_compose_workers(listing.stdout)
     if not workers:
         print("[WARN] No running EP worker container found; start compose before submitting work")
         return None
@@ -239,11 +268,20 @@ def connect_worker_to_kind_network() -> str | None:
     return worker
 
 
+def _ep_ca_path() -> Path:
+    """Prefer ``EP_API_CA_FILE`` so e2e can verify AO-issued EP API certificates."""
+    env_path = os.environ.get("EP_API_CA_FILE")
+    if env_path:
+        return Path(env_path)
+    return EP_CA_PATH
+
+
 def _ssl_context() -> ssl.SSLContext:
-    if not EP_CA_PATH.is_file():
-        msg = f"EP API CA not found at {EP_CA_PATH}; run ./tools/generate_certs.py first"
+    ca_path = _ep_ca_path()
+    if not ca_path.is_file():
+        msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
         raise FileNotFoundError(msg)
-    return ssl.create_default_context(cafile=str(EP_CA_PATH))
+    return ssl.create_default_context(cafile=str(ca_path))
 
 
 def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
@@ -379,10 +417,13 @@ def list_execution_targets(api_url: str, token: str) -> list[dict[str, Any]]:
     if status >= HTTPStatus.BAD_REQUEST:
         msg = f"Listing execution targets failed ({status}): {payload}"
         raise RuntimeError(msg)
-    if not isinstance(payload, list):
-        msg = f"Unexpected execution-target response: {payload}"
-        raise TypeError(msg)
-    return payload
+    if isinstance(payload, list):
+        return payload
+    resources = payload.get("resources") if isinstance(payload, dict) else None
+    if isinstance(resources, list):
+        return resources
+    msg = f"Unexpected execution-target response: {payload}"
+    raise TypeError(msg)
 
 
 def source_integration_id(cluster_name: str) -> uuid.UUID:
@@ -474,7 +515,8 @@ def main() -> int:
             kubeconfig.unlink(missing_ok=True)
 
     print()
-    print(f"[INFO] Cluster binding {binding['source_integration_id']} is {binding['status']}")
+    binding_id = binding.get("id") or binding.get("source_integration_id")
+    print(f"[INFO] Cluster binding {binding_id} is {binding['status']}")
     print(f"[INFO] Cluster id: {binding.get('cluster_id')}")
     print("[INFO] Execution targets:")
     print(json.dumps(targets, indent=2, default=str))

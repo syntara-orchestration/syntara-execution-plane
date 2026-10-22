@@ -1,8 +1,22 @@
-.PHONY: install test test-coverage coverage-combine test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target submit-work sync-requirements sync-rpms-lock-yaml
+.PHONY: install test test-coverage coverage-combine test-integration test-e2e lint format typecheck openapi migrate image secrets certs setup ao-setup compose-up compose-down generate-token kind-target submit-work sync-requirements sync-rpms-lock-yaml
 
 TEST_ARGS ?= --ignore=tests/integration
 COVERAGE_FILES ?= coverage-artifacts/*/.coverage
 JUNIT_FILES ?= coverage-artifacts/*/pytest-results.xml
+COMPOSE ?= uvx podman-compose -f compose.yaml
+COMPOSE_E2E ?= uvx podman-compose -f compose.yaml -f compose.ao.yaml
+COMPOSE_WAIT_TIMEOUT ?= 300
+E2E_ARGS ?=
+# Temporary: pin AO to feat/ANSTRAT-1803 until that branch lands on devel.
+AO_REF ?= feat/ANSTRAT-1803
+AO_REMOTE ?= https://github.com/syntara-orchestration/syntara.git
+SYNTARA_GIT ?= $(abspath ../syntara)
+SYNTARA_ROOT ?= $(CURDIR)/.worktrees/syntara-anstrat-1803
+AO_IMAGE ?= localhost/syntara:anstrat-1803
+AO_API_PUBLISH_PORT ?= 8000
+EP_API_PUBLISH_PORT ?= 8001
+# kind/kubectl are often in aap-dev rather than PATH.
+E2E_BIN_PATH := $(HOME)/.local/bin:$(HOME)/aap-dev/bin:$(abspath ../aap-dev/bin)
 
 install:
 	uv sync --locked --all-groups
@@ -72,17 +86,72 @@ certs:
 
 setup: install secrets certs
 
+# Checkout AO_REF, generate its secrets/certs, and build AO_IMAGE from that tree.
+ao-setup:
+	AO_REF="$(AO_REF)" AO_REMOTE="$(AO_REMOTE)" SYNTARA_GIT="$(SYNTARA_GIT)" \
+		SYNTARA_ROOT="$(SYNTARA_ROOT)" AO_IMAGE="$(AO_IMAGE)" \
+		./tools/ao-setup.sh
+
 compose-up: setup
-	uvx podman-compose -f compose.yaml up --build
+	$(COMPOSE) up --build
 
 compose-down:
-	uvx podman-compose -f compose.yaml down
+	$(COMPOSE_E2E) down -v
+
+# Bring the local EP+AO compose stack up, run tests/e2e, then tear the stack down.
+# Always stops compose (and named volumes), including when pytest fails or the
+# stack never becomes ready. Volumes must be recreated so AO seed applies the
+# current worktree admin password instead of a leftover hash from a prior run.
+test-e2e:
+	$(MAKE) ao-setup
+	$(MAKE) setup
+	$(COMPOSE_E2E) down -v >/dev/null 2>&1 || true
+	trap '$(COMPOSE_E2E) down -v' EXIT; \
+	SYNTARA_ROOT="$(SYNTARA_ROOT)" AO_IMAGE="$(AO_IMAGE)" AO_API_PUBLISH_PORT="$(AO_API_PUBLISH_PORT)" \
+		APP_SCRIPT_NODES_ENABLED=true APP_EP_API_URL=https://execution-plane-api:8443 \
+		APP_SERVER_PUBLIC_URL=https://syntara:8000 \
+		EP_AO_JWT_ISSUER=https://syntara:8000 \
+		EP_API_TLS_CERT_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/execution-plane.crt" \
+		EP_API_TLS_KEY_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/execution-plane.key" \
+		EP_API_TLS_CLIENT_CA_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/ca.pem" \
+		EP_CALLBACK_CA_CERT_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/ca.pem" \
+		EP_CALLBACK_CERT_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/execution-plane.crt" \
+		EP_CALLBACK_KEY_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/execution-plane.key" \
+		EP_COMPLETION_CALLBACK_URL=https://syntara:8000/api/execution_plane/v1/events \
+		EP_CALLBACK_CA_CERT_PATH=/run/secrets/ep-callback-ca.pem \
+		EP_CALLBACK_CERT_PATH=/run/secrets/ep-callback.crt \
+		EP_CALLBACK_KEY_PATH=/run/secrets/ep-callback.key \
+		EP_CREDENTIAL_RESOLUTION_CALLBACK_URL=http://credential-resolve:8080/credentials/resolve \
+		EP_CREDENTIAL_RESOLUTION_CALLBACK_CA_CERT_PATH=/run/secrets/ep-callback-ca.pem \
+		EP_CREDENTIAL_RESOLUTION_CALLBACK_CERT_PATH=/run/secrets/ep-callback.crt \
+		EP_CREDENTIAL_RESOLUTION_CALLBACK_KEY_PATH=/run/secrets/ep-callback.key \
+		$(COMPOSE_E2E) up --build -d --wait --wait-timeout $(COMPOSE_WAIT_TIMEOUT) || { $(COMPOSE_E2E) logs; exit 1; }; \
+	PATH="$(E2E_BIN_PATH):$(PATH)" \
+		EP_API_CA_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/ca.pem" \
+		EP_AO_JWT_PRIVATE_KEY_FILE="$(SYNTARA_ROOT)/backend/.secrets/jwt-primary.pem" \
+		EP_AO_JWT_ISSUER=https://syntara:8000 \
+		EP_API_URL="https://127.0.0.1:$(EP_API_PUBLISH_PORT)" \
+		AO_API_BASE="https://127.0.0.1:$(AO_API_PUBLISH_PORT)" \
+		uv run python tools/deploy_kind_execution_target.py \
+			--api-url "https://127.0.0.1:$(EP_API_PUBLISH_PORT)" && \
+	AO_API_BASE="https://127.0.0.1:$(AO_API_PUBLISH_PORT)" \
+		APP_ADMIN_PASSWORD_PATH="$(SYNTARA_ROOT)/backend/.secrets/admin-password" \
+		APP_SCRIPT_NODES_ENABLED=true \
+		E2E_POLL_TIMEOUT=360 \
+		uv run pytest tests/e2e -v --tb=short $(E2E_ARGS)
 
 generate-token:
 	uv run python tools/generate_jwt_for_ep.py
 
 kind-target:
-	uv run python tools/deploy_kind_execution_target.py
+	PATH="$(E2E_BIN_PATH):$(PATH)" \
+		EP_API_CA_FILE="$(SYNTARA_ROOT)/backend/.secrets/certs/ca.pem" \
+		EP_AO_JWT_PRIVATE_KEY_FILE="$(SYNTARA_ROOT)/backend/.secrets/jwt-primary.pem" \
+		EP_AO_JWT_ISSUER=https://syntara:8000 \
+		EP_API_URL="https://127.0.0.1:$(EP_API_PUBLISH_PORT)" \
+		AO_API_BASE="https://127.0.0.1:$(AO_API_PUBLISH_PORT)" \
+		uv run python tools/deploy_kind_execution_target.py \
+			--api-url "https://127.0.0.1:$(EP_API_PUBLISH_PORT)"
 
 submit-work:
 	uv run python tools/submit_work_item.py

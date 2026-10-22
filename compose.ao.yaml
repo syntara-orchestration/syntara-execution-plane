@@ -1,0 +1,271 @@
+# Automation Orchestrator overlay for local e2e.
+# Used with: uvx podman-compose -f compose.yaml -f compose.ao.yaml
+#
+# AO comes from Syntara feat/ANSTRAT-1803 until that branch lands. `make ao-setup`
+# checks that ref out under SYNTARA_ROOT and builds AO_IMAGE from it.
+
+x-ao-runtime-env: &ao-runtime-env
+  APP_DB_HOST: ao-database
+  APP_DB_PORT: "5432"
+  APP_DB_USER: ${APP_DB_USER:-admin}
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD:-admin}
+  APP_DB_NAME: ${APP_DB_NAME:-syntara_api}
+  APP_TEMPORAL_ADDRESS: temporal:7233
+  APP_TEMPORAL_NAMESPACE: default
+  APP_CACHE_HOST: redis
+  APP_CACHE_PASSWORD: ${APP_CACHE_PASSWORD:-cache}
+  APP_S3_ENDPOINT_URL: ${APP_S3_ENDPOINT_URL:-http://moto:5000}
+  APP_S3_BUCKET_NAME: ${APP_S3_BUCKET_NAME:-orchestrator-files}
+  APP_S3_REGION: ${APP_S3_REGION:-us-east-1}
+  APP_S3_ACCESS_KEY_ID: ${APP_S3_ACCESS_KEY_ID:-testing}
+  APP_S3_SECRET_ACCESS_KEY: ${APP_S3_SECRET_ACCESS_KEY:-testing}
+  APP_S3_VERIFY_SSL: ${APP_S3_VERIFY_SSL:-false}
+  APP_S3_USE_PATH_STYLE: ${APP_S3_USE_PATH_STYLE:-true}
+  APP_JWT_PRIVATE_KEY_PATH: /run/secrets/jwt-primary.pem
+  APP_JWT_BACKUP_KEYS: '[{"key_id":"orchestrator-backup","key_path":"/run/secrets/jwt-backup.pem"}]'
+  APP_SECRET_ENCRYPTION_KEY_PATH: /run/secrets/encryption-key
+  APP_S2S_TLS_ENABLED: ${APP_S2S_TLS_ENABLED:-true}
+  APP_S2S_TLS_CA_CERT_PATH: /run/secrets/s2s-ca.pem
+  APP_S2S_TLS_CERT_PATH: /run/secrets/s2s-cert.crt
+  APP_S2S_TLS_KEY_PATH: /run/secrets/s2s-cert.key
+  APP_FALLBACK_LOG_LEVEL: ${APP_FALLBACK_LOG_LEVEL:-INFO}
+  APP_CONTAINER_IMAGE_VERSION: ${APP_CONTAINER_IMAGE_VERSION:-dev}
+  APP_ENV_FILE_PATH: ${APP_ENV_FILE_PATH:-.env}
+  APP_EP_API_URL: ${APP_EP_API_URL:-https://execution-plane-api:8443}
+  APP_SERVER_PUBLIC_URL: ${APP_SERVER_PUBLIC_URL:-https://syntara:8000}
+
+services:
+  ao-database:
+    image: ${POSTGRES_IMAGE:-quay.io/sclorg/postgresql-15-c9s}
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_USER: ${APP_DB_USER:-admin}
+      POSTGRESQL_PASSWORD: ${APP_DB_PASSWORD:-admin}
+      POSTGRESQL_DATABASE: ${APP_DB_NAME:-syntara_api}
+      POSTGRESQL_ADMIN_PASSWORD: ${APP_DB_PASSWORD:-admin}
+    volumes:
+      - ao_postgres_data:/var/lib/pgsql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U $${POSTGRESQL_USER:-admin} -d $${POSTGRESQL_DATABASE:-syntara_api}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: ${APP_CACHE_IMAGE:-mirror.gcr.io/library/redis:6.2.22@sha256:da7091440b2b4d9456603be812dba895cd75bedd66564d7f01f1f010521f8467}
+    restart: unless-stopped
+    command: sh -c "redis-server --requirepass $${REDIS_PASSWORD:-cache}"
+    environment:
+      REDIS_PASSWORD: ${APP_CACHE_PASSWORD:-cache}
+    healthcheck:
+      test: [CMD-SHELL, 'redis-cli -h 127.0.0.1 -p 6379 -a $${REDIS_PASSWORD:-cache} ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: mirror.gcr.io/temporalio/auto-setup:1.25.1
+    restart: unless-stopped
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: ${APP_DB_PASSWORD:-admin}
+      POSTGRES_SEEDS: ao-database
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      TEMPORAL_AVAILABILITY_ZONE: tls
+      TEMPORAL_TLS_FRONTEND_CERT: /etc/temporal/config/certs/temporal.crt
+      TEMPORAL_TLS_FRONTEND_KEY: /etc/temporal/config/certs/temporal.key
+      TEMPORAL_TLS_FRONTEND_SERVER_NAME: temporal
+      TEMPORAL_TLS_CLIENT1_CA_CERT: /etc/temporal/config/certs/ca.pem
+      TEMPORAL_TLS_CA: /etc/temporal/config/certs/ca.pem
+      TEMPORAL_TLS_CERT: /etc/temporal/config/certs/temporal.crt
+      TEMPORAL_TLS_KEY: /etc/temporal/config/certs/temporal.key
+      TEMPORAL_TLS_SERVER_NAME: temporal
+      TEMPORAL_CLI_TLS_CA: /etc/temporal/config/certs/ca.pem
+      TEMPORAL_CLI_TLS_SERVER_NAME: temporal
+    volumes:
+      - ${SYNTARA_ROOT:-../syntara}/backend/containers/temporal-server/temporal-config:/etc/temporal/config/dynamicconfig:z
+      - ${SYNTARA_ROOT:-../syntara}/backend/containers/temporal-server/temporal-tls-config.yaml:/etc/temporal/config/docker_tls.yaml:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/ca.pem:/etc/temporal/config/certs/ca.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/temporal.crt:/etc/temporal/config/certs/temporal.crt:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/temporal.key:/etc/temporal/config/certs/temporal.key:ro,z
+    depends_on:
+      ao-database:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, tctl, --address, "temporal:7233", cluster, health]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  moto:
+    image: docker.io/motoserver/moto:5.2.2@sha256:d8ae5edc2bf080e7e4c13f9bd4b29b53ac3b4427e92956318db3dbe23ec43eb7
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "curl -sf http://localhost:5000/moto-api/ > /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  syntara:
+    image: ${AO_IMAGE:-localhost/syntara:anstrat-1803}
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - >-
+        chmod -R g+rwX /data/audit-exports 2>/dev/null;
+        uv run --no-sync alembic upgrade head &&
+        uv run --no-sync python -m syntara.seed --all &&
+        (uv run --no-sync python -c "import os,boto3; boto3.client('s3', endpoint_url=os.environ['APP_S3_ENDPOINT_URL'], aws_access_key_id=os.environ['APP_S3_ACCESS_KEY_ID'], aws_secret_access_key=os.environ['APP_S3_SECRET_ACCESS_KEY'], region_name=os.environ['APP_S3_REGION']).create_bucket(Bucket=os.environ['APP_S3_BUCKET_NAME'])" || true) &&
+        uv run --no-sync python -m syntara.api.main
+    ports:
+      - "127.0.0.1:${AO_API_PUBLISH_PORT:-8000}:8000"
+    environment:
+      <<: *ao-runtime-env
+      APP_ADMIN_PASSWORD_PATH: /run/secrets/admin-password
+      APP_AUDIT_EXPORT_DIR: /data/audit-exports
+      APP_S2S_TLS_CN_ALLOWLIST: '["backend.ao.svc","worker.ao.svc","background-worker.ao.svc","temporal.ao.svc","execution-plane.ao.svc"]'
+      APP_BACKGROUND_TASK_QUEUE: orchestrator-background-queue
+      APP_ENABLE_API_DOCS: ${APP_ENABLE_API_DOCS:-true}
+      APP_CORS_ALLOW_ORIGINS: ${APP_CORS_ALLOW_ORIGINS:-["http://localhost:8080","https://localhost:8080"]}
+      APP_INTEGRATION_URL_ALLOWED_HOSTS: ${APP_INTEGRATION_URL_ALLOWED_HOSTS:-[]}
+    volumes:
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/jwt-primary.pem:/run/secrets/jwt-primary.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/jwt-backup.pem:/run/secrets/jwt-backup.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/encryption-key:/run/secrets/encryption-key:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/admin-password:/run/secrets/admin-password:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/ca.pem:/run/secrets/s2s-ca.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/backend.crt:/run/secrets/s2s-cert.crt:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/backend.key:/run/secrets/s2s-cert.key:ro,z
+      - syntara_audit_exports:/data/audit-exports:z
+    depends_on:
+      ao-database:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      moto:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          'python3 -c "import urllib.request,ssl;ctx=ssl.create_default_context(cafile=\"/run/secrets/s2s-ca.pem\");urllib.request.urlopen(\"https://localhost:8000/healthz/ready\",context=ctx)"',
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  temporal-worker:
+    image: ${AO_IMAGE:-localhost/syntara:anstrat-1803}
+    restart: unless-stopped
+    command: [python, -m, syntara.workflows.worker]
+    environment:
+      <<: *ao-runtime-env
+      APP_SERVER_SCHEME: ${APP_SERVER_SCHEME:-https}
+      APP_SERVER_HOST: ${APP_SERVER_HOST:-0.0.0.0}
+      APP_SERVER_PORT: ${APP_SERVER_PORT:-8000}
+      APP_TASK_QUEUE: orchestrator-workflow-queue
+      APP_SCRIPT_NODES_ENABLED: ${APP_SCRIPT_NODES_ENABLED:-true}
+      APP_WORKFLOW_BASE_URL: ${APP_WORKFLOW_BASE_URL:-https://syntara:8000/api/v1}
+      APP_AGENT_ORCHESTRATOR_BASE_URL: ${APP_AGENT_ORCHESTRATOR_BASE_URL:-https://syntara:8000/api/v1}
+      APP_APPROVALS_API_BASE_URL: ${APP_APPROVALS_API_BASE_URL:-https://syntara:8000/api/v1}
+      APP_TOOL_MANAGER_BASE_URL: ${APP_TOOL_MANAGER_BASE_URL:-https://syntara:8000/api/v1}
+      APP_INTEGRATION_URL_ALLOWED_HOSTS: ${APP_INTEGRATION_URL_ALLOWED_HOSTS:-[]}
+      APP_WORKFLOW_HTTP_REQUEST_ALLOWED_HOSTS: ${APP_WORKFLOW_HTTP_REQUEST_ALLOWED_HOSTS:-[]}
+      APP_AUDIT_EXPORT_DIR: /data/audit-exports
+    volumes:
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/jwt-primary.pem:/run/secrets/jwt-primary.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/jwt-backup.pem:/run/secrets/jwt-backup.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/encryption-key:/run/secrets/encryption-key:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/ca.pem:/run/secrets/s2s-ca.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/worker.crt:/run/secrets/s2s-cert.crt:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/worker.key:/run/secrets/s2s-cert.key:ro,z
+      - syntara_audit_exports:/data/audit-exports:z
+    depends_on:
+      ao-database:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      moto:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "cat /proc/[0-9]*/cmdline 2>/dev/null | grep -qa syntara.workflows.worker"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  temporal-background-worker:
+    image: ${AO_IMAGE:-localhost/syntara:anstrat-1803}
+    restart: unless-stopped
+    command: [python, -m, syntara.workflows.background_worker]
+    environment:
+      <<: *ao-runtime-env
+      APP_SERVER_SCHEME: ${APP_SERVER_SCHEME:-https}
+      APP_SERVER_HOST: ${APP_SERVER_HOST:-0.0.0.0}
+      APP_SERVER_PORT: ${APP_SERVER_PORT:-8000}
+      APP_BACKGROUND_TASK_QUEUE: orchestrator-background-queue
+      APP_WORKFLOW_BASE_URL: ${APP_WORKFLOW_BASE_URL:-https://syntara:8000/api/v1}
+      APP_AGENT_ORCHESTRATOR_BASE_URL: ${APP_AGENT_ORCHESTRATOR_BASE_URL:-https://syntara:8000/api/v1}
+      APP_APPROVALS_API_BASE_URL: ${APP_APPROVALS_API_BASE_URL:-https://syntara:8000/api/v1}
+      APP_TOOL_MANAGER_BASE_URL: ${APP_TOOL_MANAGER_BASE_URL:-https://syntara:8000/api/v1}
+      APP_INTEGRATION_URL_ALLOWED_HOSTS: ${APP_INTEGRATION_URL_ALLOWED_HOSTS:-[]}
+    volumes:
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/jwt-primary.pem:/run/secrets/jwt-primary.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/jwt-backup.pem:/run/secrets/jwt-backup.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/encryption-key:/run/secrets/encryption-key:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/ca.pem:/run/secrets/s2s-ca.pem:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/background-worker.crt:/run/secrets/s2s-cert.crt:ro,z
+      - ${SYNTARA_ROOT:-../syntara}/backend/.secrets/certs/background-worker.key:/run/secrets/s2s-cert.key:ro,z
+    depends_on:
+      ao-database:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      moto:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "cat /proc/[0-9]*/cmdline 2>/dev/null | grep -qa syntara.workflows.background_worker"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Temporary: ANSTRAT-1803 has no credentials/resolve callback yet. The EP worker
+  # reads the Kind dispatcher token from this stand-in during `make test-e2e`.
+  credential-resolve:
+    image: ${EP_IMAGE:-localhost/execution-plane:latest}
+    restart: unless-stopped
+    command: [python3, /scripts/e2e_credential_resolve.py]
+    environment:
+      E2E_KIND_TOKEN_PATH: /run/e2e-secrets/kind-dispatcher.token
+      E2E_CREDENTIAL_RESOLVE_PORT: "8080"
+    volumes:
+      - ./tools/e2e_credential_resolve.py:/scripts/e2e_credential_resolve.py:ro,z
+      - ./.secrets:/run/e2e-secrets:z
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          'python3 -c "import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8080/healthz\")"',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  ao_postgres_data:
+  syntara_audit_exports:
