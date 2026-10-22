@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import asyncpg  # type: ignore[import-untyped]
 import structlog
 
-from execution_plane.cluster.binding_reconciler import run_cluster_binding_reconciler
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.completion_notifier.notifier import CompletionNotifier
 from execution_plane.config import get_ep_settings, to_asyncpg_url
@@ -330,7 +329,6 @@ async def run_worker(database_url: str) -> None:
                     name="ep-poll",
                 )
                 tg.create_task(event_delivery.run(work_item_store), name="ep-completion-delivery")
-                tg.create_task(run_cluster_binding_reconciler(database_url), name="ep-cluster-bindings")
                 tg.create_task(
                     run_orphan_policy_reconciler(
                         target_store,

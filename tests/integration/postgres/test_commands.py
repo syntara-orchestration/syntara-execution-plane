@@ -4,11 +4,13 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlmodel import col
 
 from execution_plane.api.auth import ServiceIdentity, get_service_identity
 from execution_plane.api.main import create_app
-from execution_plane.models.cluster_binding import ClusterBinding
+from execution_plane.models.cluster import Cluster
 from tests.test_command_api import command_message
 
 pytestmark = pytest.mark.integration
@@ -43,7 +45,7 @@ async def command_client(migrated_database):
     await engine.dispose()
 
 
-async def test_cluster_commands_only_change_binding_desired_state(command_client):
+async def test_cluster_commands_provision_and_manage_clusters_directly(command_client):
     client, sessions = command_client
     key = uuid4()
     payload = {
@@ -53,36 +55,44 @@ async def test_cluster_commands_only_change_binding_desired_state(command_client
         "endpoint": "https://cluster.test",
         "namespace": "ep",
         "credential_ref": str(uuid4()),
-        "is_default": True,
     }
     created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert created.status_code == 202, created.text
+    cluster_id = UUID(created.json()["resource"]["resource_id"])
     async with sessions() as session:
-        binding = await session.get(ClusterBinding, ("ao", key))
-        assert binding.status == "pending"
-        assert binding.cluster_id is None
-        assert binding.is_default is True
+        cluster = await session.get(Cluster, cluster_id)
+        assert cluster.status.value == "active"
+        assert cluster.source_revision == 1
+        assert "private-secret" not in repr(cluster)
+
+    # Idempotent repeat at same revision.
     repeated = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert repeated.status_code == 202
-    conflict = await client.post(
-        "/v1/commands", json=command_message("cluster.register", {**payload, "name": "different"})
-    )
-    assert conflict.status_code == 409
+    assert UUID(repeated.json()["resource"]["resource_id"]) == cluster_id
+
     update = await client.post(
         "/v1/commands",
         json=command_message("cluster.update", {"resource_key": str(key), "desired_revision": 2, "name": "updated"}),
     )
     assert update.status_code == 202
+
+    # Stale register after update → conflict.
     stale = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert stale.status_code == 409
+
+    async with sessions() as session:
+        cluster = await session.get(Cluster, cluster_id)
+        assert cluster.name == "updated"
+        assert cluster.source_revision == 2
+
     deleted = await client.post(
         "/v1/commands", json=command_message("cluster.delete", {"resource_key": str(key), "desired_revision": 3})
     )
     assert deleted.status_code == 202
-    read = await client.get(f"/v1/clusters/{key}")
+    read = await client.get(f"/v1/clusters/{cluster_id}")
     assert read.status_code == 200
-    assert read.json()["desired_revision"] == 3
     assert read.json()["enabled"] is False
+    assert read.json()["status"] == "draining"
 
 
 async def test_work_queries_recover_large_results_without_command_history(command_client):
@@ -151,31 +161,38 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     assert missing.status_code == 404
 
 
-async def test_concurrent_binding_creates_cannot_overwrite_same_revision(command_client):
+async def test_concurrent_cluster_creates_result_in_exactly_one_cluster(command_client):
     import asyncio
 
-    client, _ = command_client
+    client, sessions = command_client
     key = uuid4()
     payload = {
         "resource_key": str(key),
         "desired_revision": 1,
-        "name": "first",
+        "name": "concurrent",
         "endpoint": "https://cluster.test",
         "namespace": "ep",
         "credential_ref": str(uuid4()),
     }
     responses = await asyncio.gather(
-        *(
-            client.post("/v1/commands", json=command_message("cluster.register", {**payload, "name": name}))
-            for name in ("first", "second")
-        )
+        *(client.post("/v1/commands", json=command_message("cluster.register", payload)) for _ in range(2))
     )
-    assert sorted(response.status_code for response in responses) == [202, 409]
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses in ([202, 202], [202, 409])
+    async with sessions() as session:
+        result = await session.execute(
+            select(Cluster)
+            .where(col(Cluster.source_client_id) == "ao")
+            .where(col(Cluster.source_integration_id) == key)
+        )
+        clusters = list(result.scalars().all())
+    assert len(clusters) == 1
 
 
 async def test_cluster_update_preserves_omitted_fields_and_rejects_null_required_fields(command_client):
     client, sessions = command_client
     key = uuid4()
+    project = uuid4()
     payload = {
         "resource_key": str(key),
         "desired_revision": 1,
@@ -183,23 +200,26 @@ async def test_cluster_update_preserves_omitted_fields_and_rejects_null_required
         "endpoint": "https://cluster.test",
         "namespace": "ep",
         "credential_ref": str(uuid4()),
-        "project_ids": [str(uuid4())],
+        "project_ids": [str(project)],
     }
-    assert (await client.post("/v1/commands", json=command_message("cluster.register", payload))).status_code == 202
+    created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
+    assert created.status_code == 202
+    cluster_id = UUID(created.json()["resource"]["resource_id"])
+
     patch = {"resource_key": str(key), "desired_revision": 2, "project_ids": None}
     assert (await client.post("/v1/commands", json=command_message("cluster.update", patch))).status_code == 202
     async with sessions() as session:
-        row = await session.get(ClusterBinding, ("ao", key))
-        assert row.credential_ref == UUID(payload["credential_ref"])
-        assert row.namespace == "ep"
-        assert row.project_ids is None
+        cluster = await session.get(Cluster, cluster_id)
+        assert cluster.project_ids is None
+        assert cluster.source_revision == 2
+
     invalid = await client.post(
         "/v1/commands", json=command_message("cluster.update", {**patch, "desired_revision": 3, "namespace": None})
     )
     assert invalid.status_code == 422
     async with sessions() as session:
-        row = await session.get(ClusterBinding, ("ao", key))
-        assert row.revision == 2
+        cluster = await session.get(Cluster, cluster_id)
+        assert cluster.source_revision == 2
 
 
 async def test_cluster_commands_cleanse_internal_labels(command_client):
@@ -214,9 +234,15 @@ async def test_cluster_commands_cleanse_internal_labels(command_client):
         "credential_ref": str(uuid4()),
         "labels": {"team": "platform", "_cluster_id": "spoofed", "_internal": "spoofed"},
     }
-    assert (await client.post("/v1/commands", json=command_message("cluster.register", payload))).status_code == 202
+    created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
+    assert created.status_code == 202
+    cluster_id = UUID(created.json()["resource"]["resource_id"])
     async with sessions() as session:
-        assert (await session.get(ClusterBinding, ("ao", key))).labels == {"team": "platform"}
+        cluster = await session.get(Cluster, cluster_id)
+        assert "team" in cluster.labels
+        assert cluster.labels.get("_cluster_id") == str(cluster_id)
+        assert "_internal" not in cluster.labels
+        assert cluster.labels["team"] == "platform"
 
     patch = {
         "resource_key": str(key),
@@ -225,7 +251,10 @@ async def test_cluster_commands_cleanse_internal_labels(command_client):
     }
     assert (await client.post("/v1/commands", json=command_message("cluster.update", patch))).status_code == 202
     async with sessions() as session:
-        assert (await session.get(ClusterBinding, ("ao", key))).labels == {"team": "runtime"}
+        cluster = await session.get(Cluster, cluster_id)
+        assert cluster.labels["team"] == "runtime"
+        assert cluster.labels.get("_cluster_id") == str(cluster_id)
+        assert "_internal" not in cluster.labels
 
 
 async def test_target_commands_add_and_preserve_the_target_identity_label(command_client):
@@ -464,6 +493,9 @@ def _cluster_register_payload(key) -> dict[str, object]:
 @pytest.mark.parametrize("omitted", ["name", "endpoint", "namespace"])
 async def test_cluster_register_requires_each_shared_config_field(command_client, omitted):
     """Every required field in the shared ClusterConfigBase shape is enforced end to end."""
+    from sqlalchemy import select
+    from sqlmodel import col
+
     client, sessions = command_client
     key = uuid4()
     payload = _cluster_register_payload(key)
@@ -472,11 +504,16 @@ async def test_cluster_register_requires_each_shared_config_field(command_client
     assert response.status_code == 422, response.text
     assert "private-secret" not in response.text
     async with sessions() as session:
-        assert await session.get(ClusterBinding, ("ao", key)) is None
+        result = await session.execute(
+            select(Cluster)
+            .where(col(Cluster.source_client_id) == "ao")
+            .where(col(Cluster.source_integration_id) == key)
+        )
+        assert result.scalar_one_or_none() is None
 
 
 async def test_cluster_register_persists_the_full_shared_shape(command_client):
-    """A valid command round-trips every shared field into the binding, unchanged."""
+    """A valid command provisions a cluster with the expected fields."""
     client, sessions = command_client
     key, project = uuid4(), uuid4()
     payload = {
@@ -486,16 +523,14 @@ async def test_cluster_register_persists_the_full_shared_shape(command_client):
     }
     created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert created.status_code == 202, created.text
+    cluster_id = UUID(created.json()["resource"]["resource_id"])
     async with sessions() as session:
-        row = await session.get(ClusterBinding, ("ao", key))
-    assert row.name == "test"
-    assert row.endpoint == "https://cluster.test"
-    assert row.namespace == "ep"
-    assert row.credential_ref == UUID(payload["credential_ref"])
-    assert row.ca_certificate is None
-    assert row.project_ids == [project]
-    assert row.labels == {"team": "platform"}
-    assert row.enabled is True
+        cluster = await session.get(Cluster, cluster_id)
+    assert cluster.name == "test"
+    assert cluster.endpoint == "https://cluster.test"
+    assert cluster.source_integration_id == key
+    assert cluster.project_ids == [project]
+    assert cluster.enabled is True
 
 
 @pytest.mark.parametrize(
@@ -507,7 +542,10 @@ async def test_cluster_register_persists_the_full_shared_shape(command_client):
     ],
 )
 async def test_cluster_register_rejects_invalid_field_values(command_client, field, value):
-    """The field and model validators still fire after fields moved to the base."""
+    """The field and model validators still fire."""
+    from sqlalchemy import select
+    from sqlmodel import col
+
     client, sessions = command_client
     key = uuid4()
     payload = {**_cluster_register_payload(key), field: value}
@@ -515,11 +553,19 @@ async def test_cluster_register_rejects_invalid_field_values(command_client, fie
     assert response.status_code == 422, response.text
     assert "private-secret" not in response.text
     async with sessions() as session:
-        assert await session.get(ClusterBinding, ("ao", key)) is None
+        result = await session.execute(
+            select(Cluster)
+            .where(col(Cluster.source_client_id) == "ao")
+            .where(col(Cluster.source_integration_id) == key)
+        )
+        assert result.scalar_one_or_none() is None
 
 
 async def test_enabled_cluster_binding_requires_a_credential(command_client):
-    """The cross-field model validator rejects an enabled binding without a credential reference."""
+    """The cross-field model validator rejects an enabled register without a credential."""
+    from sqlalchemy import select
+    from sqlmodel import col
+
     client, sessions = command_client
     key = uuid4()
     payload = _cluster_register_payload(key)
@@ -527,4 +573,9 @@ async def test_enabled_cluster_binding_requires_a_credential(command_client):
     response = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert response.status_code == 422, response.text
     async with sessions() as session:
-        assert await session.get(ClusterBinding, ("ao", key)) is None
+        result = await session.execute(
+            select(Cluster)
+            .where(col(Cluster.source_client_id) == "ao")
+            .where(col(Cluster.source_integration_id) == key)
+        )
+        assert result.scalar_one_or_none() is None

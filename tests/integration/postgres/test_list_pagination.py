@@ -185,8 +185,8 @@ async def test_work_items_syntara_created_at_cursor_round_trip(sort_client, sort
 @pytest.mark.parametrize("omit_sort_value", [False, True], ids=["ep-cursor", "syntara-cursor"])
 @pytest.mark.parametrize("sort", [None, "created_at", "-created_at"])
 async def test_clusters_backward_pagination_round_trip(clusters_client, sort, omit_sort_value):
-    client, binding_ids = clusters_client
-    expected = list(reversed(binding_ids)) if sort == "-created_at" else binding_ids
+    client, cluster_ids = clusters_client
+    expected = list(reversed(cluster_ids)) if sort == "-created_at" else cluster_ids
     await _assert_page_round_trip(client, "/v1/clusters", expected, sort=sort, omit_sort_value=omit_sort_value)
 
 
@@ -445,20 +445,20 @@ async def test_sort_resource_cleanup_status_asc(sort_client):
 
 
 # =============================================================================
-# Clusters  (shared list_datasets: 6 bindings, oldest-first)
+# Clusters  (shared list_datasets: 6 clusters, oldest-first)
 # =============================================================================
 
 
 async def test_clusters_default_sort_oldest_first(clusters_client):
     """Default ordering is created_at ascending (oldest first)."""
-    client, binding_ids = clusters_client
+    client, cluster_ids = clusters_client
     body = (await client.get("/v1/clusters", params={"limit": 10})).json()
-    assert [r["id"] for r in body["resources"]] == binding_ids
+    assert [r["id"] for r in body["resources"]] == cluster_ids
 
 
 async def test_clusters_all_pages_cover_all_items(clusters_client):
     """Walking next cursors yields every inserted item exactly once."""
-    client, binding_ids = clusters_client
+    client, cluster_ids = clusters_client
     seen_ids: set[str] = set()
     cursor = None
     while True:
@@ -470,7 +470,7 @@ async def test_clusters_all_pages_cover_all_items(clusters_client):
         cursor = body.get("next")
         if cursor is None:
             break
-    assert seen_ids == set(binding_ids)
+    assert seen_ids == set(cluster_ids)
 
 
 async def test_clusters_first_page_cursor_shape(clusters_client):
@@ -483,9 +483,9 @@ async def test_clusters_first_page_cursor_shape(clusters_client):
 
 
 async def test_clusters_include_total(clusters_client):
-    client, binding_ids = clusters_client
+    client, cluster_ids = clusters_client
     body = (await client.get("/v1/clusters", params={"limit": 2, "include_total": "true"})).json()
-    assert body["total"] == len(binding_ids)
+    assert body["total"] == len(cluster_ids)
 
 
 async def test_clusters_invalid_limit(clusters_client):

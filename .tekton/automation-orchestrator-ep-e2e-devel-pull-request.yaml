@@ -37,7 +37,9 @@ spec:
     - name: ao-operator-revision
       value: AAP-90779-ep-from-source
     - name: ao-revision
-      value: feat/ANSTRAT-1803
+      value: ef07299b2cb69e300178cd3690da8e83cf5c6baf
+    - name: ao-pr-number
+      value: "1034"
   taskRunTemplate:
     serviceAccountName: konflux-integration-runner
   pipelineSpec:

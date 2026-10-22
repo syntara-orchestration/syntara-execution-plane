@@ -223,19 +223,15 @@ paths:
           - -status
           - enabled
           - -enabled
-          - namespace
-          - -namespace
-          - desired_revision
-          - -desired_revision
-          - observed_revision
-          - -observed_revision
+          - is_default
+          - -is_default
           - updated_at
           - -updated_at
           type: string
-          description: Cluster-binding sort field; oldest first by default.
+          description: Cluster sort field; oldest first by default.
           default: created_at
           title: Sort
-        description: Cluster-binding sort field; oldest first by default.
+        description: Cluster sort field; oldest first by default.
       - name: include_total
         in: query
         required: false
@@ -257,6 +253,14 @@ paths:
         schema:
           type: string
         description: 'Filter by created_at (created_at=value or created_at[operator]=value).
+          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
+          OR; different fields/operators use AND.'
+      - name: updated_at
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Filter by updated_at (updated_at=value or updated_at[operator]=value).
           Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
           OR; different fields/operators use AND.'
       - name: name
@@ -281,7 +285,15 @@ paths:
         schema:
           type: string
         description: 'Filter by status (status=value or status[operator]=value). Operators:
-          eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
+          eq, in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
+          fields/operators use AND.'
+      - name: status_message
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Filter by status_message (status_message=value or status_message[operator]=value).
+          Operators: eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
           values use OR; different fields/operators use AND.'
       - name: enabled
         in: query
@@ -291,54 +303,23 @@ paths:
         description: 'Filter by enabled (enabled=value or enabled[operator]=value).
           Operators: eq, in, isnull. Comma-separated values use OR; different fields/operators
           use AND.'
-      - name: namespace
+      - name: is_default
         in: query
         required: false
         schema:
           type: string
-        description: 'Filter by namespace (namespace=value or namespace[operator]=value).
-          Operators: eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
-      - name: desired_revision
+        description: 'Filter by is_default (is_default=value or is_default[operator]=value).
+          Operators: eq, in, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: source_integration_id
         in: query
         required: false
         schema:
           type: string
-        description: 'Filter by desired_revision (desired_revision=value or desired_revision[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
-      - name: observed_revision
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by observed_revision (observed_revision=value or observed_revision[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
-      - name: updated_at
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by updated_at (updated_at=value or updated_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
-      - name: cluster_id
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by cluster_id (cluster_id=value or cluster_id[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
-      - name: status_message
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by status_message (status_message=value or status_message[operator]=value).
-          Operators: eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
+        description: 'Filter by source_integration_id (source_integration_id=value
+          or source_integration_id[operator]=value). Operators: eq, in, gt, gte, lt,
+          lte, isnull. Comma-separated values use OR; different fields/operators use
+          AND.'
       - name: labels[key]
         in: query
         required: false
@@ -607,27 +588,18 @@ components:
           type: string
           format: uuid
           title: Id
+        source_integration_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Source Integration Id
         name:
           type: string
           title: Name
         endpoint:
           type: string
           title: Endpoint
-        namespace:
-          type: string
-          title: Namespace
-        desired_revision:
-          type: integer
-          title: Desired Revision
-        observed_revision:
-          type: integer
-          title: Observed Revision
-        cluster_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Cluster Id
         status:
           type: string
           title: Status
@@ -666,12 +638,9 @@ components:
       type: object
       required:
       - id
+      - source_integration_id
       - name
       - endpoint
-      - namespace
-      - desired_revision
-      - observed_revision
-      - cluster_id
       - status
       - status_message
       - enabled
@@ -681,8 +650,7 @@ components:
       - created_at
       - updated_at
       title: ClusterRead
-      description: Desired and observed cluster binding state, keyed by integration
-        UUID.
+      description: Provisioned cluster state, keyed by the actual cluster UUID.
     ExecutionTargetRead:
       properties:
         id:

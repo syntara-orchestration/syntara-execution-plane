@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from sqlalchemy import Column, Index, Integer, String, UniqueConstraint, Uuid, text
 from sqlalchemy import Enum as SAEnum
@@ -39,6 +39,28 @@ class Cluster(SQLModel, table=True):
     """A registered control-plane cluster."""
 
     __tablename__ = "clusters"
+    __sortable_fields__: ClassVar[list[str]] = [
+        "id",
+        "created_at",
+        "updated_at",
+        "name",
+        "endpoint",
+        "status",
+        "enabled",
+        "is_default",
+    ]
+    __filterable_fields__: ClassVar[list[str]] = [
+        "id",
+        "created_at",
+        "updated_at",
+        "name",
+        "endpoint",
+        "status",
+        "status_message",
+        "enabled",
+        "is_default",
+        "source_integration_id",
+    ]
     __table_args__ = (
         UniqueConstraint("source_client_id", "source_integration_id", name="uq_clusters_source_integration"),
         Index("uq_clusters_default", "is_default", unique=True, postgresql_where=text("is_default = true")),

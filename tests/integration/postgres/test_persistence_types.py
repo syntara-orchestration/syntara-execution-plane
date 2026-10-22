@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -18,8 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from execution_plane.api.auth import ServiceIdentity, get_service_identity
 from execution_plane.api.main import create_app
-from execution_plane.models.cluster import Cluster
-from execution_plane.models.cluster_binding import ClusterBinding
+from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.execution_target import ExecutionTarget as _ExecutionTarget  # noqa: F401
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
@@ -84,32 +84,31 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
 
     engine = create_async_engine(database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    integration_id = uuid.uuid4()
+    cluster_id = uuid.uuid4()
     project_ids = [uuid.uuid4(), uuid.uuid4()]
     now = datetime.now(UTC)
-    binding_key = ("postgres-type-test", integration_id)
     claim_owner_id = uuid.uuid4()
     work_item_id: uuid.UUID | None = None
 
     try:
         async with session_factory() as session:
             session.add(
-                ClusterBinding(
-                    client_id=binding_key[0],
-                    source_integration_id=integration_id,
-                    revision=1,
+                Cluster(
+                    id=cluster_id,
                     name="postgres-type-round-trip",
                     endpoint="https://cluster.invalid",
-                    namespace="ep-smoke",
-                    credential_ref=uuid.uuid4(),
+                    credential_ref=uuid4(),
+                    status=ClusterStatus.ACTIVE,
                     project_ids=project_ids,
+                    created_by=uuid.uuid4(),
+                    updated_by=uuid.uuid4(),
                     created_at=now,
                     updated_at=now,
                 )
             )
             item = WorkItem(
                 id=uuid.uuid4(),
-                client_id=binding_key[0],
+                client_id="postgres-type-test",
                 payload={"invocation": {"version": 1}},
                 status=WorkItemStatus.CLAIMED,
                 claimed_at=now,
@@ -122,11 +121,11 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
             work_item_id = item.id
 
         async with session_factory() as session:
-            binding = await session.get(ClusterBinding, binding_key)
+            cluster = await session.get(Cluster, cluster_id)
             restored_item = await session.get(WorkItem, work_item_id)
 
-        assert binding is not None
-        assert binding.project_ids == project_ids
+        assert cluster is not None
+        assert cluster.project_ids == project_ids
         assert restored_item is not None
         assert restored_item.status is WorkItemStatus.CLAIMED
 
@@ -138,7 +137,7 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
         )
         dispatched = await work_store.get(
             work_item_id,
-            client_id=binding_key[0],
+            client_id="postgres-type-test",
         )
         assert dispatched is not None
         assert dispatched.status is WorkItemStatus.DISPATCHED
@@ -157,9 +156,9 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
         assert restored_item.result == {"output": {"ok": True}}
     finally:
         async with session_factory() as session:
-            binding = await session.get(ClusterBinding, binding_key)
-            if binding is not None:
-                await session.delete(binding)
+            cluster = await session.get(Cluster, cluster_id)
+            if cluster is not None:
+                await session.delete(cluster)
             item = await session.get(WorkItem, work_item_id) if work_item_id is not None else None
             if item is not None:
                 await session.delete(item)

@@ -293,6 +293,8 @@ class _ClusterStore:
         credential_ref: uuid.UUID | None = None,
         ca_certificate: str | None = None,
         labels: dict[str, str] | None = None,
+        project_ids: object = None,
+        source_revision: int | None = None,
     ) -> Cluster:
         kwargs: dict[str, object] = {
             "updated_by": updated_by,
@@ -329,6 +331,8 @@ class _ClusterStore:
         credential_ref: uuid.UUID | None = None,
         ca_certificate: str | None = None,
         labels: dict[str, str] | None = None,
+        project_ids: object = None,
+        source_revision: int | None = None,
     ) -> Cluster:
         return self.cluster
 

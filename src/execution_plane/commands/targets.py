@@ -6,6 +6,7 @@ from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from execution_plane.commands.clusters import ResourceNotFoundError
+from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
@@ -19,8 +20,6 @@ from execution_plane_client.commands.targets import TargetDelete, TargetRegister
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
-
-SYSTEM_ACTOR = UUID(int=0)
 
 
 def _validated_payload[T: CommandPayload](payload: CommandPayload, expected: type[T]) -> T:
@@ -73,14 +72,14 @@ class TargetRegisterCommandHandler:
                 endpoint=command.endpoint,
                 credential_ref=command.credential_ref,
                 is_default=False,
-                created_by=SYSTEM_ACTOR,
+                created_by=SYSTEM_ACTOR_ID,
                 placement=TypeAdapter(ExecutionTargetPlacement).validate_python(command.placement.model_dump()),
                 labels=command.labels,
                 target_id=command.resource_id,
             )
-            await target_store.activate(command.resource_id, SYSTEM_ACTOR)
+            await target_store.activate(command.resource_id, SYSTEM_ACTOR_ID)
             if command.is_default:
-                await target_store.set_default(command.resource_id, SYSTEM_ACTOR)
+                await target_store.set_default(command.resource_id, SYSTEM_ACTOR_ID)
         return _target_result(command.resource_id)
 
 
@@ -105,7 +104,7 @@ class TargetUpdateCommandHandler:
             target_store = ExecutionTargetStore.from_transaction(session)
             await target_store.update(
                 command.resource_id,
-                updated_by=SYSTEM_ACTOR,
+                updated_by=SYSTEM_ACTOR_ID,
                 name=command.name,
                 endpoint=command.endpoint,
                 credential_ref=command.credential_ref,
@@ -117,7 +116,7 @@ class TargetUpdateCommandHandler:
                 ),
             )
             if command.is_default:
-                await target_store.set_default(command.resource_id, SYSTEM_ACTOR)
+                await target_store.set_default(command.resource_id, SYSTEM_ACTOR_ID)
         return _target_result(command.resource_id)
 
 
@@ -136,5 +135,5 @@ class TargetDeleteCommandHandler:
             if target.is_default:
                 raise DefaultExecutionTargetError
             target_store = ExecutionTargetStore.from_transaction(session)
-            await target_store.request_delete(command.resource_id, SYSTEM_ACTOR)
+            await target_store.request_delete(command.resource_id, SYSTEM_ACTOR_ID)
         return _target_result(command.resource_id)

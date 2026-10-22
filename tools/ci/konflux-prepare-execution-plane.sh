@@ -341,10 +341,10 @@ desired = payload["desired"]
 base = "https://127.0.0.1:8443"
 headers = {"Authorization": f"Bearer {token}"}
 with httpx.Client(verify=False, timeout=30.0) as client:
-    got = client.get(f"{base}/v1/clusters/{sid}", headers=headers)
+    # Clusters are keyed by cluster.id now and looked up by the stable
+    # source_integration_id via filter. Provisioning is synchronous and
+    # idempotent at the same revision; the Kind DB is fresh, so revision 1.
     revision = 1
-    if got.status_code == 200:
-        revision = int(got.json()["desired_revision"]) + 1
     envelope = ClusterProvision(
         resource_key=sid,
         desired_revision=revision,
@@ -371,23 +371,29 @@ with httpx.Client(verify=False, timeout=30.0) as client:
     deadline = time.time() + 90
     while time.time() < deadline:
         status, message = "unknown", ""
-        got = client.get(f"{base}/v1/clusters/{sid}", headers=headers)
+        got = client.get(
+            f"{base}/v1/clusters",
+            params={"source_integration_id": str(sid)},
+            headers=headers,
+        )
         if got.status_code == 200:
-            doc = got.json()
-            status = doc.get("status") or "unknown"
-            message = doc.get("status_message") or ""
-            print(f"cluster binding status: {status}")
-            if status == "ready":
-                break
-            if status == "error":
-                raise SystemExit(message or "cluster binding reconciliation failed")
+            resources = got.json().get("resources", [])
+            if resources:
+                doc = resources[0]
+                status = doc.get("status") or "unknown"
+                message = doc.get("status_message") or ""
+                print(f"cluster status: {status}")
+                if status == "active":
+                    break
+                if status == "error":
+                    raise SystemExit(message or "cluster provisioning failed")
         time.sleep(3)
     else:
-        raise SystemExit(f"timed out waiting for cluster {sid} to become ready")
+        raise SystemExit(f"timed out waiting for cluster {sid} to become active")
     targets = client.get(f"{base}/v1/execution-targets", headers=headers)
     if targets.status_code >= 400:
         raise SystemExit(f"listing execution targets failed ({targets.status_code}): {targets.text}")
-    print(f"execution targets: {len(targets.json())}")
+    print(f"execution targets: {len(targets.json().get('resources', []))}")
 PY
   kubectl exec -n "${AO_NAMESPACE}" "deploy/${EP_API_DEPLOY}" -- \
     rm -f /tmp/jwt-primary.pem /tmp/binding.json >/dev/null 2>&1 || true

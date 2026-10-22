@@ -41,7 +41,7 @@ from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     TargetNotEligibleForDefaultError,
 )
-from execution_plane.models.cluster_binding import ClusterBinding
+from execution_plane.models.cluster import Cluster
 from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.models.work_item import WorkItem
 from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNotFoundError
@@ -211,7 +211,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     @app.get(
         "/v1/clusters",
         responses={422: {"description": "Invalid query parameters or cursor"}},
-        openapi_extra=list_filter_openapi(ClusterBinding),
+        openapi_extra=list_filter_openapi(Cluster),
     )
     async def clusters(
         request: Request,
