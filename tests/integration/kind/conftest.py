@@ -1,18 +1,23 @@
 """Kubernetes cluster fixture for the dispatch integration tests.
 
-These tests need a live Kubernetes cluster in addition to PostgreSQL. The
-cluster is provisioned *outside* the suite (a kind cluster in CI, any reachable
-cluster locally) and its coordinates are passed in through the environment:
+These tests need a live Kubernetes cluster in addition to PostgreSQL. Both resources
+are provisioned *outside* the test suite:
 
-* ``EP_IT_K8S_ENDPOINT``  — API server URL (e.g. ``https://127.0.0.1:PORT``)
-* ``EP_IT_K8S_TOKEN``     — bearer token for the ``syntara-dispatcher`` ServiceAccount
-* ``EP_IT_K8S_NAMESPACE`` — target namespace (default: ``execution-plane``)
-* ``EP_IT_K8S_CA_CERT``   — PEM CA certificate for the API server (optional; skips
-                            TLS verification when absent and ``verify_ssl`` is False)
+* PostgreSQL — service container in the CI job (see tests/integration/conftest.py).
+* Kind cluster — stood up by the ``Create kind cluster`` CI step; registered in the
+  database by ``uv run python tools/deploy_kind_execution_target.py``,
+  which runs the full production ClusterBindingReconciler path.
 
-The ``test-integration-postgres-kind`` CI job provisions a kind cluster and
-exports all of these. Local developers can point at any running cluster that
-satisfies the RBAC in ``deploy/kubernetes/execution-target/rbac.yaml``.
+Locally, run ``make kind-target`` (with EP_TEST_DATABASE_URL set) to populate
+the test database before running these tests.
+
+Cluster-registration env vars passed to ``make kind-target``:
+* ``EP_TEST_DATABASE_URL``    — asyncpg database URL (selects direct-DB mode)
+* ``EP_IT_K8S_CLUSTER_NAME`` — kind cluster name (default: ``integration-test``)
+* ``EP_IT_K8S_ENDPOINT``     — API server URL (e.g. ``https://127.0.0.1:PORT``)
+* ``EP_IT_K8S_TOKEN``        — bearer token for the ``syntara-dispatcher`` ServiceAccount
+* ``EP_IT_K8S_NAMESPACE``    — target namespace (default: ``execution-plane``)
+* ``EP_IT_K8S_CA_CERT``      — PEM CA certificate for the API server (optional)
 
 The shared PostgreSQL fixtures (``migrated_database`` etc.) come from the parent
 ``tests/integration/conftest.py``.
@@ -29,31 +34,33 @@ from typing import TYPE_CHECKING
 import pytest
 from kubernetes import client as kubernetes_client
 from kubernetes.client import BatchV1Api
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import col
 
-from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDiscoveryMechanism
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
-from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
-from execution_plane.models.cluster import Cluster, ClusterType
-from execution_plane.models.execution_target import ExecutionTarget
-from execution_plane.models.execution_target_placement import KubernetesPlacement
-from execution_plane.models.work_item import WorkItem
+from execution_plane.models.cluster import ClusterStatus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from execution_plane.models.cluster import Cluster
+
 _EP_IT_ENDPOINT = "EP_IT_K8S_ENDPOINT"
 _EP_IT_TOKEN = "EP_IT_K8S_TOKEN"  # noqa: S105 — env var name, not a secret value
-_EP_IT_NAMESPACE = "EP_IT_K8S_NAMESPACE"
 _EP_IT_CA_CERT = "EP_IT_K8S_CA_CERT"
-_DEFAULT_NAMESPACE = "execution-plane"
-_CLUSTER_NAME = "integration-test"
-_CLUSTER_CLIENT_ID = "ep-integration-tests"
-_CREDENTIAL_REF = uuid.uuid5(uuid.NAMESPACE_URL, "https://execution-plane.test/integrations/kind")
-_CLI_ACTOR_ID = uuid.UUID(int=0)
+
+# These must match the values deploy_kind_execution_target.py uses when registering.
+_KIND_CLUSTER_NAME = os.environ.get("EP_IT_K8S_CLUSTER_NAME", "integration-test")
+_KIND_CLIENT_ID = os.environ.get("EP_AO_CLIENT_ID", "syntara-orchestration")
+_KIND_SOURCE_INTEGRATION_ID = uuid.uuid5(
+    uuid.NAMESPACE_URL,
+    f"https://execution-plane.local/kind/{_KIND_CLUSTER_NAME}",
+)
+# Must equal EP_KIND_CREDENTIAL_REF used when registering the cluster.
+_CREDENTIAL_REF = (
+    uuid.UUID(os.environ["EP_KIND_CREDENTIAL_REF"])
+    if os.environ.get("EP_KIND_CREDENTIAL_REF")
+    else uuid.uuid5(uuid.NAMESPACE_URL, "https://execution-plane.test/integrations/kind")
+)
 
 
 class StaticCredentialResolver(CredentialResolver):
@@ -65,7 +72,7 @@ class StaticCredentialResolver(CredentialResolver):
 
     async def resolve(self, credential_ref: uuid.UUID, *, client_id: str) -> str:
         """Return the configured test credential for the integration Cluster."""
-        if credential_ref != _CREDENTIAL_REF or client_id != _CLUSTER_CLIENT_ID:
+        if credential_ref != _CREDENTIAL_REF or client_id != _KIND_CLIENT_ID:
             message = "Integration resolver received an unexpected credential reference"
             raise CredentialResolutionError(message)
         return self._credential
@@ -74,80 +81,30 @@ class StaticCredentialResolver(CredentialResolver):
         """Keep the test credential in memory only."""
 
 
-async def _delete_fixture_cluster(database_url: str, cluster_id: uuid.UUID) -> None:
-    """Delete fixture-owned rows directly because the domain protects the default Cluster."""
-    engine = create_async_engine(database_url)
-    try:
-        async with async_sessionmaker(engine)() as session:
-            target_ids = select(col(ExecutionTarget.id)).where(col(ExecutionTarget.cluster_id) == cluster_id)
-            await session.execute(
-                update(WorkItem)
-                .where(col(WorkItem.execution_target_id).in_(target_ids))
-                .values(execution_target_id=None)
-            )
-            await session.execute(delete(ExecutionTarget).where(col(ExecutionTarget.cluster_id) == cluster_id))
-            await session.execute(delete(Cluster).where(col(Cluster.id) == cluster_id))
-            await session.commit()
-    finally:
-        await engine.dispose()
-
-
 def ep_cluster_configured() -> bool:
     """Return True when kind cluster coordinates are present in the environment."""
     return bool(os.environ.get(_EP_IT_ENDPOINT) and os.environ.get(_EP_IT_TOKEN))
 
 
 @pytest.fixture(scope="session")
-async def ep_cluster(migrated_database: str) -> AsyncGenerator[Cluster, None]:
-    """Provision a kind cluster as an ACTIVE Cluster+ExecutionTarget in the test DB.
+async def ep_cluster(migrated_database: str) -> Cluster:
+    """Return the kind cluster already registered in the test database.
 
-    Skips when ``EP_IT_K8S_ENDPOINT`` / ``EP_IT_K8S_TOKEN`` are absent so that
-    the PostgreSQL-only tests still run on runners without a cluster.
-
-    Yields the provisioned ``Cluster`` and tears it down at the end of the session.
+    The cluster is registered outside the test suite by ``make kind-target``,
+    which exercises the full ClusterBindingReconciler path. Tests skip when the
+    cluster coordinates or the registered cluster are absent.
     """
     if not ep_cluster_configured():
         pytest.skip("EP_IT_K8S_ENDPOINT and EP_IT_K8S_TOKEN must be set for cluster dispatch tests")
 
-    endpoint = os.environ[_EP_IT_ENDPOINT]
-    namespace = os.environ.get(_EP_IT_NAMESPACE, _DEFAULT_NAMESPACE)
-    ca_cert = os.environ.get(_EP_IT_CA_CERT)
+    async with ClusterStore.from_database_url(migrated_database) as cluster_store:
+        cluster = await cluster_store.get_by_source(_KIND_CLIENT_ID, _KIND_SOURCE_INTEGRATION_ID)
 
-    cluster_store = ClusterStore.from_database_url(migrated_database)
-    target_store = ExecutionTargetStore.from_database_url(migrated_database)
+    if cluster is None or cluster.status is not ClusterStatus.ACTIVE:
+        status = cluster.status if cluster else "not registered"
+        pytest.skip(f"Kind cluster not found in database (status={status}); run 'make kind-target' before these tests")
 
-    cluster: Cluster | None = None
-    try:
-        cluster_registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism())
-
-        cluster = await cluster_registrar.provision(
-            _CLUSTER_NAME,
-            endpoint,
-            _CREDENTIAL_REF,
-            KubernetesPlacement(namespace=namespace),
-            _CLI_ACTOR_ID,
-            labels={"provider": "kind", "cluster": _CLUSTER_NAME},
-            cluster_type=ClusterType.OPENSHIFT,
-            source_client_id=_CLUSTER_CLIENT_ID,
-            source_integration_id=uuid.uuid4(),
-        )
-
-        if ca_cert:
-            await cluster_registrar.sync_update(
-                cluster.id,
-                updated_by=_CLI_ACTOR_ID,
-                ca_certificate=ca_cert,
-            )
-
-        yield cluster
-
-    finally:
-        try:
-            if cluster is not None:
-                await _delete_fixture_cluster(migrated_database, cluster.id)
-        finally:
-            await cluster_store.close()
-            await target_store.close()
+    return cluster
 
 
 @pytest.fixture(scope="session")

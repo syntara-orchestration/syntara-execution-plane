@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import json
 import os
@@ -42,6 +43,13 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from execution_plane.cluster.binding_reconciler import ClusterBindingReconciler
+from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDiscoveryMechanism
+from execution_plane.cluster.cluster_store import ClusterStore
+from execution_plane.database.engine import create_ep_engine
+from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.work_item_client import ep_service_token
 from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
 
@@ -245,6 +253,11 @@ def _ssl_context() -> ssl.SSLContext:
     return ssl.create_default_context(cafile=str(ca_path))
 
 
+def _ssl_context_for(url: str) -> ssl.SSLContext | None:
+    """Return an SSL context for HTTPS URLs and None for plain HTTP."""
+    return _ssl_context() if url.startswith("https://") else None
+
+
 def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
     """Call the local EP API and return (status, JSON-or-text)."""
     data = None if body is None else json.dumps(body).encode("utf-8")
@@ -259,7 +272,7 @@ def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = 
         },
     )
     try:
-        with urlopen(request, context=_ssl_context(), timeout=15) as response:  # noqa: S310
+        with urlopen(request, context=_ssl_context_for(url), timeout=15) as response:  # noqa: S310
             payload = response.read().decode("utf-8")
             parsed: Any = json.loads(payload) if payload else None
             return response.status, parsed
@@ -272,14 +285,14 @@ def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = 
         return exc.code, parsed
 
 
-def wait_for_ep_api(api_url: str) -> None:
+def wait_for_ep_api(api_url: str, timeout: int = 30) -> None:
     """Block until the local API answers readiness."""
     url = f"{api_url.rstrip('/')}/healthz/ready"
-    deadline = time.time() + 30
+    deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             request = Request(url, method="GET")  # noqa: S310
-            with urlopen(request, context=_ssl_context(), timeout=5) as response:  # noqa: S310
+            with urlopen(request, context=_ssl_context_for(url), timeout=5) as response:  # noqa: S310
                 if response.status == HTTPStatus.OK:
                     return
         except (HTTPError, URLError, TimeoutError, ssl.SSLError):
@@ -391,6 +404,26 @@ def source_integration_id(cluster_name: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"https://execution-plane.local/kind/{cluster_name}")
 
 
+def _reconcile_once(database_url: str) -> None:
+    """Run one pass of the cluster-binding reconciler directly, without a worker process."""
+
+    async def _run() -> None:
+        engine = create_ep_engine(database_url)
+        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        cluster_store = ClusterStore.from_engine(engine)
+        target_store = ExecutionTargetStore.from_engine(engine)
+        registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism())
+        reconciler = ClusterBindingReconciler(session_factory, registrar, cluster_store)
+        try:
+            bindings = await reconciler._claim()  # noqa: SLF001
+            for binding in bindings:
+                await reconciler._reconcile(binding)  # noqa: SLF001
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
+
+
 def register_kind_binding(
     *,
     api_url: str,
@@ -401,9 +434,16 @@ def register_kind_binding(
     credential_ref: uuid.UUID,
     ca_certificate: str,
     wait_seconds: int,
+    wait_for_api: int = 0,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Upsert the cluster binding and wait until EP reports a ready target."""
-    wait_for_ep_api(api_url)
+    """Upsert the cluster binding then reconcile it directly without a background worker.
+
+    When *wait_for_api* is non-zero the EP API is polled for readiness first.
+    When EP_DATABASE_URL is set, reconciliation runs in-process via reconcile_once()
+    so no worker process is required.
+    """
+    if wait_for_api > 0:
+        wait_for_ep_api(api_url, timeout=wait_for_api)
     token = ep_service_token()
     integration_id = source_integration_id(cluster_name)
     upsert_binding(
@@ -416,6 +456,10 @@ def register_kind_binding(
         credential_ref=credential_ref,
         ca_certificate=ca_certificate,
     )
+    database_url = os.environ.get("EP_DATABASE_URL")
+    if database_url:
+        print("[INFO] Reconciling cluster binding directly via EP_DATABASE_URL")
+        _reconcile_once(database_url)
     binding = wait_for_binding(api_url, token, integration_id, wait_seconds)
     return binding, list_execution_targets(api_url, token)
 
@@ -446,6 +490,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--ao-admin-password-file", type=Path)
     parser.add_argument("--ao-insecure", action="store_true")
     parser.add_argument("--wait-seconds", type=int, default=DEFAULT_WAIT_SECONDS)
+    parser.add_argument(
+        "--wait-for-api",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="Poll the EP API for readiness before registering (useful when the API was just started)",
+    )
     parser.add_argument("--recreate", action="store_true", help="Delete and recreate the kind cluster")
     parser.add_argument("--host-worker", action="store_true", help="Use the host endpoint for AO's make dev")
     return parser.parse_args()
@@ -507,6 +558,7 @@ def main() -> int:
             credential_ref=args.credential_ref,
             ca_certificate=ca_certificate,
             wait_seconds=args.wait_seconds,
+            wait_for_api=args.wait_for_api,
         )
     except (FileNotFoundError, RuntimeError, TimeoutError, TypeError, subprocess.CalledProcessError) as exc:
         if isinstance(exc, subprocess.CalledProcessError):
