@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import json
 import os
@@ -42,6 +43,15 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from execution_plane.cluster.binding_reconciler import ClusterBindingReconciler
+from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDiscoveryMechanism
+from execution_plane.cluster.cluster_store import ClusterStore
+from execution_plane.config import get_ep_settings
+from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
+from execution_plane.models.cluster import ClusterStatus
+from execution_plane.models.cluster_binding import ClusterBinding
 from execution_plane.work_item_client import ep_service_token
 from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
 
@@ -391,6 +401,76 @@ def source_integration_id(cluster_name: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"https://execution-plane.local/kind/{cluster_name}")
 
 
+CI_CLIENT_ID = "ep-integration-tests"
+CI_CREDENTIAL_REF = uuid.uuid5(uuid.NAMESPACE_URL, "https://execution-plane.test/integrations/kind")
+
+
+def register_kind_binding_to_db(
+    *,
+    cluster_name: str,
+    binding_name: str,
+    endpoint: str,
+    namespace: str,
+    ca_certificate: str,
+    database_url: str,
+) -> None:
+    """Register the cluster binding directly to the database (no EP API required).
+
+    Used in CI where the EP API is not running. Writes a ClusterBinding and runs
+    the ClusterBindingReconciler once — the same production path the EP worker
+    follows when it processes a cluster.provision command.
+    """
+    os.environ.setdefault("EP_DATABASE_URL", database_url)
+    get_ep_settings.cache_clear()
+
+    client_id = CI_CLIENT_ID
+    integration_id = source_integration_id(cluster_name)
+
+    async def _run() -> None:
+        engine = create_async_engine(database_url)
+        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        try:
+            async with (
+                ClusterStore.from_engine(engine) as cluster_store,
+                ExecutionTargetStore.from_engine(engine) as target_store,
+            ):
+                registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism())
+                reconciler = ClusterBindingReconciler(session_factory, registrar, cluster_store)
+                now = datetime.now(UTC)
+                async with session_factory.begin() as session:
+                    existing = await session.get(ClusterBinding, (client_id, integration_id))
+                    if existing is None:
+                        session.add(
+                            ClusterBinding(
+                                client_id=client_id,
+                                source_integration_id=integration_id,
+                                revision=1,
+                                name=binding_name,
+                                endpoint=endpoint,
+                                namespace=namespace,
+                                credential_ref=CI_CREDENTIAL_REF,
+                                ca_certificate=ca_certificate,
+                                is_default=False,
+                                created_at=now,
+                                updated_at=now,
+                            )
+                        )
+                        print(f"[INFO] Wrote ClusterBinding {integration_id}")
+                    else:
+                        print(f"[INFO] Reusing existing ClusterBinding {integration_id} (status={existing.status})")
+                await reconciler.reconcile_once()
+                cluster = await cluster_store.get_by_source(client_id, integration_id)
+                if cluster is None or cluster.status is not ClusterStatus.ACTIVE:
+                    status = cluster.status if cluster else "not found"
+                    msg = f"Cluster registration failed; status={status}"
+                    raise RuntimeError(msg)
+                print(f"[INFO] Cluster {cluster.id} registered and ACTIVE")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
+
+
 def register_kind_binding(
     *,
     api_url: str,
@@ -448,6 +528,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--wait-seconds", type=int, default=DEFAULT_WAIT_SECONDS)
     parser.add_argument("--recreate", action="store_true", help="Delete and recreate the kind cluster")
     parser.add_argument("--host-worker", action="store_true", help="Use the host endpoint for AO's make dev")
+    parser.add_argument(
+        "--database-url",
+        default=os.environ.get("EP_TEST_DATABASE_URL"),
+        help=(
+            "Register directly to this asyncpg database URL instead of going through the EP API. "
+            "Defaults to EP_TEST_DATABASE_URL when set (CI mode). "
+            "When absent the script contacts the running EP API at --api-url."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -466,10 +555,11 @@ def _ao_admin_password(args: argparse.Namespace) -> str:
 def main() -> int:
     """Create kind, register the cluster binding, and wait until the target is ready."""
     args = _parse_args()
-    if args.credential_ref is None and not args.create_ao_credential:
-        msg = "--credential-ref, EP_KIND_CREDENTIAL_REF, or --create-ao-credential is required"
+    if not args.database_url and args.credential_ref is None and not args.create_ao_credential:
+        msg = "--credential-ref, EP_KIND_CREDENTIAL_REF, --create-ao-credential, or EP_TEST_DATABASE_URL is required"
         raise RuntimeError(msg)
-    admin_password = _ao_admin_password(args) if args.create_ao_credential and args.credential_ref is None else ""
+    needs_ao_password = args.create_ao_credential and args.credential_ref is None and not args.database_url
+    admin_password = _ao_admin_password(args) if needs_ao_password else ""
 
     kubeconfig: Path | None = None
     try:
@@ -498,16 +588,26 @@ def main() -> int:
         else:
             connect_worker_to_kind_network()
         print(f"[INFO] Kind API endpoint for the EP worker: {endpoint}")
-        binding, targets = register_kind_binding(
-            api_url=args.api_url,
-            cluster_name=args.cluster_name,
-            binding_name=args.binding_name,
-            endpoint=endpoint,
-            namespace=args.namespace,
-            credential_ref=args.credential_ref,
-            ca_certificate=ca_certificate,
-            wait_seconds=args.wait_seconds,
-        )
+        if args.database_url:
+            register_kind_binding_to_db(
+                cluster_name=args.cluster_name,
+                binding_name=args.binding_name,
+                endpoint=endpoint,
+                namespace=args.namespace,
+                ca_certificate=ca_certificate,
+                database_url=args.database_url,
+            )
+        else:
+            binding, targets = register_kind_binding(
+                api_url=args.api_url,
+                cluster_name=args.cluster_name,
+                binding_name=args.binding_name,
+                endpoint=endpoint,
+                namespace=args.namespace,
+                credential_ref=args.credential_ref,
+                ca_certificate=ca_certificate,
+                wait_seconds=args.wait_seconds,
+            )
     except (FileNotFoundError, RuntimeError, TimeoutError, TypeError, subprocess.CalledProcessError) as exc:
         if isinstance(exc, subprocess.CalledProcessError):
             detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
@@ -519,11 +619,12 @@ def main() -> int:
         if kubeconfig is not None:
             kubeconfig.unlink(missing_ok=True)
 
-    print()
-    print(f"[INFO] Cluster binding {binding['id']} is {binding['status']}")
-    print(f"[INFO] Cluster id: {binding.get('cluster_id')}")
-    print("[INFO] Execution targets:")
-    print(json.dumps(targets, indent=2, default=str))
+    if not args.database_url:
+        print()
+        print(f"[INFO] Cluster binding {binding['id']} is {binding['status']}")
+        print(f"[INFO] Cluster id: {binding.get('cluster_id')}")
+        print("[INFO] Execution targets:")
+        print(json.dumps(targets, indent=2, default=str))
     return 0
 
 
