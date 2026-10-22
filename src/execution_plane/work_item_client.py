@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_NODE_IMAGE = "quay.io/ahetheri/syntara-node-script:migration-test"
+_DEFAULT_NODE_IMAGE = "localhost/syntara-sdk-script:dev"
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _POLL_PAUSE_SECONDS = 2.0
 _PRIVATE_KEY_CANDIDATES = (
@@ -190,21 +190,19 @@ def build_payload(
     environment: dict[str, str],
     image: str | None = None,
     selectors: dict[str, str] | None = None,
+    workflow_run_id: str | None = None,
+    step_revision_id: str = "script.v1",
 ) -> dict[str, Any]:
-    """Build the versioned node invocation the Kubernetes runner dispatches."""
+    """Build SDK invocation data for a script runner advertising the selected step."""
     inputs: dict[str, Any] = {"language": language, "code": code}
     if environment:
         inputs["environment"] = environment
     return {
         "invocation": {
-            "version": 1,
-            "operation": "execute",
+            "workflow_run_id": workflow_run_id or str(uuid.uuid4()),
+            "step_revision_id": step_revision_id,
             "inputs": inputs,
-            "credentials": {"resolved": {}},
-            "workflow_context": {},
-            "settings": {},
             "timeout_seconds": timeout_seconds,
-            "max_output_bytes": 10**4,
         },
         "image": image or default_node_image(),
         "selectors": selectors or {},

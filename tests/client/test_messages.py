@@ -32,12 +32,10 @@ CLUSTER = {
             {
                 "image": "node:test",
                 "invocation": {
+                    "workflow_run_id": "workflow-1",
+                    "step_revision_id": "script.v1",
                     "inputs": {},
-                    "credentials": {},
-                    "workflow_context": {},
-                    "settings": {},
                     "timeout_seconds": 60,
-                    "max_output_bytes": 1024,
                 },
             },
         ),

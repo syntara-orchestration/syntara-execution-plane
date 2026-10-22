@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from pydantic import ValidationError
+from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItemStatus
@@ -32,8 +33,6 @@ if TYPE_CHECKING:
 
 logger = structlog.stdlib.get_logger(__name__)
 
-MAX_STATUS_CODE = 255
-
 
 class RetryableDispatchError(Exception):
     """Transient transport/capacity failure — requeue the work item, do not fail it."""
@@ -42,11 +41,19 @@ class RetryableDispatchError(Exception):
 class NodeExecutionError(Exception):
     """The node ran and returned a non-zero result — terminal for the activity."""
 
-    def __init__(self, message: str, *, error_type: str, output: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: str,
+        output: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         """Carry the safe error classification and any partial output."""
         super().__init__(message)
         self.error_type = error_type
         self.output = output
+        self.details = details or {}
         self.persisted = False
 
 
@@ -132,6 +139,7 @@ class VanillaK8sWorkerManager:
                     if exc.output is not None:
                         result["output"] = exc.output
                     status = WorkItemStatus.FAILED
+                result.update(exc.details)
             await self._work_progress.set_result(
                 work_item.id,
                 result,
@@ -249,33 +257,40 @@ class VanillaK8sWorkerManager:
 
 
 def _map_result(frame: dict[str, Any], output_config: dict[str, str] | None) -> dict[str, Any]:
-    """Translate the SDK node result frame into a Temporal activity result dict.
-
-    Output mapping is *simple field selection* only. Template-expression output
-    mapping (e.g. ``"${result.stdout}"``) requires NamespaceResolver from the
-    syntara package, which the execution plane must not import — deferred to
-    AAP-93073, matching the existing script-node limitation.
-    """
-    result = frame.get("result") if isinstance(frame, dict) else None
-    if not isinstance(result, dict) or type(result.get("StatusCode")) is not int:
-        message = "Node returned an invalid result"
-        raise NodeExecutionError(message, error_type="NodeProtocolError")
-    status_code = result["StatusCode"]
-    if not 0 <= status_code <= MAX_STATUS_CODE:
-        message = "Node returned an out-of-range status code"
-        raise NodeExecutionError(message, error_type="NodeProtocolError")
-
-    raw = result.get("Result")
-    if raw is not None and not isinstance(raw, dict):
-        message = "Node returned invalid output"
-        raise NodeExecutionError(message, error_type="NodeProtocolError")
-    output = _select_output(raw or {}, output_config)
-
-    if status_code != 0:
-        failure = frame.get("error") or {}
-        message = result.get("ErrorMessage") or result.get("StatusMessage") or "Node execution failed"
-        raise NodeExecutionError(message, error_type=failure.get("type") or "NodeExecutionError", output=output)
-    return {"output": output}
+    """Preserve the SDK outcome and apply optional simple output field selection."""
+    if frame.get("kind") == "failure":
+        code = frame["code"]
+        message = "The workload did not complete"
+        raise NodeExecutionError(
+            message,
+            error_type="CancelledError" if code == "CANCELLED" else code,
+            details={"failure_code": code, "retryable": frame["retryable"], "outcome": frame["outcome"]},
+        )
+    result = frame.get("result")
+    if not isinstance(result, ContainerResult):
+        message = "Workload returned an invalid result"
+        raise NodeExecutionError(message, error_type="WorkloadProtocolError")
+    details: dict[str, Any] = {
+        "output_schema_digest": result.output_schema_digest,
+        "status_code": result.status_code,
+        "status_message": result.status_message,
+        "retryable": result.retryable,
+    }
+    if result.object_reference is not None:
+        details["object_reference"] = result.object_reference
+    output = _select_output(dict(result.output), output_config) if result.output is not None else None
+    if result.status_code != 0:
+        details["error_code"] = result.error_code
+        details["error_message"] = result.error_message
+        raise NodeExecutionError(
+            result.error_message,
+            error_type="CancelledError" if result.error_code == "CANCELLED" else result.error_code,
+            output=output,
+            details=details,
+        )
+    if output is not None:
+        details["output"] = output
+    return details
 
 
 def _select_output(raw: dict[str, Any], output_config: dict[str, str] | None) -> dict[str, Any]:

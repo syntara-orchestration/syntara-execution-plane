@@ -125,12 +125,10 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
         {
             "image": "node:test",
             "invocation": {
+                "workflow_run_id": "workflow-1",
+                "step_revision_id": "script.v1",
                 "inputs": {},
-                "credentials": {},
-                "workflow_context": {},
-                "settings": {},
                 "timeout_seconds": 30,
-                "max_output_bytes": 1024,
             },
         },
     )

@@ -1,0 +1,10 @@
+FROM docker.io/library/python:3.12-slim
+
+# Match EP's immutable SDK source revision, including its runtime APIs.
+RUN pip install --no-cache-dir \
+    'syntara-plugin-contracts @ https://github.com/syntara-orchestration/syntara-plugin-sdk/archive/ee52d18e8b2b3c21f45ec0a37175ee73070d5ca8.tar.gz#subdirectory=sdks/python/packages/contracts'
+
+COPY worker.py /opt/sdk-test-worker.py
+USER 1001
+EXPOSE 50051
+CMD ["python", "/opt/sdk-test-worker.py"]

@@ -1430,53 +1430,6 @@ components:
       - command
       title: MessageEnvelope
       description: Participant identity around one logical command.
-    NodeInvocation:
-      properties:
-        version:
-          type: integer
-          const: 1
-          title: Version
-          default: 1
-        operation:
-          type: string
-          const: execute
-          title: Operation
-          default: execute
-        inputs:
-          additionalProperties: true
-          type: object
-          title: Inputs
-        credentials:
-          additionalProperties: true
-          type: object
-          title: Credentials
-        workflow_context:
-          additionalProperties: true
-          type: object
-          title: Workflow Context
-        settings:
-          additionalProperties: true
-          type: object
-          title: Settings
-        timeout_seconds:
-          type: integer
-          exclusiveMinimum: 0.0
-          title: Timeout Seconds
-        max_output_bytes:
-          type: integer
-          exclusiveMinimum: 0.0
-          title: Max Output Bytes
-      additionalProperties: false
-      type: object
-      required:
-      - inputs
-      - credentials
-      - workflow_context
-      - settings
-      - timeout_seconds
-      - max_output_bytes
-      title: NodeInvocation
-      description: Version-one invocation consumed by the existing node protocol.
     ClientRHELPlacement:
       properties:
         type:
@@ -1628,7 +1581,7 @@ components:
           type: object
           title: Selectors
         invocation:
-          $ref: '#/components/schemas/NodeInvocation'
+          $ref: '#/components/schemas/WorkloadInvocation'
         output_config:
           anyOf:
           - additionalProperties:
@@ -1638,17 +1591,60 @@ components:
           title: Output Config
         workload_type:
           type: string
-          const: script
+          const: container
           title: Workload Type
-          default: script
+          default: container
       additionalProperties: false
       type: object
       required:
       - image
       - invocation
       title: WorkExecute
-      description: Script command with stable caller correlation and provider-neutral
-        input.
+      description: Schedule one workload implementing the SDK container service.
+    WorkloadInvocation:
+      properties:
+        workflow_run_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[A-Za-z0-9._:-]+$
+          title: Workflow Run Id
+        step_revision_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[A-Za-z0-9._:-]+$
+          title: Step Revision Id
+        inputs:
+          additionalProperties: true
+          type: object
+          title: Inputs
+        runtime_context:
+          additionalProperties: true
+          type: object
+          title: Runtime Context
+        timeout_seconds:
+          type: integer
+          maximum: 86400.0
+          exclusiveMinimum: 0.0
+          title: Timeout Seconds
+      additionalProperties: false
+      type: object
+      required:
+      - workflow_run_id
+      - step_revision_id
+      - inputs
+      - timeout_seconds
+      title: WorkloadInvocation
+      description: 'Public invocation data; EP supplies the attempt ID and credential
+        mounts.
+
+
+        Script environment variables remain ordinary step inputs. Credential-file
+
+        delivery is not implemented yet, so callers cannot supply secret values or
+
+        claim that arbitrary file paths have been mounted by EP.'
     ClusterDeleteCommandV1:
       properties:
         command_id:

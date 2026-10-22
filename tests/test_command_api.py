@@ -60,12 +60,10 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
         {
             "image": "node:test",
             "invocation": {
+                "workflow_run_id": "workflow-1",
+                "step_revision_id": "script.v1",
                 "inputs": {},
-                "credentials": {},
-                "workflow_context": {},
-                "settings": {},
                 "timeout_seconds": 60,
-                "max_output_bytes": 1024,
             },
         }
         if command_type is WorkExecute

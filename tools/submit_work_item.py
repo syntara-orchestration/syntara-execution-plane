@@ -85,6 +85,8 @@ def main() -> int:
     parser.add_argument("--code-file", type=Path, help="Read script source from a file")
     parser.add_argument("--env", action="append", dest="env_pairs", help="Repeatable KEY=VALUE for the script env")
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument("--workflow-run-id", help="Workflow identity; defaults to a new UUID")
+    parser.add_argument("--step-revision-id", default="script.v1", help="Step revision advertised by the SDK runner")
     parser.add_argument(
         "--image",
         default=None,
@@ -111,6 +113,8 @@ def main() -> int:
                 timeout_seconds=args.timeout_seconds,
                 environment=parse_env_pairs(args.env_pairs),
                 image=args.image or default_node_image(),
+                workflow_run_id=args.workflow_run_id,
+                step_revision_id=args.step_revision_id,
             )
         print(f"[INFO] Submitting work_id={work_id}")
         token = ep_service_token()

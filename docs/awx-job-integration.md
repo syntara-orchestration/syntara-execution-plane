@@ -1,5 +1,10 @@
 # Running AWX-style jobs on the cold-start execution plane
 
+This design comparison records the original NodeService-based implementation.
+The current [SDK workload protocol](workload-protocol.md) replaces its invocation
+shape and generated files. Credential delivery remains deferred; the old
+`credentials.resolved` examples below describe that historical design.
+
 Status: **evaluation / future work.** Nothing here is implemented. This document
 maps how AWX executes jobs on Kubernetes today, how that maps onto the cold-start
 node-dispatch framework ([cold-start-node-dispatch.md](cold-start-node-dispatch.md)),

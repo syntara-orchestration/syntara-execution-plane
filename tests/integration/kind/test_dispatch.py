@@ -31,7 +31,7 @@ from execution_plane.models.execution_target_placement import KubernetesPlacemen
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
-from execution_plane.work_item_client import build_payload
+from execution_plane.work_item_client import build_payload, default_node_image
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
 
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
 
-_NODE_IMAGE = "quay.io/ahetheri/syntara-node-script:migration-test"
+_NODE_IMAGE = default_node_image()
 _WORKLOAD_WAIT_SECONDS = 5
 _CANCEL_WORKLOAD_WAIT_SECONDS = 15
 _JOB_WAIT_TIMEOUT_SECONDS = 30

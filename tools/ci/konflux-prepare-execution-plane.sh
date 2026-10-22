@@ -32,7 +32,7 @@ SA_NAME="${SA_NAME:-syntara-dispatcher}"
 CLUSTER_NAME="${CLUSTER_NAME:-27-next-ao-operator}"
 ENDPOINT="${ENDPOINT:-https://kubernetes.default.svc}"
 TOKEN_FILE="${TOKEN_FILE:-/var/tmp/syntara-dispatcher.token}"
-NODE_IMAGE="${NODE_IMAGE:-quay.io/ahetheri/syntara-node-script:migration-test}"
+NODE_IMAGE="${NODE_IMAGE:?Set NODE_IMAGE to a workload implementing the SDK container service}"
 WORK_DIR=""
 
 if [[ ! -f "${KUBECONFIG}" ]]; then

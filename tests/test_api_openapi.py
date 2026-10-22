@@ -54,12 +54,10 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
             {
                 "image": "node:test",
                 "invocation": {
+                    "workflow_run_id": "workflow-1",
+                    "step_revision_id": "script.v1",
                     "inputs": {},
-                    "credentials": {},
-                    "workflow_context": {},
-                    "settings": {},
                     "timeout_seconds": 60,
-                    "max_output_bytes": 1024,
                 },
             },
         ),
@@ -143,7 +141,7 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
         assert variant["properties"]["payload"] == {"$ref": f"#/components/schemas/{payload_name}"}
         assert {"command_type", "command_revision", "payload"} <= set(variant["required"])
         assert components[payload_name]["additionalProperties"] is False
-    assert "NodeInvocation" in components
+    assert "WorkloadInvocation" in components
     assert "CommandScope" in components
 
 

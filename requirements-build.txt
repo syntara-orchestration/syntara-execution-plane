@@ -247,6 +247,7 @@ hatch-fancy-pypi-readme==25.1.0 \
     #   attrs
     #   httpcore
     #   httpx
+    #   jsonschema
     #   pydantic
     #   structlog
 hatch-vcs==0.5.0 \
@@ -254,6 +255,9 @@ hatch-vcs==0.5.0 \
     --hash=sha256:b49677dbdc597460cc22d01b27ab3696f5e16a21ecf2700fb01bc28e1f2a04a7
     # via
     #   attrs
+    #   jsonschema
+    #   jsonschema-specifications
+    #   referencing
     #   structlog
     #   urllib3
 hatchling==1.32.4 \
@@ -267,9 +271,12 @@ hatchling==1.32.4 \
     #   hatch-vcs
     #   httpcore
     #   httpx
+    #   jsonschema
+    #   jsonschema-specifications
     #   opentelemetry-api
     #   pydantic
     #   pydantic-settings
+    #   referencing
     #   starlette
     #   structlog
     #   typing-inspection
@@ -293,6 +300,7 @@ maturin==1.15.0 \
     # via
     #   cryptography
     #   pydantic-core
+    #   rpds-py
     #   watchfiles
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \

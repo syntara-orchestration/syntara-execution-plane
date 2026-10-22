@@ -14,11 +14,11 @@ the accepted WorkItem, attempt state, encrypted invocation payload, result,
 and completion outbox in its separate database. AO never imports EP stores and
 does not connect to the EP database.
 
-The EP worker invokes the node SDK through the gRPC protocol vendored in
-[`node_protocol/`](../src/execution_plane/node_protocol/). The protocol source
-is the step-types revision
-`f2ef663b9d7ae55b2ebcf4a421ece356cb7e6026`; generated runtime requirements are
-`grpcio>=1.78.0` and `protobuf>=6.31.1`. The worker tunnels that gRPC channel
+The EP worker invokes the SDK-owned container service using its installed
+`ContainerClient`, through the adapter in
+[`workload.py`](../src/execution_plane/workload.py). The
+[workload protocol guide](workload-protocol.md) describes the dependency source,
+new invocation fields, and required AO/workload image migration. The worker tunnels that gRPC channel
 through an authenticated Kubernetes API port-forward. Invocation, progress,
 errors, stdout/stderr fields, and final output all travel through gRPC. EP does
 not create an input Secret, use Kubernetes exec, or read Pod logs for results.

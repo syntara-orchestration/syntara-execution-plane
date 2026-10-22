@@ -124,6 +124,7 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
             logger.warning("Node returned a terminal failure", work_item_id=wi_id, error=str(exc))
             return
         result: dict[str, Any] = {"error": str(exc), "error_type": exc.error_type}
+        result.update(exc.details)
         if exc.output is not None:
             result["output"] = exc.output
         await work_progress.set_result(
