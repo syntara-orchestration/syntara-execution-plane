@@ -104,14 +104,10 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
             claim_generation=claim_generation,
         )
         return
-    if item.status is not WorkItemStatus.CLAIMED or not await work_progress.mark_dispatched(
-        item.id,
-        claim_owner_id=claim_owner_id,
-        claim_generation=claim_generation,
-    ):
-        return
     try:
-        await workload_manager.dispatch(item)
+        dispatch_result = await workload_manager.dispatch(item)
+        if dispatch_result is None:
+            return
         logger.info("Node execution result persisted", work_item_id=wi_id)
     except RetryableDispatchError as exc:
         await asyncio.sleep(settings.dispatch_retry_backoff_seconds)
@@ -147,14 +143,15 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
         )
         logger.warning("Worker dispatch failed", work_item_id=wi_id, error=str(exc))
     except WorkloadCancelledError as exc:
+        execution_started = exc.execution_started
         await work_progress.set_result(
             item.id,
-            {"cancelled": True, "execution_started": False, "reason": str(exc)},
+            {"cancelled": True, "execution_started": execution_started, "reason": str(exc)},
             WorkItemStatus.CANCELLED,
             claim_owner_id=claim_owner_id,
             claim_generation=claim_generation,
         )
-        logger.info("Node cancellation was confirmed before Execute", work_item_id=wi_id)
+        logger.info("Node cancellation was confirmed", work_item_id=wi_id, execution_started=execution_started)
     except WorkloadOutcomeUnknownError as exc:
         await work_progress.mark_reconciliation_required(
             item.id,
