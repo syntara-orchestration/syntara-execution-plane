@@ -22,6 +22,7 @@ class WorkItemStatus(StrEnum):
     PENDING = "pending"
     CLAIMED = "claimed"
     DISPATCHED = "dispatched"
+    RUNNING = "running"
     CANCEL_REQUESTED = "cancel_requested"
     RECONCILIATION_REQUIRED = "reconciliation_required"
     COMPLETED = "completed"

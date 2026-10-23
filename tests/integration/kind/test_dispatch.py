@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -36,7 +37,7 @@ from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
 
     from execution_plane.credential_resolution.resolver import CredentialResolver
     from execution_plane.models.cluster import Cluster
@@ -94,6 +95,24 @@ async def _wait_for_running_pod(
             return running_pods[0]
         if time.monotonic() >= deadline:
             pytest.fail(f"Job {job_name} had no Running worker Pod within {timeout_seconds}s")
+        await asyncio.sleep(0.5)
+
+
+async def _wait_for_work_status(
+    store: WorkStore,
+    item_id: uuid.UUID,
+    *,
+    client_id: str,
+    status: WorkItemStatus,
+    timeout_seconds: int,
+) -> WorkItem:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        item = await store.get(item_id, client_id=client_id)
+        if item is not None and item.status is status:
+            return item
+        if time.monotonic() >= deadline:
+            pytest.fail(f"Work item {item_id} did not reach {status.value} within {timeout_seconds}s")
         await asyncio.sleep(0.5)
 
 
@@ -420,19 +439,17 @@ async def test_work_item_cancel_reaches_cancelled(
             )
 
             try:
-                await _wait_for_running_pod(
-                    core_api,
-                    job_name,
-                    namespace,
-                    _JOB_WAIT_TIMEOUT_SECONDS,
+                running_item = await _wait_for_work_status(
+                    work.store,
+                    item.id,
+                    client_id=client_id,
+                    status=WorkItemStatus.RUNNING,
+                    timeout_seconds=_JOB_WAIT_TIMEOUT_SECONDS,
                 )
-
-                dispatched_item = await work.store.get(item.id, client_id=client_id)
-                assert dispatched_item is not None
-                assert dispatched_item.status is WorkItemStatus.DISPATCHED
 
                 cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
                 assert cancel_requested.status is WorkItemStatus.CANCEL_REQUESTED
+                assert running_item.status is WorkItemStatus.RUNNING
 
                 await processing_task
                 await _assert_job_cleaned_up(
@@ -458,3 +475,111 @@ async def test_work_item_cancel_reaches_cancelled(
     assert final_item.result is not None
     assert final_item.result["cancelled"] is True
     assert final_item.result["execution_started"] is True
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelled(
+    ep_cluster: Cluster,
+    kubernetes_batch_api: BatchV1Api,
+    integration_credential_resolver: CredentialResolver,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel after external dispatch but before Execute reaches CANCELLED safely."""
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_ep_settings()
+    client_id = "ep-it-cancel-before-running"
+    original_execution_start_callback = VanillaK8sWorkerManager.execution_start_callback
+    execute_release = threading.Event()
+
+    def delayed_execution_start_callback(self: VanillaK8sWorkerManager, work_item: WorkItem) -> Callable[[], None]:
+        original_callback = original_execution_start_callback(self, work_item)
+
+        def release_before_execute_submission() -> None:
+            if not execute_release.wait(timeout=_JOB_WAIT_TIMEOUT_SECONDS):
+                pytest.fail("Delayed Execute submission was not released in time")
+            original_callback()
+
+        return release_before_execute_submission
+
+    monkeypatch.setattr(
+        VanillaK8sWorkerManager,
+        "execution_start_callback",
+        delayed_execution_start_callback,
+    )
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        target = await _first_target(target_store, ep_cluster.id)
+        assert isinstance(target.placement, KubernetesPlacement)
+        namespace = target.placement.namespace
+
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+        ) as work:
+            dispatched = await _dispatch_item(
+                work,
+                work.worker_managers,
+                client_id=client_id,
+                payload=build_payload(
+                    language="bash",
+                    code=f"sleep {_CANCEL_WORKLOAD_WAIT_SECONDS}",
+                    timeout_seconds=60,
+                    environment={},
+                    image=_NODE_IMAGE,
+                ),
+            )
+            item = dispatched.item
+            assigned = dispatched.assigned
+            job_name = dispatched.job_name
+            core_api = CoreV1Api(kubernetes_batch_api.api_client)
+
+            processing_task = asyncio.create_task(
+                _process_item(assigned, work.store, target_store, work.worker_managers, settings)
+            )
+
+            try:
+                dispatched_item = await _wait_for_work_status(
+                    work.store,
+                    item.id,
+                    client_id=client_id,
+                    status=WorkItemStatus.DISPATCHED,
+                    timeout_seconds=_JOB_WAIT_TIMEOUT_SECONDS,
+                )
+
+                cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
+                assert cancel_requested.status is WorkItemStatus.CANCEL_REQUESTED
+                assert dispatched_item.status is WorkItemStatus.DISPATCHED
+
+                execute_release.set()
+                await processing_task
+                await _assert_job_cleaned_up(
+                    kubernetes_batch_api,
+                    core_api,
+                    job_name,
+                    namespace,
+                )
+
+                final_item = await work.store.get(item.id, client_id=client_id)
+            finally:
+                execute_release.set()
+                await _cancel_processing_task(
+                    work,
+                    processing_task,
+                    item_id=item.id,
+                    client_id=client_id,
+                )
+
+    assert final_item is not None
+    assert final_item.status is WorkItemStatus.CANCELLED, (
+        f"Expected CANCELLED but got {final_item.status}; result={final_item.result}"
+    )
+    assert final_item.result is not None
+    assert final_item.result["cancelled"] is True
+    assert final_item.result["execution_started"] is False
