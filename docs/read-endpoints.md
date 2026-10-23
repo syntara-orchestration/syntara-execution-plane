@@ -17,7 +17,7 @@ AO endpoint: `GET /api/execution_plane/v1/work_items`
 | `claimed_at` | datetime \| null |
 | `completed_at` | datetime \| null |
 
-Work item statuses: `pending`, `claimed`, `dispatched`, `cancel_requested`, `reconciliation_required`, `completed`, `failed`, `cancelled`.
+Work item statuses: `pending`, `claimed`, `dispatched`, `running`, `cancel_requested`, `reconciliation_required`, `completed`, `failed`, `cancelled`.
 
 ### Execution Targets
 
