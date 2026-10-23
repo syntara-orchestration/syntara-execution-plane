@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from execution_plane.api.auth import ServiceIdentity, get_service_identity
 from execution_plane.api.main import create_app
 from execution_plane.models.cluster import Cluster, ClusterStatus
-from execution_plane.models.cluster_binding import ClusterBinding
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
 from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
@@ -59,8 +58,13 @@ async def seed_list_dataset(session, path: str, db_url: str):
         for index in range(6):
             resource_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{owner}/{index}")
             created_at = BASE_TIME + timedelta(seconds=index // 2)
-            ready = "active" if path == "/v1/execution-targets" else "pending"
-            status = ready if index % 2 == 0 else "failed"
+            if path == "/v1/work-items":
+                ready, not_ready = "pending", "failed"
+            elif path == "/v1/clusters":
+                ready, not_ready = "active", "error"
+            else:
+                ready, not_ready = "active", "failed"
+            status = ready if index % 2 == 0 else not_ready
             labels = {"env": "prod" if index % 2 == 0 else "dev", "region": "west"}
             if index == 4:
                 labels["optional"] = ""
@@ -85,27 +89,22 @@ async def seed_list_dataset(session, path: str, db_url: str):
                 )
                 values["resource_cleanup_status"] = row.resource_cleanup_status
             elif path == "/v1/clusters":
-                row = ClusterBinding(
-                    client_id=owner,
+                row = Cluster(
+                    id=resource_id,
+                    source_client_id=owner,
                     source_integration_id=resource_id,
                     name=NAMES[index],
                     endpoint=values["endpoint"],
-                    namespace=f"ns-{index % 2}",
-                    credential_ref=uuid.uuid4(),
-                    revision=index + 1,
-                    observed_revision=index,
-                    status=status,
+                    api_key="secret",
+                    status=ClusterStatus(status),
                     enabled=values["enabled"],
                     labels=labels,
+                    created_by=uuid.uuid4(),
+                    updated_by=uuid.uuid4(),
                     created_at=created_at,
                     updated_at=created_at,
                 )
-                values.update(
-                    namespace=row.namespace,
-                    desired_revision=row.revision,
-                    observed_revision=row.observed_revision,
-                    updated_at=created_at,
-                )
+                values.update(updated_at=created_at, is_default=False)
             else:
                 row = ExecutionTarget(
                     id=resource_id,

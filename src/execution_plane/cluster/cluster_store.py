@@ -2,24 +2,32 @@
 
 from __future__ import annotations
 
-import uuid
+import builtins
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col
 
 from execution_plane.labels import labels_with_cluster_id, merge_user_labels
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
-from execution_plane.models.cluster_binding import ClusterBinding
 from execution_plane.models.execution_target import ExecutionTarget, TargetStatus
 from execution_plane.query_filters import apply_list_filters
 from execution_plane.query_sorting import apply_cursor_sort
 from execution_plane.store_base import StoreBase
 
 if TYPE_CHECKING:
+    import builtins
+    import uuid
     from collections.abc import Sequence
+
+
+class _UnsetType:
+    """Sentinel distinguishing 'not provided' from None in optional store parameters."""
+
+
+_UNSET = _UnsetType()
 
 
 class ClusterNotFoundError(LookupError):
@@ -67,7 +75,7 @@ class ClusterStore(StoreBase):
         source_client_id: str | None = None,
         source_integration_id: uuid.UUID | None = None,
         source_revision: int = 0,
-        project_ids: list[uuid.UUID] | None = None,
+        project_ids: builtins.list[uuid.UUID] | None = None,
         ca_certificate: str | None = None,
     ) -> Cluster:
         """Persist a new Cluster in REGISTERING state."""
@@ -128,35 +136,7 @@ class ClusterStore(StoreBase):
             cluster = result.scalar_one_or_none()
             return None if cluster is None else self._without_secret(cluster)
 
-    async def update_source_binding(
-        self,
-        cluster_id: uuid.UUID,
-        *,
-        client_id: str,
-        integration_id: uuid.UUID,
-        revision: int,
-        project_ids: list[uuid.UUID] | None,
-        ca_certificate: str | None = None,
-    ) -> Cluster:
-        """Persist stable source identity, observed revision, and project grants."""
-        async with self._session_context() as session:
-            try:
-                cluster = await session.get(Cluster, cluster_id, with_for_update=True)
-                if cluster is None:
-                    raise ClusterNotFoundError(cluster_id)  # noqa: TRY301
-                cluster.source_client_id = client_id
-                cluster.source_integration_id = integration_id
-                cluster.source_revision = revision
-                cluster.project_ids = project_ids
-                cluster.ca_certificate = ca_certificate
-                cluster.updated_at = datetime.now(UTC)
-                await session.commit()
-                return self._without_secret(cluster)
-            except Exception:
-                await session.rollback()
-                raise
-
-    async def list(self, *, status: ClusterStatus | None = None, enabled: bool | None = None) -> list[Cluster]:
+    async def list(self, *, status: ClusterStatus | None = None, enabled: bool | None = None) -> builtins.list[Cluster]:
         """List Clusters for administrative or recovery workflows."""
         statement = select(Cluster)
         if status is not None:
@@ -167,7 +147,7 @@ class ClusterStore(StoreBase):
             result = await session.execute(statement)
             return [self._without_secret(cluster) for cluster in result.scalars().all()]
 
-    async def list_bindings_for_client(
+    async def list_for_client(
         self,
         client_id: str,
         *,
@@ -176,33 +156,30 @@ class ClusterStore(StoreBase):
         sort_field: str = "created_at",
         sort_direction: str = "asc",
         filters: dict[str, str] | None = None,
-    ) -> Sequence[ClusterBinding]:
-        """Adapt syntara.core.services.base.BaseService._build_list_query with client scoping."""
-        statement = select(ClusterBinding).where(col(ClusterBinding.client_id) == client_id)
-        statement = apply_list_filters(statement, filters, ClusterBinding)
-        statement = apply_cursor_sort(
-            statement, ClusterBinding, cursor, sort_field=sort_field, sort_direction=sort_direction
-        )
+    ) -> Sequence[Cluster]:
+        """List clusters owned by the given client, with pagination and filtering."""
+        statement = select(Cluster).where(col(Cluster.source_client_id) == client_id)
+        statement = apply_list_filters(statement, filters, Cluster)
+        statement = apply_cursor_sort(statement, Cluster, cursor, sort_field=sort_field, sort_direction=sort_direction)
         async with self._session_context() as session:
             result = await session.execute(statement.limit(limit))
-            return list(result.scalars().all())
+            return [self._without_secret(c) for c in result.scalars().all()]
 
-    async def count_bindings_for_client(self, client_id: str, filters: dict[str, str] | None = None) -> int:
-        """Adapt syntara.core.services.base.BaseService._get_total_count using the same filters."""
-        statement = select(func.count()).select_from(ClusterBinding).where(col(ClusterBinding.client_id) == client_id)
-        statement = apply_list_filters(statement, filters, ClusterBinding)
+    async def count_for_client(self, client_id: str, filters: dict[str, str] | None = None) -> int:
+        """Return the number of clusters owned by the given client."""
+        statement = select(func.count()).select_from(Cluster).where(col(Cluster.source_client_id) == client_id)
+        statement = apply_list_filters(statement, filters, Cluster)
         async with self._session_context() as session:
             result = await session.execute(statement)
             return result.scalar_one()
 
-    async def get_binding_for_client(
-        self,
-        client_id: str,
-        source_integration_id: uuid.UUID,
-    ) -> ClusterBinding | None:
-        """Return one client-owned desired-state binding."""
+    async def get_for_client(self, client_id: str, cluster_id: uuid.UUID) -> Cluster | None:
+        """Return one cluster owned by the given client, identified by cluster.id."""
         async with self._session_context() as session:
-            return await session.get(ClusterBinding, (client_id, source_integration_id))
+            cluster = await session.get(Cluster, cluster_id)
+            if cluster is None or cluster.source_client_id != client_id:
+                return None
+            return self._without_secret(cluster)
 
     async def update(
         self,
@@ -214,6 +191,8 @@ class ClusterStore(StoreBase):
         credential_ref: uuid.UUID | None = None,
         ca_certificate: str | None = None,
         labels: dict[str, str] | None = None,
+        project_ids: _UnsetType | builtins.list[uuid.UUID] | None = _UNSET,
+        source_revision: int | None = None,
     ) -> Cluster:
         """Update mutable cluster fields."""
         async with self._session_context() as session:
@@ -231,6 +210,10 @@ class ClusterStore(StoreBase):
                     cluster.ca_certificate = ca_certificate
                 if labels is not None:
                     cluster.labels = merge_user_labels(cluster.labels, labels)
+                if not isinstance(project_ids, _UnsetType):
+                    cluster.project_ids = project_ids
+                if source_revision is not None:
+                    cluster.source_revision = source_revision
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await session.commit()
@@ -263,16 +246,6 @@ class ClusterStore(StoreBase):
                     cluster.is_default = True
                     cluster.updated_by = updated_by
                     cluster.updated_at = now
-                await session.execute(
-                    update(ClusterBinding)
-                    .where(col(ClusterBinding.is_default).is_(True))
-                    .values(is_default=False, updated_at=now)
-                )
-                await session.execute(
-                    update(ClusterBinding)
-                    .where(col(ClusterBinding.cluster_id) == cluster.id)
-                    .values(is_default=True, updated_at=now)
-                )
                 await session.commit()
                 return self._without_secret(cluster)
             except IntegrityError as exc:
@@ -314,6 +287,8 @@ class ClusterStore(StoreBase):
         credential_ref: uuid.UUID | None = None,
         ca_certificate: str | None = None,
         labels: dict[str, str] | None = None,
+        project_ids: _UnsetType | builtins.list[uuid.UUID] | None = _UNSET,
+        source_revision: int | None = None,
     ) -> Cluster:
         """Re-enable a DRAINING cluster and transition it back to ACTIVE."""
         async with self._session_context() as session:
@@ -332,6 +307,10 @@ class ClusterStore(StoreBase):
                     cluster.ca_certificate = ca_certificate
                 if labels is not None:
                     cluster.labels = merge_user_labels(cluster.labels, labels)
+                if not isinstance(project_ids, _UnsetType):
+                    cluster.project_ids = project_ids
+                if source_revision is not None:
+                    cluster.source_revision = source_revision
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await session.commit()

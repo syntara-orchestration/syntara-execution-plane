@@ -7,7 +7,7 @@ import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
 from execution_plane.api.main import create_app
-from execution_plane.models.cluster_binding import ClusterBinding
+from execution_plane.models.cluster import Cluster
 from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.models.work_item import WorkItem
 from execution_plane_client.commands.clusters import ClusterRegister
@@ -204,7 +204,7 @@ def test_cluster_binding_request_remains_namespace_based() -> None:
     ("path", "model", "default"),
     [
         ("/v1/work-items", WorkItem, "-created_at"),
-        ("/v1/clusters", ClusterBinding, "created_at"),
+        ("/v1/clusters", Cluster, "created_at"),
         ("/v1/execution-targets", ExecutionTarget, "created_at"),
     ],
 )

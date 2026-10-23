@@ -128,7 +128,6 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch:
     monkeypatch.setattr(worker, "build_placement_resolver", build_resolver)
     monkeypatch.setattr(worker, "_listen_loop", _finished_listener)
     monkeypatch.setattr(worker, "_poll_loop", record_poller)
-    monkeypatch.setattr(worker, "run_cluster_binding_reconciler", _finished_reconciler)
     monkeypatch.setattr(worker, "run_orphan_policy_reconciler", _finished_policy_reconciler)
 
     await worker.run_worker("postgresql+asyncpg://localhost/syntara")
@@ -169,7 +168,6 @@ async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(monkeypatch
     monkeypatch.setattr(worker, "build_placement_resolver", lambda *_args: object())
     monkeypatch.setattr(worker, "_listen_loop", _finished_listener)
     monkeypatch.setattr(worker, "_poll_loop", _finished_poller)
-    monkeypatch.setattr(worker, "run_cluster_binding_reconciler", _finished_reconciler)
     monkeypatch.setattr(worker, "run_orphan_policy_reconciler", _finished_policy_reconciler)
 
     await worker.run_worker("postgresql+asyncpg://localhost/syntara")

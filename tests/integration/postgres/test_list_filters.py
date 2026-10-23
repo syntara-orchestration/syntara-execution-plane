@@ -20,7 +20,8 @@ def _params(api, query) -> dict[str, str]:
     substitutions.update(
         foreign=api.foreign_ids[0],
         unknown=str(uuid.uuid4()),
-        ready="active" if api.path == "/v1/execution-targets" else "pending",
+        ready="pending" if api.path == "/v1/work-items" else "active",
+        not_ready="error" if api.path == "/v1/clusters" else "failed",
     )
     substitutions.update({f"time{i}": (BASE_TIME + timedelta(seconds=i)).isoformat() for i in range(3)})
     # Parse before expansion so the '+' in timezone offsets is not URL-decoded as a space.
@@ -39,8 +40,8 @@ FILTER_REQUESTS = [
     ("id[in]={foreign}", []),
     ("id[in]={foreign},{id2}", [2]),
     ("status={ready}", [0, 2, 4]),
-    ("status[in]={ready},failed", list(range(6))),
-    ("status={ready},failed", list(range(6))),
+    ("status[in]={ready},{not_ready}", list(range(6))),
+    ("status={ready},{not_ready}", list(range(6))),
     ("id[in]={id0},{id1},{id2}&status={ready}", [0, 2]),
     ("created_at[gt]={time0}", [2, 3, 4, 5]),
     ("created_at[gte]={time1}", [2, 3, 4, 5]),
@@ -135,14 +136,12 @@ SORT_FIELDS = {
     "/v1/clusters": [
         "id",
         "created_at",
+        "updated_at",
         "name",
         "endpoint",
         "status",
         "enabled",
-        "namespace",
-        "desired_revision",
-        "observed_revision",
-        "updated_at",
+        "is_default",
     ],
 }
 
@@ -194,10 +193,9 @@ SPECIAL_REQUESTS = [
     ("/v1/work-items", "completed_at[isnull]=true", list(range(6))),
     ("/v1/work-items", "status=not-a-status", None),
     ("/v1/work-items", "labels[env]=prod", None),
-    ("/v1/clusters", "desired_revision[gte]=4", [3, 4, 5]),
-    ("/v1/clusters", "observed_revision[lt]=2", [0, 1]),
-    ("/v1/clusters", "desired_revision=not-an-int", None),
-    ("/v1/clusters", "cluster_id[isnull]=true", list(range(6))),
+    ("/v1/clusters", "source_integration_id={id0}", [0]),
+    ("/v1/clusters", "source_integration_id=not-a-uuid", None),
+    ("/v1/clusters", "status_message[isnull]=true", list(range(6))),
     ("/v1/execution-targets", "is_default=true", [0]),
     ("/v1/execution-targets", "backend_type=not-a-backend", None),
     ("/v1/execution-targets", "status=not-a-status", None),
@@ -225,8 +223,8 @@ INVALID_SORT_CURSORS = [
     ("/v1/execution-targets", "enabled", "not-a-valid-value"),
     ("/v1/execution-targets", "cluster_id", "not-a-uuid"),
     ("/v1/clusters", "enabled", "not-a-valid-value"),
-    ("/v1/clusters", "desired_revision", "not-an-integer"),
-    ("/v1/clusters", "desired_revision", ""),
+    ("/v1/clusters", "is_default", "not-a-valid-value"),
+    ("/v1/clusters", "is_default", ""),
     ("/v1/clusters", "updated_at", "not-a-date"),
     ("/v1/clusters", "updated_at", "2025-06-01T12:00:00"),
     ("/v1/clusters", "updated_at", ""),

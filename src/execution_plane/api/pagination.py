@@ -86,7 +86,7 @@ class ExecutionTargetListParams(EPListParams):
 
 
 class ClusterListParams(EPListParams):
-    """Adapt syntara.core.models.base.query_params.BaseListParams for cluster bindings."""
+    """Adapt syntara.core.models.base.query_params.BaseListParams for clusters."""
 
     sort: Literal[
         "id",
@@ -101,15 +101,11 @@ class ClusterListParams(EPListParams):
         "-status",
         "enabled",
         "-enabled",
-        "namespace",
-        "-namespace",
-        "desired_revision",
-        "-desired_revision",
-        "observed_revision",
-        "-observed_revision",
+        "is_default",
+        "-is_default",
         "updated_at",
         "-updated_at",
-    ] = Field(default="created_at", description="Cluster-binding sort field; oldest first by default.")
+    ] = Field(default="created_at", description="Cluster sort field; oldest first by default.")
 
 
 class ResourcesResponse(BaseModel, Generic[T]):  # noqa: UP046

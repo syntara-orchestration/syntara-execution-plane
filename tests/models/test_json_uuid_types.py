@@ -2,17 +2,15 @@
 
 import uuid
 
-import pytest
 from sqlalchemy.dialects import postgresql
 
 from execution_plane.models.cluster import Cluster
-from execution_plane.models.cluster_binding import ClusterBinding
 from execution_plane.models.sqlmodel_types import UUIDListJSONB
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 
 
-@pytest.mark.parametrize("model", [Cluster, ClusterBinding])
-def test_project_scope_column_serializes_and_restores_uuid_lists(model: type) -> None:
+def test_project_scope_column_serializes_and_restores_uuid_lists() -> None:
+    model = Cluster
     project_ids = [uuid.uuid4(), uuid.uuid4()]
     column_type = model.__table__.c.project_ids.type
     dialect = postgresql.dialect()

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from execution_plane.models.execution_target import BackendType, TargetStatus
 from execution_plane.models.execution_target_placement import ExecutionTargetPlacement
@@ -51,17 +51,14 @@ class ExecutionTargetRead(BaseModel):
 
 
 class ClusterRead(BaseModel):
-    """Desired and observed cluster binding state, keyed by integration UUID."""
+    """Provisioned cluster state, keyed by the actual cluster UUID."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: uuid.UUID = Field(validation_alias="source_integration_id")
+    id: uuid.UUID
+    source_integration_id: uuid.UUID | None
     name: str
     endpoint: str
-    namespace: str
-    desired_revision: int = Field(validation_alias="revision")
-    observed_revision: int
-    cluster_id: uuid.UUID | None
     status: str
     status_message: str | None
     enabled: bool

@@ -87,12 +87,12 @@ class EPResourceQueries:
         sort_field: str = "created_at",
         filters: dict[str, str] | None = None,
     ) -> list[ClusterRead]:
-        """List binding resources, including pending setup and deletion."""
+        """List provisioned clusters owned by the authenticated client."""
         parsed_cursor = (
             decode_cursor(cursor, sort_field=sort_field, sort_direction=sort_direction) if cursor is not None else None
         )
         rows = list(
-            await self._clusters.list_bindings_for_client(
+            await self._clusters.list_for_client(
                 self._client_id,
                 limit=limit + 1,
                 cursor=parsed_cursor,
@@ -107,11 +107,11 @@ class EPResourceQueries:
 
     async def count_clusters(self, filters: dict[str, str] | None = None) -> int:
         """Return total cluster count for the authenticated client."""
-        return await self._clusters.count_bindings_for_client(self._client_id, filters=filters)
+        return await self._clusters.count_for_client(self._client_id, filters=filters)
 
     async def cluster(self, resource_id: UUID) -> ClusterRead:
-        """Read binding state using its stable source integration UUID."""
-        row = await self._clusters.get_binding_for_client(self._client_id, resource_id)
+        """Return the cluster with the given cluster.id owned by the authenticated client."""
+        row = await self._clusters.get_for_client(self._client_id, resource_id)
         if row is None:
             raise ResourceNotFoundError
         return ClusterRead.model_validate(row)

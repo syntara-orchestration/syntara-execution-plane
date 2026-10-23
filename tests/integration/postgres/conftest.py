@@ -54,7 +54,7 @@ async def sort_client(list_datasets):
 
 @pytest.fixture
 async def clusters_client(list_datasets):
-    """Use exactly the same cluster bindings as the filtering request tests."""
+    """Use exactly the same clusters as the filtering request tests."""
     data = list_datasets["/v1/clusters"]
     async with list_http_client(data.db_url, data.client_id) as (client, _sessions):
         yield client, ordered_ids(data)
