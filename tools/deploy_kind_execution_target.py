@@ -45,11 +45,7 @@ from urllib.request import Request, urlopen
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from execution_plane.cluster.binding_reconciler import ClusterBindingReconciler
-from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDiscoveryMechanism
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.config import get_ep_settings
-from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.models.cluster import ClusterStatus
 from execution_plane.models.cluster_binding import ClusterBinding
 from execution_plane.work_item_client import ep_service_token
@@ -413,16 +409,14 @@ def register_kind_binding_to_db(
     namespace: str,
     ca_certificate: str,
     database_url: str,
+    wait_seconds: int,
 ) -> None:
-    """Register the cluster binding directly to the database (no EP API required).
+    """Insert a ClusterBinding row and wait for the EP worker to reconcile it.
 
-    Used in CI where the EP API is not running. Writes a ClusterBinding and runs
-    the ClusterBindingReconciler once — the same production path the EP worker
-    follows when it processes a cluster.provision command.
+    Used in CI where the EP API is not running. The running EP worker picks up
+    the pending binding and provisions the cluster through the normal reconciler
+    path. This function returns once the cluster reaches ACTIVE status.
     """
-    os.environ.setdefault("EP_DATABASE_URL", database_url)
-    get_ep_settings.cache_clear()
-
     client_id = CI_CLIENT_ID
     integration_id = source_integration_id(cluster_name)
 
@@ -430,41 +424,38 @@ def register_kind_binding_to_db(
         engine = create_async_engine(database_url)
         session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         try:
-            async with (
-                ClusterStore.from_engine(engine) as cluster_store,
-                ExecutionTargetStore.from_engine(engine) as target_store,
-            ):
-                registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism())
-                reconciler = ClusterBindingReconciler(session_factory, registrar, cluster_store)
-                now = datetime.now(UTC)
-                async with session_factory.begin() as session:
-                    existing = await session.get(ClusterBinding, (client_id, integration_id))
-                    if existing is None:
-                        session.add(
-                            ClusterBinding(
-                                client_id=client_id,
-                                source_integration_id=integration_id,
-                                revision=1,
-                                name=binding_name,
-                                endpoint=endpoint,
-                                namespace=namespace,
-                                credential_ref=CI_CREDENTIAL_REF,
-                                ca_certificate=ca_certificate,
-                                is_default=False,
-                                created_at=now,
-                                updated_at=now,
-                            )
+            async with session_factory.begin() as session:
+                existing = await session.get(ClusterBinding, (client_id, integration_id))
+                if existing is None:
+                    now = datetime.now(UTC)
+                    session.add(
+                        ClusterBinding(
+                            client_id=client_id,
+                            source_integration_id=integration_id,
+                            revision=1,
+                            name=binding_name,
+                            endpoint=endpoint,
+                            namespace=namespace,
+                            credential_ref=CI_CREDENTIAL_REF,
+                            ca_certificate=ca_certificate,
+                            is_default=False,
+                            created_at=now,
+                            updated_at=now,
                         )
-                        print(f"[INFO] Wrote ClusterBinding {integration_id}")
-                    else:
-                        print(f"[INFO] Reusing existing ClusterBinding {integration_id} (status={existing.status})")
-                await reconciler.reconcile_once()
-                cluster = await cluster_store.get_by_source(client_id, integration_id)
-                if cluster is None or cluster.status is not ClusterStatus.ACTIVE:
-                    status = cluster.status if cluster else "not found"
-                    msg = f"Cluster registration failed; status={status}"
-                    raise RuntimeError(msg)
-                print(f"[INFO] Cluster {cluster.id} registered and ACTIVE")
+                    )
+                    print(f"[INFO] Wrote ClusterBinding {integration_id}; waiting for EP worker to reconcile")
+                else:
+                    print(f"[INFO] ClusterBinding {integration_id} already exists (status={existing.status})")
+            async with ClusterStore.from_engine(engine) as cluster_store:
+                deadline = time.time() + wait_seconds
+                while time.time() < deadline:
+                    cluster = await cluster_store.get_by_source(client_id, integration_id)
+                    if cluster is not None and cluster.status is ClusterStatus.ACTIVE:
+                        print(f"[INFO] Cluster {cluster.id} is ACTIVE")
+                        return
+                    await asyncio.sleep(3)
+            msg = f"Cluster did not become ACTIVE within {wait_seconds}s"
+            raise TimeoutError(msg)
         finally:
             await engine.dispose()
 
@@ -596,6 +587,7 @@ def main() -> int:
                 namespace=args.namespace,
                 ca_certificate=ca_certificate,
                 database_url=args.database_url,
+                wait_seconds=args.wait_seconds,
             )
         else:
             binding, targets = register_kind_binding(
