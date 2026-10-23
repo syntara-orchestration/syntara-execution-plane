@@ -415,7 +415,9 @@ def _reconcile_once(database_url: str) -> None:
         registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism())
         reconciler = ClusterBindingReconciler(session_factory, registrar, cluster_store)
         try:
-            await reconciler.reconcile_once()
+            bindings = await reconciler._claim()  # noqa: SLF001
+            for binding in bindings:
+                await reconciler._reconcile(binding)  # noqa: SLF001
         finally:
             await engine.dispose()
 
