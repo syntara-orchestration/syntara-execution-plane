@@ -301,4 +301,5 @@ def main() -> None:
         ssl_keyfile=settings.api_tls_key_path,
         ssl_ca_certs=settings.api_tls_client_ca_path,
         ssl_cert_reqs=ssl.CERT_OPTIONAL if settings.api_tls_client_ca_path else ssl.CERT_NONE,
+        timeout_graceful_shutdown=settings.api_graceful_shutdown_seconds,
     )

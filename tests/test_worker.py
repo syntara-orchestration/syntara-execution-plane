@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import signal
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Self
 
@@ -175,6 +178,58 @@ async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(monkeypatch
     assert events.index("resource-monitor:start") < events.index("resource-monitor:stop")
     assert events.index("resource-monitor:stop") < events.index("work:stop")
     assert events.index("monitor:stop") < events.index("work:stop")
+
+
+@pytest.mark.asyncio
+async def test_run_worker_completes_cleanup_after_shutdown_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from execution_plane import worker
+    from execution_plane.runtime import run_until_shutdown
+
+    events: list[str] = []
+    listener_started = asyncio.Event()
+    monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(WorkStore, "from_database_url", lambda _url: _StoreContext("work", events))
+    monkeypatch.setattr(
+        "execution_plane.worker.ClusterStore.from_database_url",
+        lambda _url: _StoreContext("cluster", events),
+    )
+    monkeypatch.setattr(
+        "execution_plane.worker.ExecutionTargetStore.from_database_url",
+        lambda _url: _StoreContext("target", events),
+    )
+    monkeypatch.setattr(
+        worker,
+        "DrainMonitor",
+        lambda target, cluster, work: _DrainMonitor(target, cluster, work, events),
+    )
+    monkeypatch.setattr(
+        worker,
+        "ResourceMonitor",
+        lambda target, cluster, settings, **_kwargs: _ResourceMonitor(target, cluster, settings, events),
+    )
+    monkeypatch.setattr(worker, "CompletionNotifier", lambda _settings: _CompletionDelivery(SimpleNamespace(), events))
+    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver())
+    monkeypatch.setattr(worker, "VanillaK8sWorkerManager", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(worker, "build_placement_resolver", lambda *_args: object())
+
+    async def blocked_listener(_database_url: str, _wakeup_event: object) -> None:
+        listener_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(worker, "_listen_loop", blocked_listener)
+    monkeypatch.setattr(worker, "_poll_loop", _finished_poller)
+    monkeypatch.setattr(worker, "run_cluster_binding_reconciler", _finished_reconciler)
+    monkeypatch.setattr(worker, "run_orphan_policy_reconciler", _finished_policy_reconciler)
+
+    runner = asyncio.create_task(run_until_shutdown(worker.run_worker("postgresql+asyncpg://localhost/syntara")))
+    await asyncio.wait_for(listener_started.wait(), timeout=1)
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(runner, timeout=1)
+
+    assert "resource-monitor:stop" in events
+    assert "monitor:stop" in events
+    assert "delivery:stop" in events
+    assert "work:stop" in events
 
 
 async def _finished_listener(_database_url: str, _wakeup_event: object) -> None:

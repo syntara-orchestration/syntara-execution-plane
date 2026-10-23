@@ -26,6 +26,7 @@ from execution_plane.execution_target_reconciler.placement import WorkerManagerR
 from execution_plane.models.execution_target import BackendType
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.resource_monitor.monitor import ResourceMonitor
+from execution_plane.runtime import run_until_shutdown
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.worker_manager.vanilla_k8s.manager import (
@@ -311,7 +312,7 @@ def main() -> None:
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
     )
-    asyncio.run(_run())
+    asyncio.run(run_until_shutdown(_run()))
 
 
 if __name__ == "__main__":

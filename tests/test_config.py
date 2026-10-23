@@ -25,6 +25,7 @@ def test_ep_settings_has_cold_start_and_network_defaults() -> None:
     settings = EPSettings()
     assert settings.node_startup_seconds == 120
     assert settings.node_grace_seconds == 30
+    assert settings.api_graceful_shutdown_seconds == 20
     assert settings.workload_allowed_egress_cidrs == []
     assert settings.resource_monitor_interval_seconds == 30.0
     assert settings.resource_monitor_probe_timeout_seconds == 10.0

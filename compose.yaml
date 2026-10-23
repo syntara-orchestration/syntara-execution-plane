@@ -90,6 +90,7 @@ services:
   api:
     image: ${EP_IMAGE:-localhost/execution-plane:latest}
     restart: unless-stopped
+    stop_grace_period: 30s
     command:
       - /bin/sh
       - -ec
@@ -128,6 +129,7 @@ services:
   worker:
     image: ${EP_IMAGE:-localhost/execution-plane:latest}
     restart: unless-stopped
+    stop_grace_period: 30s
     command:
       - /bin/sh
       - -ec
