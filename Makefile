@@ -1,4 +1,4 @@
-.PHONY: install test test-coverage coverage-combine test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target submit-work sync-requirements sync-rpms-lock-yaml
+.PHONY: install test test-coverage coverage-combine test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target start-ep submit-work sync-requirements sync-rpms-lock-yaml
 
 TEST_ARGS ?= --ignore=tests/integration
 COVERAGE_FILES ?= coverage-artifacts/*/.coverage
@@ -84,6 +84,24 @@ generate-token:
 
 kind-target:
 	uv run python tools/deploy_kind_execution_target.py $(KIND_ARGS)
+
+EP_LOG_DIR ?= integration-test-logs
+EP_API_URL ?= https://127.0.0.1:8001
+
+start-ep:
+	mkdir -p $(EP_LOG_DIR)
+	uv run execution-plane-api    > $(EP_LOG_DIR)/api.log    2>&1 &
+	uv run execution-plane-worker > $(EP_LOG_DIR)/worker.log 2>&1 &
+	@echo "[INFO] EP API and worker started; waiting for readiness"
+	@for i in $$(seq 1 60); do \
+		if curl -sk $(EP_API_URL)/healthz/ready -o /dev/null 2>&1; then \
+			echo "[INFO] EP API ready ($${i}s)"; exit 0; \
+		fi; \
+		if [ "$$i" -eq 60 ]; then \
+			echo "ERROR: EP API did not start within 60s"; cat $(EP_LOG_DIR)/api.log; exit 1; \
+		fi; \
+		sleep 1; \
+	done
 
 submit-work:
 	uv run python tools/submit_work_item.py

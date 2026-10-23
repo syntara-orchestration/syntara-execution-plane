@@ -164,20 +164,7 @@ jobs:
           kind load docker-image "$image" --name integration-test
 
       - name: Start EP API and worker
-        run: |
-          mkdir -p integration-test-logs
-          uv run execution-plane-api    > integration-test-logs/api.log    2>&1 &
-          uv run execution-plane-worker > integration-test-logs/worker.log 2>&1 &
-          echo "[INFO] EP API and worker started; waiting for API readiness"
-          for i in $(seq 1 60); do
-            if curl -sk https://127.0.0.1:8001/healthz/ready -o /dev/null 2>&1; then
-              echo "[INFO] EP API is ready (${i}s)"; break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: EP API did not start within 60s"; cat integration-test-logs/api.log; exit 1
-            fi
-            sleep 1
-          done
+        run: make start-ep
 
       - name: Provision RBAC and register kind cluster
         run: |
