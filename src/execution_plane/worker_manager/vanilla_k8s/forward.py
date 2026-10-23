@@ -54,8 +54,33 @@ def forward_socket(remote: socket.socket) -> Iterator[str]:
             yield f"127.0.0.1:{listener.getsockname()[1]}"
         finally:
             stopped.set()
-            for connection in [*local_connections, remote]:
+            for connection in local_connections:
                 with suppress(OSError):
                     connection.shutdown(socket.SHUT_RDWR)
                 connection.close()
             thread.join(timeout=3)
+            _drain_remote(remote)
+            with suppress(OSError):
+                remote.shutdown(socket.SHUT_RDWR)
+            remote.close()
+
+
+def _drain_remote(remote: socket.socket) -> None:
+    """Drain immediately available bytes before shutting down the remote socket.
+
+    Kubernetes exposes its port-forward as a Unix socketpair. If this end is
+    shut down while bytes sent by the proxy are still queued here, Linux may
+    report ``ECONNRESET`` to the proxy thread instead of EOF. Draining all
+    immediately available data first makes the subsequent shutdown appear as a
+    clean connection close to Kubernetes.
+    """
+    remote.settimeout(0)
+    try:
+        while True:
+            try:
+                if not remote.recv(65536):
+                    return
+            except (BlockingIOError, InterruptedError):
+                return
+    finally:
+        remote.settimeout(None)
