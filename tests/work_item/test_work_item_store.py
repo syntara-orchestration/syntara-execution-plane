@@ -343,6 +343,29 @@ async def test_reserve_one_requeues_expired_uncertain_dispatch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reserve_one_reconciles_expired_running_work() -> None:
+    """An expired running lease is never retried as a new execution attempt."""
+    owner_id = uuid.uuid4()
+    item = _work_item(
+        status=WorkItemStatus.RUNNING,
+        claim_owner_id=owner_id,
+        claim_generation=2,
+        claimed_at=datetime.now(UTC),
+    )
+    store = _store()
+    session = _Session()
+    session.execute.side_effect = [_ClaimResult(item), _ClaimResult(None)]
+    store._session_factory = _SessionFactory(session)
+
+    assert await store.reserve_one() is None
+    assert item.status is WorkItemStatus.RECONCILIATION_REQUIRED
+    assert item.claim_owner_id is None
+    assert item.result["cancellation_requested"] is False
+    assert len(session.added) == 1
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_reserve_one_reclaims_expired_claim() -> None:
     """A stale claimed item is retried with a new claim owner and generation."""
     item = _work_item(
@@ -598,6 +621,57 @@ async def test_mark_dispatched_rejects_cancelled_or_terminal_work() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mark_running_transitions_dispatched_work_once() -> None:
+    """Only the current dispatch claim can cross the Execute-submission boundary."""
+    owner_id = uuid.uuid4()
+    item = _work_item(
+        status=WorkItemStatus.DISPATCHED,
+        claim_owner_id=owner_id,
+        claim_generation=1,
+        claimed_at=datetime.now(UTC),
+    )
+    store = _store()
+    session = _Session()
+    session.items[WorkItem] = item
+    store._session_factory = _SessionFactory(session)
+
+    assert await store.mark_running(item.id, claim_owner_id=owner_id, claim_generation=1) is True
+    assert item.status is WorkItemStatus.RUNNING
+    assert item.claim_owner_id == owner_id
+    assert item.claim_generation == 1
+    assert item.claimed_at is not None
+    assert await store.mark_running(item.id, claim_owner_id=owner_id, claim_generation=1) is True
+    assert session.commits == 1
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_mark_running_rejects_cancellation_and_non_dispatched_work() -> None:
+    """Cancellation and every state other than DISPATCHED win over a late start."""
+    owner_id = uuid.uuid4()
+    statuses = [
+        WorkItemStatus.CANCEL_REQUESTED,
+        WorkItemStatus.CLAIMED,
+        WorkItemStatus.PENDING,
+    ]
+    store = _store()
+    session = _Session()
+    store._session_factory = _SessionFactory(session)
+
+    for status in statuses:
+        item = _work_item(
+            status=status,
+            claim_owner_id=owner_id,
+            claim_generation=1,
+        )
+        session.items[WorkItem] = item
+        assert await store.mark_running(item.id, claim_owner_id=owner_id, claim_generation=1) is False
+        assert item.status is status
+    assert session.commits == 0
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_refresh_claim_renews_lease_and_reports_cancellation() -> None:
     """Lease refresh is idempotent for active states and reports cancel requests."""
     owner_id = uuid.uuid4()
@@ -842,6 +916,31 @@ async def test_request_cancel_requests_termination_after_dispatch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_cancel_requests_termination_after_running() -> None:
+    """Cancellation of running work preserves the claim while termination is confirmed."""
+    owner_id = uuid.uuid4()
+    item = _work_item(
+        status=WorkItemStatus.RUNNING,
+        claim_owner_id=owner_id,
+        claim_generation=1,
+    )
+    store = _store()
+    session = _Session()
+    session.execute.return_value = _ClaimResult(item)
+    store._session_factory = _SessionFactory(session)
+
+    requested = await store.request_cancel(item.id, client_id=item.client_id)
+
+    assert requested is item
+    assert item.status is WorkItemStatus.CANCEL_REQUESTED
+    assert item.claim_owner_id == owner_id
+    assert item.claimed_at is not None
+    assert session.added == []
+    assert session.commits == 1
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_request_cancel_is_noop_for_terminal_work() -> None:
     """Terminal work cannot be cancelled again."""
     item = _work_item(status=WorkItemStatus.CANCELLED, result={"cancelled": True})
@@ -967,6 +1066,37 @@ async def test_requeue_pre_execute_failure_returns_dispatched_work() -> None:
     assert item.execution_target_id is None
     assert item.claim_owner_id is None
     assert item.claimed_at is None
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_requeue_pre_execute_failure_never_requeues_running_work() -> None:
+    """A failure observed after RUNNING cannot launch a duplicate execution."""
+    owner_id = uuid.uuid4()
+    target_id = uuid.uuid4()
+    item = _work_item(
+        status=WorkItemStatus.RUNNING,
+        claim_owner_id=owner_id,
+        claim_generation=1,
+        execution_target_id=target_id,
+        claimed_at=datetime.now(UTC),
+    )
+    store = _store()
+    session = _Session()
+    session.items[WorkItem] = item
+    store._session_factory = _SessionFactory(session)
+
+    result = await store.requeue_pre_execute_failure(
+        item.id,
+        claim_owner_id=owner_id,
+        claim_generation=1,
+    )
+
+    assert result is item
+    assert item.status is WorkItemStatus.RUNNING
+    assert item.execution_target_id == target_id
+    assert item.claim_owner_id == owner_id
+    assert session.commits == 0
     await store.close()
 
 

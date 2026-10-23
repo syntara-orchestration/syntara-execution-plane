@@ -57,13 +57,14 @@ release/quarantine policy without changing the WorkItem contract.
 
 ## Dispatch recovery and cancellation
 
-EP persists `dispatched` before external allocation and renews a claim lease
-while the synchronous gRPC call runs. Every worker transition is fenced by its
-claim owner and generation. A failure is automatically requeued only when EP
-has evidence that Execute was not submitted. Once Execute may have crossed the
-gRPC boundary, loss of the result becomes `reconciliation_required`; EP never
-allocates a second worker and automatically reruns that attempt. EP emits that
-state through its completion outbox so AO fails the activity with
+EP persists `dispatched` before external allocation, then `running` when
+Execute is submitted, and renews a claim lease while the synchronous gRPC call
+runs. Every worker transition is fenced by its claim owner and generation. A
+failure is automatically requeued only when EP has evidence that Execute was
+not submitted. Once Execute may have crossed the gRPC boundary, loss of the
+result becomes `reconciliation_required`; EP never allocates a second worker
+and automatically reruns that attempt. EP emits that state through its
+completion outbox so AO fails the activity with
 `WorkloadOutcomeUnknownError` instead of leaving it waiting indefinitely. The
 WorkItem remains visible for operator investigation; callback delivery does not
 claim that execution stopped.

@@ -121,7 +121,15 @@ class WorkStore(StoreBase):
             try:
                 uncertain_result = await session.execute(
                     select(WorkItem)
-                    .where(col(WorkItem.status).in_([WorkItemStatus.DISPATCHED, WorkItemStatus.CANCEL_REQUESTED]))
+                    .where(
+                        col(WorkItem.status).in_(
+                            [
+                                WorkItemStatus.DISPATCHED,
+                                WorkItemStatus.RUNNING,
+                                WorkItemStatus.CANCEL_REQUESTED,
+                            ]
+                        )
+                    )
                     .where(col(WorkItem.claimed_at) < lease_expiry)
                     .with_for_update(skip_locked=True)
                 )
@@ -297,6 +305,32 @@ class WorkStore(StoreBase):
                 item.claimed_at = datetime.now(UTC)
                 await session.commit()
             return item.status is WorkItemStatus.CANCEL_REQUESTED
+
+    async def mark_running(
+        self,
+        item_id: uuid.UUID,
+        *,
+        claim_owner_id: uuid.UUID,
+        claim_generation: int,
+    ) -> bool:
+        """Persist that the backend submitted Execute for the current claim."""
+        async with self._session_context() as session:
+            try:
+                item = await session.get(WorkItem, item_id, with_for_update=True)
+                if item is None:
+                    raise WorkItemNotFoundError(item_id)  # noqa: TRY301
+                self._validate_claim(item, claim_owner_id, claim_generation)
+                if item.status is WorkItemStatus.RUNNING:
+                    return True
+                if item.status is not WorkItemStatus.DISPATCHED:
+                    return False
+                item.status = WorkItemStatus.RUNNING
+                item.claimed_at = datetime.now(UTC)
+                await session.commit()
+                return True
+            except Exception:
+                await session.rollback()
+                raise
 
     async def update_backend_resource(
         self,
@@ -487,6 +521,8 @@ class WorkStore(StoreBase):
                     item.execution_target_id = None
                     item.claimed_at = None
                     item.claim_owner_id = None
+                else:
+                    return item
                 await session.commit()
                 return item
             except Exception:
@@ -516,7 +552,7 @@ class WorkStore(StoreBase):
         }:
             return
         now = datetime.now(UTC)
-        if item.status in {WorkItemStatus.DISPATCHED, WorkItemStatus.RECONCILIATION_REQUIRED}:
+        if item.status in {WorkItemStatus.DISPATCHED, WorkItemStatus.RUNNING}:
             item.status = WorkItemStatus.CANCEL_REQUESTED
             item.claimed_at = now
             await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
