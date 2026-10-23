@@ -39,17 +39,13 @@ class ClusterBindingReconciler:
         self._registrar = cluster_registrar
         self._store = cluster_store
 
-    async def reconcile_once(self) -> None:
-        """Claim all pending bindings and reconcile each one, then return."""
-        bindings = await self._claim()
-        for binding in bindings:
-            await self._reconcile(binding)
-
     async def run(self) -> None:
         """Claim desired states and retry transient setup/drain errors forever."""
         while True:
             try:
-                await self.reconcile_once()
+                bindings = await self._claim()
+                for binding in bindings:
+                    await self._reconcile(binding)
             except asyncio.CancelledError:
                 raise
             except Exception:

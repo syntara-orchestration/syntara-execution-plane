@@ -166,17 +166,17 @@ jobs:
           docker tag "$image@$digest" "$image"
           kind load docker-image "$image" --name integration-test
 
-      - name: Start EP API and worker
-        run: make start-ep
+      - name: Start EP API
+        run: |
+          mkdir -p integration-test-logs
+          uv run execution-plane-api > integration-test-logs/api.log 2>&1 &
 
       - name: Provision RBAC and register kind cluster
         run: |
           uv run python tools/deploy_kind_execution_target.py \
             --cluster-name integration-test \
-            --credential-ref "$EP_KIND_CREDENTIAL_REF"
-
-      - name: Stop EP services
-        run: pkill -f "execution-plane" || true
+            --credential-ref "$EP_KIND_CREDENTIAL_REF" \
+            --wait-for-api 60
 
       # Export a short-lived token for the kubernetes_batch_api fixture, which makes
       # direct K8S API calls to inspect job/pod state during tests.

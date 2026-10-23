@@ -277,10 +277,10 @@ def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = 
         return exc.code, parsed
 
 
-def wait_for_ep_api(api_url: str) -> None:
+def wait_for_ep_api(api_url: str, timeout: int = 30) -> None:
     """Block until the local API answers readiness."""
     url = f"{api_url.rstrip('/')}/healthz/ready"
-    deadline = time.time() + 30
+    deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             request = Request(url, method="GET")  # noqa: S310
@@ -396,6 +396,24 @@ def source_integration_id(cluster_name: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"https://execution-plane.local/kind/{cluster_name}")
 
 
+def _worker_already_running() -> bool:
+    """Return True when an EP worker process is detectable on this host."""
+    result = _run(["pgrep", "-f", "execution-plane-worker"], check=False)
+    return result.returncode == 0
+
+
+def _start_worker() -> subprocess.Popen[str]:
+    """Start execution-plane-worker in the background and return the process."""
+    log_dir = Path(os.environ.get("EP_LOG_DIR", "integration-test-logs"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = (log_dir / "worker.log").open("a")
+    return subprocess.Popen(
+        ["uv", "run", "execution-plane-worker"],
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
+
+
 def register_kind_binding(
     *,
     api_url: str,
@@ -406,9 +424,16 @@ def register_kind_binding(
     credential_ref: uuid.UUID,
     ca_certificate: str,
     wait_seconds: int,
+    wait_for_api: int = 0,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Upsert the cluster binding and wait until EP reports a ready target."""
-    wait_for_ep_api(api_url)
+    """Upsert the cluster binding and wait until EP reports a ready target.
+
+    When *wait_for_api* is non-zero the EP API is polled for readiness first.
+    If no background EP worker is running, one is started as a subprocess for
+    the duration of the wait and terminated once the binding is reconciled.
+    """
+    if wait_for_api > 0:
+        wait_for_ep_api(api_url, timeout=wait_for_api)
     token = ep_service_token()
     integration_id = source_integration_id(cluster_name)
     upsert_binding(
@@ -421,7 +446,17 @@ def register_kind_binding(
         credential_ref=credential_ref,
         ca_certificate=ca_certificate,
     )
-    binding = wait_for_binding(api_url, token, integration_id, wait_seconds)
+    worker_proc: subprocess.Popen[str] | None = None
+    if not _worker_already_running():
+        print("[INFO] No EP worker detected; starting one temporarily for reconciliation")
+        worker_proc = _start_worker()
+    try:
+        binding = wait_for_binding(api_url, token, integration_id, wait_seconds)
+    finally:
+        if worker_proc is not None:
+            worker_proc.terminate()
+            worker_proc.wait()
+            print("[INFO] Temporary EP worker stopped")
     return binding, list_execution_targets(api_url, token)
 
 
@@ -451,6 +486,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--ao-admin-password-file", type=Path)
     parser.add_argument("--ao-insecure", action="store_true")
     parser.add_argument("--wait-seconds", type=int, default=DEFAULT_WAIT_SECONDS)
+    parser.add_argument(
+        "--wait-for-api",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="Poll the EP API for readiness before registering (useful when the API was just started)",
+    )
     parser.add_argument("--recreate", action="store_true", help="Delete and recreate the kind cluster")
     parser.add_argument("--host-worker", action="store_true", help="Use the host endpoint for AO's make dev")
     return parser.parse_args()
@@ -512,6 +554,7 @@ def main() -> int:
             credential_ref=args.credential_ref,
             ca_certificate=ca_certificate,
             wait_seconds=args.wait_seconds,
+            wait_for_api=args.wait_for_api,
         )
     except (FileNotFoundError, RuntimeError, TimeoutError, TypeError, subprocess.CalledProcessError) as exc:
         if isinstance(exc, subprocess.CalledProcessError):
