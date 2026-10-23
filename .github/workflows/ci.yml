@@ -132,6 +132,7 @@ jobs:
       EP_KIND_CREDENTIAL_REF: 3679517c-ba49-5f27-868e-37e42d1184c1
       EP_API_URL: http://127.0.0.1:8001
       EP_AO_JWT_PUBLIC_KEY_PATH: .secrets/ao-jwt-public.pem
+      EP_AO_JWT_ISSUER: http://localhost:8000
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
