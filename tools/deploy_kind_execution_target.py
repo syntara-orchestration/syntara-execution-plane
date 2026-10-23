@@ -570,7 +570,7 @@ def main() -> int:
             kubeconfig = Path(handle.name)
         export_kubeconfig(args.cluster_name, kubeconfig)
         apply_workload_rbac(kubeconfig, args.namespace)
-        if args.credential_ref is None:
+        if args.credential_ref is None and not args.database_url:
             args.credential_ref = create_ao_credential(
                 kubeconfig=kubeconfig,
                 cluster_name=args.cluster_name,

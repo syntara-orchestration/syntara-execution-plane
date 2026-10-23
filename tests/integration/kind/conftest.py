@@ -97,9 +97,7 @@ async def ep_cluster(migrated_database: str) -> Cluster:
 
     if cluster is None or cluster.status is not ClusterStatus.ACTIVE:
         status = cluster.status if cluster else "not registered"
-        pytest.skip(
-            f"Kind cluster not found in database (status={status}); run 'make kind-target' before these tests"
-        )
+        pytest.skip(f"Kind cluster not found in database (status={status}); run 'make kind-target' before these tests")
 
     return cluster
 
