@@ -48,14 +48,19 @@ _EP_IT_ENDPOINT = "EP_IT_K8S_ENDPOINT"
 _EP_IT_TOKEN = "EP_IT_K8S_TOKEN"  # noqa: S105 — env var name, not a secret value
 _EP_IT_CA_CERT = "EP_IT_K8S_CA_CERT"
 
-# These must match CI_CLIENT_ID and CI_CREDENTIAL_REF in tools/deploy_kind_execution_target.py.
+# These must match the values deploy_kind_execution_target.py uses when registering.
 _KIND_CLUSTER_NAME = os.environ.get("EP_IT_K8S_CLUSTER_NAME", "integration-test")
-_KIND_CLIENT_ID = "ep-integration-tests"
+_KIND_CLIENT_ID = os.environ.get("EP_AO_CLIENT_ID", "syntara-orchestration")
 _KIND_SOURCE_INTEGRATION_ID = uuid.uuid5(
     uuid.NAMESPACE_URL,
     f"https://execution-plane.local/kind/{_KIND_CLUSTER_NAME}",
 )
-_CREDENTIAL_REF = uuid.uuid5(uuid.NAMESPACE_URL, "https://execution-plane.test/integrations/kind")
+# Must equal EP_KIND_CREDENTIAL_REF used when registering the cluster.
+_CREDENTIAL_REF = (
+    uuid.UUID(os.environ["EP_KIND_CREDENTIAL_REF"])
+    if os.environ.get("EP_KIND_CREDENTIAL_REF")
+    else uuid.uuid5(uuid.NAMESPACE_URL, "https://execution-plane.test/integrations/kind")
+)
 
 
 class StaticCredentialResolver(CredentialResolver):
