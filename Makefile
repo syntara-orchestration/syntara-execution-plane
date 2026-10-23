@@ -86,7 +86,7 @@ kind-target:
 	uv run python tools/deploy_kind_execution_target.py $(KIND_ARGS)
 
 EP_LOG_DIR ?= integration-test-logs
-EP_API_URL ?= https://127.0.0.1:8001
+EP_API_URL ?= http://127.0.0.1:8001
 
 start-ep:
 	mkdir -p $(EP_LOG_DIR)
@@ -94,11 +94,14 @@ start-ep:
 	uv run execution-plane-worker > $(EP_LOG_DIR)/worker.log 2>&1 &
 	@echo "[INFO] EP API and worker started; waiting for readiness"
 	@for i in $$(seq 1 60); do \
-		if curl -sk $(EP_API_URL)/healthz/ready -o /dev/null 2>&1; then \
+		if curl -sf $(EP_API_URL)/healthz/ready -o /dev/null 2>&1; then \
 			echo "[INFO] EP API ready ($${i}s)"; exit 0; \
 		fi; \
 		if [ "$$i" -eq 60 ]; then \
-			echo "ERROR: EP API did not start within 60s"; cat $(EP_LOG_DIR)/api.log; exit 1; \
+			echo "ERROR: EP API did not start within 60s"; \
+			echo "--- api.log ---"; cat $(EP_LOG_DIR)/api.log; \
+			echo "--- worker.log ---"; cat $(EP_LOG_DIR)/worker.log; \
+			exit 1; \
 		fi; \
 		sleep 1; \
 	done

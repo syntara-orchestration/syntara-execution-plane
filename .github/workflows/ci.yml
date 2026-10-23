@@ -130,14 +130,15 @@ jobs:
       EP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/execution_plane
       EP_CREDENTIAL_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       EP_KIND_CREDENTIAL_REF: 3679517c-ba49-5f27-868e-37e42d1184c1
+      EP_API_URL: http://127.0.0.1:8001
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: ./.github/actions/ep-setup
 
-      - name: Generate EP secrets and certificates
-        run: make secrets certs
+      - name: Generate EP secrets
+        run: make secrets
 
       # Stand up a throwaway kind cluster. deploy_kind_execution_target.py registers
       # it via the EP API; the EP worker reconciles the binding through the full

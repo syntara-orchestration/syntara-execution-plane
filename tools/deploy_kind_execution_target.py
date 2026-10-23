@@ -245,6 +245,11 @@ def _ssl_context() -> ssl.SSLContext:
     return ssl.create_default_context(cafile=str(ca_path))
 
 
+def _ssl_context_for(url: str) -> ssl.SSLContext | None:
+    """Return an SSL context for HTTPS URLs and None for plain HTTP."""
+    return _ssl_context() if url.startswith("https://") else None
+
+
 def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
     """Call the local EP API and return (status, JSON-or-text)."""
     data = None if body is None else json.dumps(body).encode("utf-8")
@@ -259,7 +264,7 @@ def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = 
         },
     )
     try:
-        with urlopen(request, context=_ssl_context(), timeout=15) as response:  # noqa: S310
+        with urlopen(request, context=_ssl_context_for(url), timeout=15) as response:  # noqa: S310
             payload = response.read().decode("utf-8")
             parsed: Any = json.loads(payload) if payload else None
             return response.status, parsed
@@ -279,7 +284,7 @@ def wait_for_ep_api(api_url: str) -> None:
     while time.time() < deadline:
         try:
             request = Request(url, method="GET")  # noqa: S310
-            with urlopen(request, context=_ssl_context(), timeout=5) as response:  # noqa: S310
+            with urlopen(request, context=_ssl_context_for(url), timeout=5) as response:  # noqa: S310
                 if response.status == HTTPStatus.OK:
                     return
         except (HTTPError, URLError, TimeoutError, ssl.SSLError):
