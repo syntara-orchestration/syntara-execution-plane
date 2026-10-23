@@ -175,6 +175,9 @@ jobs:
             --cluster-name integration-test \
             --credential-ref "$EP_KIND_CREDENTIAL_REF"
 
+      - name: Stop EP services
+        run: pkill -f "execution-plane" || true
+
       # Export a short-lived token for the kubernetes_batch_api fixture, which makes
       # direct K8S API calls to inspect job/pod state during tests.
       - name: Export cluster coordinates for the test suite
