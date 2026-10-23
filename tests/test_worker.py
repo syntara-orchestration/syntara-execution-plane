@@ -5,13 +5,17 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Self, cast
+from uuid import uuid4
 
 import pytest
 
 from execution_plane.models.execution_target import BackendType
+from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
+from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError
 
 if TYPE_CHECKING:
     from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
@@ -61,6 +65,78 @@ class _ResourceMonitor:
 
     async def stop(self) -> None:
         self.events.append("resource-monitor:stop")
+
+
+class _WorkStore:
+    def __init__(self) -> None:
+        self.results: list[tuple[object, dict[str, object], object]] = []
+
+    async def set_result(self, item_id: object, result: dict[str, object], status: object, **_kwargs: object) -> None:
+        self.results.append((item_id, result, status))
+
+
+class _TargetStore:
+    def __init__(self, target: object) -> None:
+        self.target = target
+
+    async def get(self, _target_id: object) -> object:
+        return self.target
+
+
+class _Registry:
+    def __init__(self, manager: object) -> None:
+        self.manager = manager
+
+    def get(self, _backend_type: object) -> object:
+        return self.manager
+
+
+class _Manager:
+    def __init__(self) -> None:
+        self.dispatched: list[object] = []
+
+    async def dispatch(self, work_item: object) -> dict[str, object]:
+        self.dispatched.append(work_item)
+        raise WorkloadCancelledError(execution_started=True)
+
+
+@pytest.mark.asyncio
+async def test_process_item_preserves_execution_started_for_cancelled_running_work() -> None:
+    from execution_plane import worker
+
+    item = WorkItem(
+        id=uuid4(),
+        client_id="test-client",
+        status=WorkItemStatus.CLAIMED,
+        execution_target_id=uuid4(),
+        created_at=datetime.now(UTC),
+        claim_owner_id=uuid4(),
+        claim_generation=1,
+    )
+    target = SimpleNamespace(backend_type=BackendType.VANILLA_K8S)
+    manager = _Manager()
+    work_store = _WorkStore()
+
+    await worker._process_item(
+        item,
+        work_store,
+        _TargetStore(target),
+        _Registry(manager),
+        SimpleNamespace(dispatch_retry_backoff_seconds=0),
+    )
+
+    assert manager.dispatched == [item]
+    assert work_store.results == [
+        (
+            item.id,
+            {
+                "cancelled": True,
+                "execution_started": True,
+                "reason": "Node workload termination was confirmed after execution started",
+            },
+            WorkItemStatus.CANCELLED,
+        )
+    ]
 
 
 class _CompletionDelivery:

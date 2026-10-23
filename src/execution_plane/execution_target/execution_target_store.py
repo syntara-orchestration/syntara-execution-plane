@@ -13,10 +13,11 @@ from sqlmodel import col
 from execution_plane.labels import labels_with_execution_target_id, merge_user_labels
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.work_item import WorkItem, WorkItemStatus
+from execution_plane.models.work_item import WorkItem
 from execution_plane.query_filters import apply_list_filters
 from execution_plane.query_sorting import apply_cursor_sort
 from execution_plane.store_base import StoreBase
+from execution_plane.work_item.policy import DRAIN_BLOCKING_STATUSES
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -409,16 +410,7 @@ class ExecutionTargetStore(StoreBase):
                 active_work = await session.execute(
                     select(col(WorkItem.id))
                     .where(col(WorkItem.execution_target_id) == target_id)
-                    .where(
-                        col(WorkItem.status).in_(
-                            [
-                                WorkItemStatus.CLAIMED,
-                                WorkItemStatus.DISPATCHED,
-                                WorkItemStatus.CANCEL_REQUESTED,
-                                WorkItemStatus.RECONCILIATION_REQUIRED,
-                            ]
-                        )
-                    )
+                    .where(col(WorkItem.status).in_(DRAIN_BLOCKING_STATUSES))
                     .limit(1)
                 )
                 if active_work.scalar_one_or_none() is not None:
