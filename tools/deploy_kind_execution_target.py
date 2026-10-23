@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import json
 import os
@@ -42,6 +43,13 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from execution_plane.cluster.binding_reconciler import ClusterBindingReconciler
+from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDiscoveryMechanism
+from execution_plane.cluster.cluster_store import ClusterStore
+from execution_plane.database.engine import create_ep_engine
+from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.work_item_client import ep_service_token
 from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
 
@@ -396,22 +404,22 @@ def source_integration_id(cluster_name: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"https://execution-plane.local/kind/{cluster_name}")
 
 
-def _worker_already_running() -> bool:
-    """Return True when an EP worker process is detectable on this host."""
-    result = _run(["pgrep", "-f", "execution-plane-worker"], check=False)
-    return result.returncode == 0
+def _reconcile_once(database_url: str) -> None:
+    """Run one pass of the cluster-binding reconciler directly, without a worker process."""
 
+    async def _run() -> None:
+        engine = create_ep_engine(database_url)
+        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        cluster_store = ClusterStore.from_engine(engine)
+        target_store = ExecutionTargetStore.from_engine(engine)
+        registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism())
+        reconciler = ClusterBindingReconciler(session_factory, registrar, cluster_store)
+        try:
+            await reconciler.reconcile_once()
+        finally:
+            await engine.dispose()
 
-def _start_worker() -> subprocess.Popen[str]:
-    """Start execution-plane-worker in the background and return the process."""
-    log_dir = Path(os.environ.get("EP_LOG_DIR", "integration-test-logs"))
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = (log_dir / "worker.log").open("a")
-    return subprocess.Popen(
-        ["uv", "run", "execution-plane-worker"],
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
+    asyncio.run(_run())
 
 
 def register_kind_binding(
@@ -426,11 +434,11 @@ def register_kind_binding(
     wait_seconds: int,
     wait_for_api: int = 0,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Upsert the cluster binding and wait until EP reports a ready target.
+    """Upsert the cluster binding then reconcile it directly without a background worker.
 
     When *wait_for_api* is non-zero the EP API is polled for readiness first.
-    If no background EP worker is running, one is started as a subprocess for
-    the duration of the wait and terminated once the binding is reconciled.
+    When EP_DATABASE_URL is set, reconciliation runs in-process via reconcile_once()
+    so no worker process is required.
     """
     if wait_for_api > 0:
         wait_for_ep_api(api_url, timeout=wait_for_api)
@@ -446,17 +454,11 @@ def register_kind_binding(
         credential_ref=credential_ref,
         ca_certificate=ca_certificate,
     )
-    worker_proc: subprocess.Popen[str] | None = None
-    if not _worker_already_running():
-        print("[INFO] No EP worker detected; starting one temporarily for reconciliation")
-        worker_proc = _start_worker()
-    try:
-        binding = wait_for_binding(api_url, token, integration_id, wait_seconds)
-    finally:
-        if worker_proc is not None:
-            worker_proc.terminate()
-            worker_proc.wait()
-            print("[INFO] Temporary EP worker stopped")
+    database_url = os.environ.get("EP_DATABASE_URL")
+    if database_url:
+        print("[INFO] Reconciling cluster binding directly via EP_DATABASE_URL")
+        _reconcile_once(database_url)
+    binding = wait_for_binding(api_url, token, integration_id, wait_seconds)
     return binding, list_execution_targets(api_url, token)
 
 
