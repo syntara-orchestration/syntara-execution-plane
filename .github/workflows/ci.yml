@@ -129,23 +129,26 @@ jobs:
       EP_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/execution_plane
       EP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/execution_plane
       EP_CREDENTIAL_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      EP_KIND_CREDENTIAL_REF: 3679517c-ba49-5f27-868e-37e42d1184c1
+      EP_API_URL: http://127.0.0.1:8001
+      EP_AO_JWT_PUBLIC_KEY_PATH: .secrets/ao-jwt-public.pem
+      EP_AO_JWT_ISSUER: http://localhost:8000
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: ./.github/actions/ep-setup
 
-      # Stand up a throwaway kind cluster. The dispatcher ServiceAccount and RBAC
-      # in deploy/kubernetes/execution-target/rbac.yaml grant the bearer token
-      # the permissions the vanilla-k8s transport needs (pod list, portforward,
-      # job CRUD) and Resource Monitor namespace GET.
+      - name: Generate EP secrets
+        run: make secrets
+
+      # Stand up a throwaway kind cluster. deploy_kind_execution_target.py registers
+      # it via the EP API; the EP worker reconciles the binding through the full
+      # production ClusterBindingReconciler path.
       - name: Create kind cluster
         uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           cluster_name: integration-test
-
-      - name: Provision dispatcher ServiceAccount and RBAC
-        run: kubectl apply -f deploy/kubernetes/execution-target/rbac.yaml
 
       # The transport runs node pods with imagePullPolicy: IfNotPresent. Load the
       # image onto the kind node up front so the pod starts immediately rather
@@ -163,6 +166,20 @@ jobs:
           docker tag "$image@$digest" "$image"
           kind load docker-image "$image" --name integration-test
 
+      - name: Start EP API
+        run: |
+          mkdir -p integration-test-logs
+          uv run execution-plane-api > integration-test-logs/api.log 2>&1 &
+
+      - name: Provision RBAC and register kind cluster
+        run: |
+          uv run python tools/deploy_kind_execution_target.py \
+            --cluster-name integration-test \
+            --credential-ref "$EP_KIND_CREDENTIAL_REF" \
+            --wait-for-api 60
+
+      # Export a short-lived token for the kubernetes_batch_api fixture, which makes
+      # direct K8S API calls to inspect job/pod state during tests.
       - name: Export cluster coordinates for the test suite
         run: |
           set -euo pipefail
