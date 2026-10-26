@@ -73,7 +73,10 @@ class EPSettings(BaseSettings):
         default=8,
         ge=1,
         validation_alias="EP_MAX_CONCURRENT_DISPATCHES",
-        description="Upper bound on work items dispatched to cold-start workers at once.",
+        description=(
+            "Defensive cap on the number of cold-start dispatches in flight simultaneously. "
+            "Limits resource consumption when many work items arrive at once."
+        ),
     )
     resource_monitor_interval_seconds: float = Field(
         default=30.0,

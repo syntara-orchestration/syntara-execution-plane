@@ -232,6 +232,66 @@ async def test_run_worker_completes_cleanup_after_shutdown_signal(monkeypatch: p
     assert "work:stop" in events
 
 
+@pytest.mark.asyncio
+async def test_dispatch_item_registers_and_clears_inflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    from execution_plane import worker
+
+    snapshots: list[int] = []
+    inflight: dict[asyncio.Task, None] = {}
+    dispatch_event = asyncio.Event()
+    params = {
+        "item": object(),
+        "work_progress": object(),
+        "target_queries": object(),
+        "worker_managers": object(),
+        "settings": object(),
+    }
+
+    async def fake_process_item(**_kwargs: object) -> None:
+        snapshots.append(len(inflight))
+
+    monkeypatch.setattr(worker, "_process_item", fake_process_item)
+
+    await asyncio.create_task(
+        worker._dispatch_item(dispatch_event, inflight, params),  # type: ignore[arg-type]
+        name="test-dispatch",
+    )
+
+    assert snapshots == [1], "task should be in inflight while _process_item runs"
+    assert len(inflight) == 0, "task should remove itself on completion"
+    assert dispatch_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_item_signals_and_clears_inflight_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from execution_plane import worker
+
+    inflight: dict[asyncio.Task, None] = {}
+    dispatch_event = asyncio.Event()
+    params = {
+        "item": object(),
+        "work_progress": object(),
+        "target_queries": object(),
+        "worker_managers": object(),
+        "settings": object(),
+    }
+
+    async def fake_process_item(**_kwargs: object) -> None:
+        msg = "boom"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(worker, "_process_item", fake_process_item)
+
+    with pytest.raises(ValueError, match="boom"):
+        await asyncio.create_task(
+            worker._dispatch_item(dispatch_event, inflight, params),  # type: ignore[arg-type]
+            name="test-dispatch-error",
+        )
+
+    assert len(inflight) == 0, "task should remove itself even after an error"
+    assert dispatch_event.is_set()
+
+
 async def _finished_listener(_database_url: str, _wakeup_event: object) -> None:
     return None
 

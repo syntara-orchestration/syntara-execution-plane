@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import asyncpg  # type: ignore[import-untyped]
 import structlog
@@ -48,7 +48,16 @@ POLL_INTERVAL_SECONDS = 5
 NOTIFY_CHANNEL = "execution_plane_work_items"
 
 
+class _ProcessItemKwargs(TypedDict):
+    item: WorkItem
+    work_progress: WorkStore
+    target_queries: ExecutionTargetStore
+    worker_managers: WorkerManagerRegistry
+    settings: EPSettings
+
+
 async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinct persistence transitions
+    # Mirrors _ProcessItemKwargs; kept explicit so callers can pass positional args.
     item: WorkItem,
     work_progress: WorkStore,
     target_queries: ExecutionTargetStore,
@@ -163,8 +172,24 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
         logger.exception("Worker outcome needs reconciliation", work_item_id=wi_id, error_type=type(e).__name__)
 
 
-async def _listen_loop(database_url: str, wakeup_event: asyncio.Event) -> None:
-    """Hold a LISTEN connection and set the wakeup_event on every NOTIFY.
+async def _dispatch_item(
+    dispatch_event: asyncio.Event,
+    inflight: dict[asyncio.Task[None], None],
+    params: _ProcessItemKwargs,
+) -> None:
+    """Wrap _process_item for fire-and-forget use: track self in inflight, signal on completion."""
+    task = asyncio.current_task()
+    assert task is not None  # noqa: S101
+    inflight[task] = None  # None value = dispatching in progress
+    try:
+        await _process_item(**params)
+    finally:
+        del inflight[task]
+        dispatch_event.set()
+
+
+async def _listen_loop(database_url: str, dispatch_event: asyncio.Event) -> None:
+    """Hold a LISTEN connection and set dispatch_event on every NOTIFY.
 
     Known gap: a zombie TCP connection (NAT expiry, silent load-balancer drop,
     VM migration) will not trigger the termination listener, so the worker
@@ -178,9 +203,9 @@ async def _listen_loop(database_url: str, wakeup_event: asyncio.Event) -> None:
             conn: asyncpg.Connection = await asyncpg.connect(database_url, **ssl_connect_args_from_env())
             try:
                 conn.add_termination_listener(lambda _, ev=disconnected: ev.set())
-                await conn.add_listener(NOTIFY_CHANNEL, lambda *_: wakeup_event.set())
+                await conn.add_listener(NOTIFY_CHANNEL, lambda *_: dispatch_event.set())
                 # Recheck work queued before LISTEN became active (also on reconnect).
-                wakeup_event.set()
+                dispatch_event.set()
                 logger.info("Listening for notifications", channel=NOTIFY_CHANNEL)
                 await disconnected.wait()
             finally:
@@ -199,7 +224,7 @@ async def _poll_loop(
     target_queries: ExecutionTargetStore,
     worker_managers: WorkerManagerRegistry,
     settings: EPSettings,
-    wakeup_event: asyncio.Event,
+    dispatch_event: asyncio.Event,
 ) -> None:
     """Claim work and dispatch items concurrently, bounded by settings.
 
@@ -213,20 +238,9 @@ async def _poll_loop(
         "Execution Plane worker started, polling for work items",
         max_concurrent_dispatches=settings.max_concurrent_dispatches,
     )
-    inflight: set[asyncio.Task[None]] = set()
-    wakeup_event.set()  # process any items already present at startup
+    inflight: dict[asyncio.Task[None], None] = {}
     while True:
-        # Reap finished dispatch tasks; _process_item handles per-item errors
-        # itself, so an exception here is a bookkeeping bug worth logging.
-        for task in [t for t in inflight if t.done()]:
-            inflight.discard(task)
-            exc = task.exception()
-            if exc is not None:
-                logger.error(
-                    "Work item dispatch task failed",
-                    error_type=type(exc).__name__,
-                    error=str(exc),
-                )
+        dispatch_event.clear()
 
         # Claim while a dispatch slot is free and work is queued.
         while len(inflight) < settings.max_concurrent_dispatches:
@@ -238,30 +252,25 @@ async def _poll_loop(
             if item is None:
                 break
             logger.info("Claimed work item", work_item_id=str(item.id))
-            inflight.add(
-                asyncio.create_task(
-                    _process_item(item, work_progress, target_queries, worker_managers, settings),
-                    name=f"ep-dispatch-{item.id}",
-                )
+            asyncio.create_task(  # noqa: RUF006 — _dispatch_item self-registers in inflight
+                _dispatch_item(
+                    dispatch_event,
+                    inflight,
+                    {
+                        "item": item,
+                        "work_progress": work_progress,
+                        "target_queries": target_queries,
+                        "worker_managers": worker_managers,
+                        "settings": settings,
+                    },
+                ),
+                name=f"ep-dispatch-{item.id}",
             )
 
-        if inflight:
-            # Wait for a dispatch slot to free up, for new work to be notified,
-            # or for the poll interval to elapse (re-claim safety net).
-            wakeup_event.clear()
-            notify_task = asyncio.create_task(wakeup_event.wait())
-            try:
-                await asyncio.wait(
-                    set(inflight) | {notify_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                    timeout=POLL_INTERVAL_SECONDS,
-                )
-            finally:
-                notify_task.cancel()
-        else:
-            wakeup_event.clear()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(wakeup_event.wait(), timeout=POLL_INTERVAL_SECONDS)
+        # Wait for a dispatch slot to free up, for new work to be notified,
+        # or for the poll interval to elapse (re-claim safety net).
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(dispatch_event.wait(), timeout=POLL_INTERVAL_SECONDS)
 
 
 async def run_worker(database_url: str) -> None:
@@ -303,10 +312,10 @@ async def run_worker(database_url: str) -> None:
         await drain_monitor.start()
         await resource_monitor.start()
         try:
-            wakeup_event = asyncio.Event()
+            dispatch_event = asyncio.Event()
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(
-                    _listen_loop(to_asyncpg_url(database_url), wakeup_event),
+                    _listen_loop(to_asyncpg_url(database_url), dispatch_event),
                     name="ep-listener",
                 )
                 tg.create_task(
@@ -316,7 +325,7 @@ async def run_worker(database_url: str) -> None:
                         target_store,
                         worker_managers,
                         settings,
-                        wakeup_event,
+                        dispatch_event,
                     ),
                     name="ep-poll",
                 )
