@@ -1019,17 +1019,12 @@ components:
           - type: string
           - type: 'null'
           title: Resource Cleanup Error
-        completion_event_id:
+        completion_command_id:
           anyOf:
           - type: string
             format: uuid
           - type: 'null'
-          title: Completion Event Id
-        state_revision:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: State Revision
+          title: Completion Command Id
       type: object
       required:
       - id

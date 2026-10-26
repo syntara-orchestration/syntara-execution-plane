@@ -26,8 +26,7 @@ class WorkItemRead(BaseModel):
     completed_at: datetime | None
     resource_cleanup_status: str
     resource_cleanup_error: str | None
-    completion_event_id: uuid.UUID | None = None
-    state_revision: int | None = None
+    completion_command_id: uuid.UUID | None = None
 
 
 class ExecutionTargetRead(BaseModel):

@@ -24,7 +24,7 @@ MAX_RECONCILIATION_REASON_LENGTH = 1000
 
 
 def require_terminal_result_status(status: WorkItemStatus) -> None:
-    """Reject execution results that cannot produce a terminal CompletionEvent."""
+    """Reject execution results that cannot produce a terminal completion."""
     if status not in TERMINAL_RESULT_STATUSES:
         message = f"Work result requires a terminal status, received {status.value}"
         raise ValueError(message)

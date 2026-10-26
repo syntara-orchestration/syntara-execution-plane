@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 # Import all execution_plane models so they are registered in SQLModel.metadata.
 import execution_plane.models.cluster
 import execution_plane.models.cluster_binding
-import execution_plane.models.completion_event
 import execution_plane.models.execution_target
 import execution_plane.models.work_item  # noqa: F401
 

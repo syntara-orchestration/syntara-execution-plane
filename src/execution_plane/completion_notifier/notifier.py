@@ -1,4 +1,4 @@
-"""Durable outbound delivery loop for EP completion events."""
+"""Durable outbound delivery loop for EP work-item completions."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from execution_plane_client.protocol import ResourceReference, TransportReceipt
 
 if TYPE_CHECKING:
     from execution_plane.config import EPSettings
-    from execution_plane.models.completion_event import CompletionEvent
+    from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -26,7 +26,7 @@ MAX_RETRY_SECONDS = 300
 
 
 class CompletionNotifier:
-    """Send committed completion events to a fixed, operator-configured AO URL."""
+    """Send committed work-item completions to a fixed, operator-configured AO URL."""
 
     def __init__(self, settings: EPSettings) -> None:
         """Prepare the callback client from EP-owned identity and endpoint settings."""
@@ -43,25 +43,25 @@ class CompletionNotifier:
         """Close the reusable HTTP connection pool."""
         await self._client.close()
 
-    async def run(self, completion_events: WorkStore) -> None:
-        """Continuously retry due outbox records; callback failure never loses results."""
+    async def run(self, work_store: WorkStore) -> None:
+        """Continuously retry due work-item notifications; callback failure never loses results."""
         while True:
-            events = await completion_events.get_pending_completion_events()
-            if not events:
+            items = await work_store.claim_due_completion_notifications()
+            if not items:
                 await asyncio.sleep(DELIVERY_POLL_SECONDS)
                 continue
-            for event in events:
-                await self._deliver_one(completion_events, event)
+            for item in items:
+                await self._deliver_one(work_store, item)
 
-    async def _deliver_one(
-        self,
-        completion_events: WorkStore,
-        event: CompletionEvent,
-    ) -> None:
+    async def _deliver_one(self, work_store: WorkStore, item: WorkItem) -> None:
         if not self._client.configured:
-            logger.warning("Completion callback is not configured; retaining event", event_id=str(event.id))
-            await completion_events.record_completion_event_attempt(
-                event.id,
+            logger.warning(
+                "Completion callback is not configured; retaining notification",
+                work_item_id=str(item.id),
+            )
+            await work_store.record_completion_notification_attempt(
+                item.id,
+                claim_owner_id=item.notification_claim_owner_id,
                 delivered=False,
                 error="completion callback is not configured",
                 retry_after_seconds=MAX_RETRY_SECONDS,
@@ -76,18 +76,18 @@ class CompletionNotifier:
         }
         completion = Completion.model_validate(
             {
-                "status": statuses[WorkItemStatus(event.status)],
-                "result": event.result,
-                "resource": ResourceReference(kind="work_item", resource_id=event.work_item_id).model_dump(mode="json"),
+                "status": statuses[WorkItemStatus(item.status)],
+                "result": item.result,
+                "resource": ResourceReference(kind="work_item", resource_id=item.id).model_dump(mode="json"),
             }
         )
         body = completion.to_message(
             source_id=self._local_id,
-            destination_id=event.client_id,
-            client_id=event.client_id,
-            command_id=event.id,
-            parent_command_id=event.work_item_id,
-            occurred_at=event.created_at,
+            destination_id=item.client_id,
+            client_id=item.client_id,
+            command_id=item.completion_command_id,
+            parent_command_id=item.id,
+            occurred_at=item.completed_at or item.created_at,
         )
         try:
             response = await self._client.post_json(body.model_dump(mode="json"))
@@ -97,21 +97,26 @@ class CompletionNotifier:
                 error = "Completion receipt does not match its message"
                 raise ValueError(error)  # noqa: TRY301 - A mismatched receipt follows the same retry path.
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-            retry_after = min(MAX_RETRY_SECONDS, 2 ** min(event.attempts + 1, 8))
+            retry_after = min(MAX_RETRY_SECONDS, 2 ** min(item.notification_attempts + 1, 8))
             retry_after = int(retry_after * secrets.SystemRandom().uniform(0.8, 1.2))
-            await completion_events.record_completion_event_attempt(
-                event.id,
+            await work_store.record_completion_notification_attempt(
+                item.id,
+                claim_owner_id=item.notification_claim_owner_id,
                 delivered=False,
                 error=type(exc).__name__,
                 retry_after_seconds=retry_after,
             )
             logger.warning(
-                "Completion event delivery failed; scheduled retry",
-                event_id=str(event.id),
-                attempt=event.attempts + 1,
+                "Completion notification delivery failed; scheduled retry",
+                work_item_id=str(item.id),
+                attempt=item.notification_attempts + 1,
                 retry_after_seconds=retry_after,
                 error=type(exc).__name__,
             )
         else:
-            await completion_events.record_completion_event_attempt(event.id, delivered=True)
-            logger.info("Completion event acknowledged by client", event_id=str(event.id))
+            await work_store.record_completion_notification_attempt(
+                item.id,
+                claim_owner_id=item.notification_claim_owner_id,
+                delivered=True,
+            )
+            logger.info("Completion notification acknowledged by client", work_item_id=str(item.id))

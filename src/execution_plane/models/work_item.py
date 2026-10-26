@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any, ClassVar
 
 import sqlalchemy as sa
-from sqlalchemy import Column, String
+from sqlalchemy import Column, Integer, String
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import DateTime
@@ -27,6 +27,14 @@ class WorkItemStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class NotificationState(StrEnum):
+    """Delivery progress for a completion command, independent of execution status."""
+
+    PENDING = "pending"
+    DELIVERING = "delivering"
+    DELIVERED = "delivered"
 
 
 class WorkItem(SQLModel, table=True):
@@ -52,6 +60,13 @@ class WorkItem(SQLModel, table=True):
     __table_args__ = (
         sa.Index("ix_work_items_status", "status"),
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),
+        sa.Index(
+            "ix_work_items_completion_delivery",
+            "notification_next_attempt_at",
+            "notification_claim_expires_at",
+            "completed_at",
+            postgresql_where=sa.text("notification_state IN ('pending', 'delivering')"),
+        ),
         {"schema": EP_SCHEMA},
     )
 
@@ -92,3 +107,30 @@ class WorkItem(SQLModel, table=True):
     resource_cleanup_status: str = Field(default="not_required", sa_column=Column(String(32), nullable=False))
     resource_cleanup_error: str | None = Field(default=None, sa_column=Column(String(1000), nullable=True))
     completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    completion_command_id: uuid.UUID | None = Field(default=None, sa_column=Column(sa.UUID(), nullable=True))
+    notification_state: NotificationState | None = Field(
+        default=None,
+        sa_column=Column(
+            SAEnum(
+                NotificationState,
+                native_enum=False,
+                values_callable=lambda members: [member.value for member in members],
+            ),
+            nullable=True,
+        ),
+    )
+    notification_attempts: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    notification_next_attempt_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    notification_last_error: str | None = Field(
+        default=None,
+        sa_column=Column(String(1000), nullable=True),
+    )
+    notified_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    notification_claim_owner_id: uuid.UUID | None = Field(default=None, sa_column=Column(sa.UUID(), nullable=True))
+    notification_claim_expires_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )

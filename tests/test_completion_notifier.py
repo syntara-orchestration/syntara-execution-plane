@@ -43,15 +43,15 @@ def test_callback_client_loads_client_identity_into_ca_context(monkeypatch: pyte
     assert "cert" not in client_factory.call_args.kwargs
 
 
-async def test_completion_is_a_stable_command_rebuilt_from_domain_event():
-    """Retries reuse the event identity and correlate directly with the work UUID."""
+async def test_completion_is_a_stable_command_rebuilt_from_work_item():
+    """Retries reuse the command identity and correlate directly with the work UUID."""
     from datetime import UTC, datetime
     from unittest.mock import AsyncMock
     from uuid import uuid4
 
     import httpx
 
-    from execution_plane.models.completion_event import CompletionEvent
+    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
     from execution_plane_client.catalog import CommandCatalog
     from execution_plane_client.protocol import MessageEnvelope
 
@@ -70,28 +70,33 @@ async def test_completion_is_a_stable_command_rebuilt_from_domain_event():
     await callback_client.close()
     callback_client._client = httpx.AsyncClient(transport=httpx.MockTransport(receive))
     delivery._client = callback_client
-    event = CompletionEvent(
+    claim_owner_id = uuid4()
+    item = WorkItem(
         id=uuid4(),
-        work_item_id=uuid4(),
         client_id="ao",
-        status="completed",
+        status=WorkItemStatus.COMPLETED,
         result={"stdout": "done"},
         created_at=datetime.now(UTC),
-        next_attempt_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        completion_command_id=uuid4(),
+        notification_state=NotificationState.DELIVERING,
+        notification_next_attempt_at=datetime.now(UTC),
+        notification_claim_owner_id=claim_owner_id,
     )
     service = AsyncMock()
     try:
-        await delivery._deliver_one(service, event)
-        await delivery._deliver_one(service, event)
+        await delivery._deliver_one(service, item)
+        await delivery._deliver_one(service, item)
     finally:
         await delivery.close()
     assert len(bodies) == 2
     assert bodies[0] == bodies[1]
     assert bodies[0].command.command_type == "work.execute.completed"
-    assert bodies[0].command.parent_command_id == event.work_item_id
-    assert bodies[0].command.command_id == event.id
+    assert bodies[0].command.parent_command_id == item.id
+    assert bodies[0].command.command_id == item.completion_command_id
     assert bodies[0].command.payload["status"] == "succeeded"
     assert bodies[0].command.payload["result"] == {"stdout": "done"}
+    assert service.record_completion_notification_attempt.await_args_list[0].kwargs["claim_owner_id"] == claim_owner_id
 
 
 async def test_wrong_completion_receipt_is_retried():
@@ -101,7 +106,7 @@ async def test_wrong_completion_receipt_is_retried():
 
     import httpx
 
-    from execution_plane.models.completion_event import CompletionEvent
+    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
 
     delivery = event_delivery.CompletionNotifier(EPSettings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands"))
     await delivery.close()
@@ -113,18 +118,21 @@ async def test_wrong_completion_receipt_is_retried():
         )
     )
     delivery._client = callback_client
-    event = CompletionEvent(
+    item = WorkItem(
         id=uuid4(),
-        work_item_id=uuid4(),
         client_id="ao",
-        status="failed",
+        status=WorkItemStatus.FAILED,
         result={},
         created_at=datetime.now(UTC),
-        next_attempt_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        completion_command_id=uuid4(),
+        notification_state=NotificationState.DELIVERING,
+        notification_next_attempt_at=datetime.now(UTC),
+        notification_claim_owner_id=uuid4(),
     )
     service = AsyncMock()
     try:
-        await delivery._deliver_one(service, event)
+        await delivery._deliver_one(service, item)
     finally:
         await delivery.close()
-    assert service.record_completion_event_attempt.call_args.kwargs["delivered"] is False
+    assert service.record_completion_notification_attempt.call_args.kwargs["delivered"] is False

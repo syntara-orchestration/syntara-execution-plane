@@ -9,16 +9,13 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import col
 
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.types import WorkRequirements
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
-from execution_plane.models.completion_event import CompletionEvent
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
 from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
@@ -139,7 +136,6 @@ async def _seed_work(sessions: async_sessionmaker[AsyncSession], *, matching: bo
 async def _cleanup_work(sessions: async_sessionmaker[AsyncSession], ids: tuple[UUID, UUID, UUID]) -> None:
     cluster_id, target_id, work_id = ids
     async with sessions.begin() as session:
-        await session.execute(delete(CompletionEvent).where(col(CompletionEvent.work_item_id) == work_id))
         work_item = await session.get(WorkItem, work_id)
         if work_item is not None:
             await session.delete(work_item)

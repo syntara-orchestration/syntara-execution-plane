@@ -73,9 +73,6 @@ class EPResourceQueries:
         read = WorkItemRead.model_validate(item)
         if item.result is not None:
             read.result_size_bytes = len(json.dumps(item.result, ensure_ascii=False).encode())
-        event = await self._work.get_completion_event(resource_id)
-        if event is not None:
-            read.completion_event_id, read.state_revision = event.id, event.state_revision
         return read
 
     async def clusters(

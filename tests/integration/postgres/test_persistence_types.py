@@ -14,14 +14,12 @@ from datetime import UTC, datetime
 import pytest
 import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from execution_plane.api.auth import ServiceIdentity, get_service_identity
 from execution_plane.api.main import create_app
 from execution_plane.models.cluster import Cluster
 from execution_plane.models.cluster_binding import ClusterBinding
-from execution_plane.models.completion_event import CompletionEvent
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.execution_target import ExecutionTarget as _ExecutionTarget  # noqa: F401
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
@@ -78,7 +76,7 @@ async def test_project_scope_and_status_round_trip_through_postgresql() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:  # noqa: PLR0915 - verifies the DB lifecycle end to end
+async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
     """Read project UUIDs and a WorkItem enum back through mapped EP rows."""
     database_url = os.environ.get("EP_TEST_DATABASE_URL")
     if not database_url:
@@ -164,9 +162,6 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:  #
                 await session.delete(binding)
             item = await session.get(WorkItem, work_item_id) if work_item_id is not None else None
             if item is not None:
-                event = await session.scalar(select(CompletionEvent).where(CompletionEvent.work_item_id == item.id))
-                if event is not None:
-                    await session.delete(event)
                 await session.delete(item)
             await session.commit()
         await engine.dispose()
