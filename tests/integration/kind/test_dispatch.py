@@ -458,3 +458,64 @@ async def test_work_item_cancel_reaches_cancelled(
     assert final_item.result is not None
     assert final_item.result["cancelled"] is True
     assert final_item.result["execution_started"] is True
+
+
+_PARALLEL_SLEEP_SECONDS = 4
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_multiple_work_items_dispatch_concurrently(
+    ep_cluster: Cluster,
+    integration_credential_resolver: CredentialResolver,
+) -> None:
+    """Two sleep workloads dispatched concurrently must complete faster than sequential would allow.
+
+    Sequential execution of two 4-second scripts would take >8s. Concurrent
+    execution should finish well under that bound, proving the poll loop
+    dispatches work items in parallel rather than one at a time.
+    """
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_ep_settings()
+    client_id = "ep-it-parallel"
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+        ) as work:
+            payload = build_payload(
+                language="bash",
+                code=f"sleep {_PARALLEL_SLEEP_SECONDS}",
+                timeout_seconds=120,
+                environment={},
+                image=_NODE_IMAGE,
+            )
+            dispatched_a = await _dispatch_item(work, work.worker_managers, client_id=client_id, payload=payload)
+            dispatched_b = await _dispatch_item(work, work.worker_managers, client_id=client_id, payload=payload)
+
+            await asyncio.gather(
+                _process_item(dispatched_a.assigned, work.store, target_store, work.worker_managers, settings),
+                _process_item(dispatched_b.assigned, work.store, target_store, work.worker_managers, settings),
+            )
+
+            item_a = await work.store.get(dispatched_a.item.id, client_id=client_id)
+            item_b = await work.store.get(dispatched_b.item.id, client_id=client_id)
+
+    assert item_a is not None
+    assert item_b is not None
+    assert item_a.completed_at is not None
+    assert item_b.completed_at is not None
+    assert item_a.status is WorkItemStatus.COMPLETED, f"item_a: {item_a.status}; result={item_a.result}"
+    assert item_b.status is WorkItemStatus.COMPLETED, f"item_b: {item_b.status}; result={item_b.result}"
+    completion_gap = abs((item_a.completed_at - item_b.completed_at).total_seconds())
+    assert completion_gap < _PARALLEL_SLEEP_SECONDS, (
+        f"Items completed {completion_gap:.1f}s apart — expected concurrent dispatch to finish them "
+        f"within {_PARALLEL_SLEEP_SECONDS}s of each other"
+    )
