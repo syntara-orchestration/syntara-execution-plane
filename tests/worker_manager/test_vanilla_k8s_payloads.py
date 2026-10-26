@@ -3,7 +3,7 @@
 import pytest
 
 from execution_plane.models.work_item import WorkItemStatus
-from execution_plane.node_protocol.result import execution_result
+from execution_plane.worker_manager.node_result import execution_result
 from execution_plane.worker_manager.vanilla_k8s.transport import job_body, network_policy_body
 
 

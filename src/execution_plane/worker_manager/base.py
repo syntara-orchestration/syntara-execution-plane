@@ -1,4 +1,4 @@
-"""Shared execution lifecycle; backends supply worker operations, not persistence hooks."""
+"""Shared coordinator for staged backend execution and WorkItem persistence."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class _Dispatch:
 class WorkerManager(ABC):
     """Own the claim, lifecycle transitions, cancellation, and terminal outbox.
 
-    Implementations prepare an inert allocation; they never mutate WorkItems.
+    Implementations prepare allocations; the coordinator persists WorkItems.
     The final dispatch method provides the same ordering for every backend.
     """
 
@@ -232,8 +232,8 @@ class WorkerManager(ABC):
                 claim_generation=state.attempt.claim_generation,
             )
             if item.status is WorkItemStatus.CANCEL_REQUESTED:
-                # Requeue never settles cancellation. This path has separate
-                # evidence that submission never occurred and release completed.
+                # Settle cancellation using evidence that submission never
+                # occurred and release completed.
                 await self._persist(
                     state,
                     ExecutionResult(WorkItemStatus.CANCELLED, {"cancelled": True, "execution_started": False}),

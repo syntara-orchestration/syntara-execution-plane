@@ -25,7 +25,7 @@ def execution_result(frame: dict[str, Any], output_config: dict[str, str] | None
         message = "Node returned invalid output"
         raise BackendError(message)
     raw = raw or {}
-    # Output mapping remains field selection. Template expressions belong to AO.
+    # Select output fields by name. AO evaluates template expressions.
     output = raw if output_config is None else {key: raw[key] for key in output_config if key in raw}
     if status_code == 0:
         return ExecutionResult(WorkItemStatus.COMPLETED, {"output": output})

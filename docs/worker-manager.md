@@ -8,22 +8,22 @@ selects a manager by `ExecutionTarget.backend_type` and delegates the attempt.
 
 Backend implementations return an inert `WorkerAllocation`. They receive a
 `WorkAttempt` snapshot containing the WorkItem ID, claim owner, generation, and
-assigned target ID. They do not receive ORM objects or a WorkStore. Preparation
-may resolve credentials and placement, but must not allocate external resources.
+assigned target ID. The shared coordinator owns persistence. Preparation resolves
+credentials and placement; external resource creation begins in `allocate()`.
 
 | Operation | Responsibility |
 |---|---|
 | `resource` | Expose deterministic allocation intent, then its acknowledged external UID |
 | `allocate()` | Obtain an owned worker or execution slot |
-| `wait_ready()` | Establish a usable connection without submitting work |
+| `wait_ready()` | Establish a usable connection for invocation submission |
 | `submit()` | Issue execution once and return a live `Invocation` handle |
 | `Invocation.result()` | Observe a terminal `ExecutionResult` |
 | `Invocation.cancel()` | Request cancellation while retaining a racing terminal result |
 | `release()` | Release or quarantine the worker; report cleanup and confirmed termination separately |
 
-A backend for a shared worker can reserve and release an execution slot. It must
-never delete a shared worker to cancel one invocation. `release()` must cover
-partial allocation and must not destroy resources whose ownership is uncertain.
+A backend for a shared worker reserves and releases an execution slot.
+`release()` handles partial allocation and acts on resources whose ownership is
+confirmed. Uncertain ownership defers cleanup for reconciliation.
 
 ## Ordering and persistence
 
@@ -35,27 +35,25 @@ The shared coordinator performs these operations in order:
 4. Allocate the worker and persist its acknowledged UID.
 5. Wait for readiness, then recheck cancellation and claim ownership.
 6. Issue the invocation and retain its handle.
-7. Persist `running` without replacing `cancel_requested`.
+7. Persist `running`, preserving a concurrent `cancel_requested` transition.
 8. Observe the invocation's terminal result and persist it with its completion event.
 9. Release the worker and record infrastructure cleanup separately.
 
 A received terminal result is committed before normal worker release. When
-cancellation has no terminal result, release may provide the termination evidence
-needed before EP can persist `cancelled`. A cleanup failure does not change an
-already persisted execution result.
+cancellation ends before a terminal result arrives, release may provide the
+termination evidence needed before EP can persist `cancelled`. Cleanup status
+is recorded independently of the persisted execution result.
 
 `dispatched` is the ownership and cancellation fence before any external
-allocation. `running` means EP has issued Execute and has not yet persisted a
-terminal outcome. It does not prove that the server received the invocation or
-that user code began. A stronger meaning would require an explicit node-protocol
-acknowledgement. Creating a Kubernetes Job or observing a Running Pod does not
-advance the WorkItem to `running`.
+allocation. `running` records local Execute submission while EP awaits a terminal
+outcome. Confirming server receipt or the start of user code would require an
+explicit node-protocol acknowledgement. The WorkItem stays `dispatched` through
+Kubernetes Job creation and Pod readiness.
 
 Execute and the database update are separate operations. A controller crash
 between them may leave submitted work recorded as `dispatched`. Both expired
-`dispatched` and expired `running` claims become `reconciliation_required`;
-neither is automatically executed again. Claim renewal does not substitute for
-backend submission evidence.
+`dispatched` and expired `running` claims become `reconciliation_required` and
+require an explicit resolution before another execution attempt.
 
 ## Cancellation and failure
 
@@ -67,17 +65,16 @@ this race wins. Otherwise, only confirmed termination permits `cancelled`, with
 `execution_started` retaining whether Execute was issued.
 
 A start-persistence failure keeps the issued invocation available for result
-observation; it never converts it into a pre-execution retry. Lost claims stop
+observation. Submission uncertainty requires reconciliation. Lost claims stop
 further progress mutations and release only the old attempt's owned resources.
 Controller shutdown joins in-flight resource operations before release. Known
 pre-submission work can be requeued after release; uncertain submission requires
 reconciliation.
 
-`RetryableDispatchError` is valid only before the submission stage and after
-release confirms termination. Even a backend that incorrectly raises this error
-after submission cannot trigger a retry. `requeue_pre_execute_failure` itself
-only changes `dispatched` to `pending`; it cannot infer prior execution from
-`cancel_requested`. Confirmed cancellation is a separate coordinator decision.
+`RetryableDispatchError` permits a retry before the submission stage once release
+confirms termination. After submission, a missing terminal result requires
+reconciliation. `requeue_pre_execute_failure` changes `dispatched` to `pending`.
+The coordinator settles cancellation using submission and termination evidence.
 Unexpected errors and uncertain allocation ownership require reconciliation.
 
 ## Kubernetes implementation
@@ -89,10 +86,13 @@ and the port-forward. Allocation and readiness are distinct from gRPC submission
 The Job UID, logical WorkItem ID, and claim generation remain separate identities.
 
 Bounded synchronous Kubernetes operations run in threads and are joined before
-cancellation can release resources. Readiness polling is asynchronous. The node
-client uses an async gRPC channel; submission returns its live call, and stream
-observation and cooperative cancellation are separate operations. There are no
-transport callbacks for persistence or execution-start authorization.
+cancellation can release resources. Readiness polling is asynchronous. The
+EP-owned adapter in `worker_manager/node_client.py` uses the vendored protocol
+stubs over an async gRPC channel. Submission returns its live call; stream
+observation and cooperative cancellation operate on that handle. The shared
+coordinator awaits each stage and persists WorkItem transitions between stages.
+Protocol types and codecs live in `node_protocol/`; lifecycle adaptation and
+result mapping live in `worker_manager/`.
 
 Job and NetworkPolicy deletion use UID preconditions. Unknown ownership defers
 cleanup. Cancellation is confirmed only after the owned Job and its Pods are
@@ -104,15 +104,14 @@ still require operator investigation.
 ## Consumer compatibility
 
 This implementation assumes AO and every EP reader already accept `running`.
-Workers emit it unconditionally. There is no database enum migration, but older
-EP ORM enum mappings cannot deserialize the new value. Downgrading readers while
+Workers emit it unconditionally. The database stores status as a string; EP
+readers need an enum mapping that includes `running`. Downgrading readers while
 running rows remain requires a compatible release. Public OpenAPI and response
 models include `running`; completion delivery remains terminal-only.
 
 ## Current scheduler limits
 
-`WorkScheduler.claim_and_place_work()` still selects the first active,
-project-eligible default target. The placement reconciler does not rank targets.
-There is no capacity reservation, warm pool, or concurrent dispatch. One worker
-replica processes one item at a time. The lifecycle contracts allow additional
-backends without claiming those scheduling capabilities already exist.
+`WorkScheduler.claim_and_place_work()` selects the first active, project-eligible
+default target. One worker replica processes one item at a time. Target ranking,
+capacity reservation, warm pools, and concurrent dispatch are future scheduler
+capabilities. Additional backends implement the shared lifecycle contracts.

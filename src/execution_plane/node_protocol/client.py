@@ -1,128 +1,127 @@
-"""Separate node readiness, Execute submission, result observation, and cancellation."""
+"""One gRPC invocation, streamed events and cooperative cancellation."""
 
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING
+import threading
+import time
+from typing import TYPE_CHECKING, Any
 
 import grpc
-import structlog
-from grpc import aio
 
 from execution_plane.node_protocol import node_pb2 as pb
 from execution_plane.node_protocol import node_pb2_grpc as rpc
-from execution_plane.node_protocol.codec import decode_event
-from execution_plane.node_protocol.result import execution_result
-from execution_plane.worker_manager.lifecycle import BackendError, ExecutionResult, Invocation, RetryableDispatchError
+from execution_plane.node_protocol.codec import MAX_MESSAGE_BYTES, decode_event, encode_request
 
 if TYPE_CHECKING:
-    from typing import Any
-
-logger = structlog.stdlib.get_logger(__name__)
+    from collections.abc import Callable
 
 
-class NodeClient:
-    """A connection to a ready node; constructing it never submits execution."""
+class NodeRpcError(Exception):
+    """A safe transport diagnostic with an explicit retry classification."""
 
-    def __init__(
-        self,
-        channel: aio.Channel,
-        request: pb.ExecuteRequest,
-        output_config: dict[str, str] | None,
-    ) -> None:
-        """Bind the request to its channel without starting Execute."""
-        self._stub = rpc.NodeServiceStub(channel)
-        self._request = request
-        self._output_config = output_config
-        self._submitted = False
+    def __init__(self, message: str, *, retryable: bool = False, cancelled: bool = False) -> None:
+        """Record whether the failure occurred before Execute could be submitted."""
+        super().__init__(message)
+        self.retryable = retryable
+        self.cancelled = cancelled
 
-    async def wait_ready(self, readiness_seconds: float) -> None:
-        """Health-check until the service is compatible or the connection deadline expires."""
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + readiness_seconds
-        while True:
-            try:
-                health = await self._stub.Health(pb.HealthRequest(), timeout=min(1, max(0.1, deadline - loop.time())))
-            except grpc.RpcError:
-                if loop.time() >= deadline:
-                    message = "Node gRPC server did not become ready"
-                    raise RetryableDispatchError(message) from None
-                await asyncio.sleep(0.1)
-            else:
-                if not health.ready or health.protocol_version != 1:
-                    message = "Node server is unavailable or incompatible"
-                    raise BackendError(message)
+
+def cancel_rpc(call: grpc.Call) -> None:
+    """Cancel a streaming call."""
+    call.cancel()
+
+
+def invoke(  # noqa: C901, PLR0912, PLR0915
+    channel: grpc.Channel,
+    invocation: dict[str, Any],
+    *,
+    identity: str,
+    progress: Callable[[dict[str, Any]], None],
+    cancelled: threading.Event,
+    startup: float = 120,
+    grace: int = 30,
+    on_execute_submitted: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Wait for health, submit Execute once, and require exactly one final result."""
+    request = encode_request(invocation, identity)
+    if request.ByteSize() > MAX_MESSAGE_BYTES:
+        message = "Node invocation exceeds transport limit"
+        raise NodeRpcError(message)
+    stub = rpc.NodeServiceStub(channel)
+    deadline = time.monotonic() + startup
+    while True:
+        if cancelled.is_set():
+            message = "Node execution cancelled before submission"
+            raise NodeRpcError(message)
+        try:
+            health = stub.Health(pb.HealthRequest(), timeout=min(1, max(0.1, deadline - time.monotonic())))
+            if not health.ready or health.protocol_version != 1:
+                message = "Node server is unavailable or incompatible"
+                raise NodeRpcError(message)
+            break
+        except grpc.RpcError:
+            if time.monotonic() >= deadline:
+                message = "Node gRPC server did not become ready"
+                raise NodeRpcError(message, retryable=True) from None
+            cancelled.wait(0.1)
+    # Even a transport failure before the first response may have executed work.
+    if cancelled.is_set():
+        message = "Node execution cancelled before submission"
+        raise NodeRpcError(message)
+    if on_execute_submitted is not None:
+        on_execute_submitted()
+    call = stub.Execute(request, timeout=request.timeout_seconds + grace)
+    stopped = threading.Event()
+
+    def monitor() -> None:
+        while not stopped.wait(0.1):
+            if cancelled.is_set():
+                try:
+                    response = stub.Cancel(pb.CancelRequest(invocation_id=identity), timeout=5)
+                    if not response.accepted:
+                        cancel_rpc(call)
+                        return
+                except grpc.RpcError:
+                    cancel_rpc(call)
+                    return
+                if not stopped.wait(grace):
+                    cancel_rpc(call)
                 return
 
-    def submit(self, grace: int) -> NodeInvocation:
-        """Initiate Execute once, returning its live call before observing results."""
-        if self._submitted:
-            message = "Execute has already been issued on this node connection"
-            raise RuntimeError(message)
-        self._submitted = True
-        call = self._stub.Execute(self._request, timeout=self._request.timeout_seconds + grace)
-        return NodeInvocation(call, self._stub, self._request.invocation_id, self._output_config)
-
-
-class NodeInvocation(Invocation):
-    """Own an issued Execute stream while EP persists progress and observes cancellation."""
-
-    def __init__(
-        self,
-        call: aio.UnaryStreamCall[pb.ExecuteRequest, pb.ExecutionEvent],
-        stub: rpc.NodeServiceStub[
-            aio.UnaryStreamMultiCallable[pb.ExecuteRequest, pb.ExecutionEvent],
-            aio.UnaryUnaryMultiCallable[pb.CancelRequest, pb.CancelResponse],
-            aio.UnaryUnaryMultiCallable[pb.HealthRequest, pb.HealthResponse],
-        ],
-        identity: str,
-        output_config: dict[str, str] | None,
-    ) -> None:
-        """Retain the stream so status persistence never controls whether Execute is issued."""
-        self._call = call
-        self._stub = stub
-        self._identity = identity
-        self._output_config = output_config
-
-    async def result(self) -> ExecutionResult:
-        """Require exactly one terminal result and a clean end to its stream."""
-        result: dict[str, Any] | None = None
-        try:
-            async for event in self._call:
-                frame = decode_event(event, self._identity)
-                if result is not None:
-                    message = "Node returned events after its terminal result"
-                    raise BackendError(message)
-                if frame["kind"] == "progress":
-                    logger.debug("Node progress", attempt_id=self._identity, node_event=frame.get("event"))
-                else:
-                    result = frame
-        except asyncio.CancelledError:
-            task = asyncio.current_task()
-            if task is not None and task.cancelling():
-                raise
-            message = "Node invocation stopped without a terminal result"
-            raise BackendError(message) from None
-        except grpc.RpcError as exc:
-            # Remote diagnostic text can include credentials. Only retain the code.
-            message = f"Node gRPC call failed ({exc.code().name})"
-            raise BackendError(message) from None
-        except (ValueError, KeyError, TypeError, AttributeError):
-            message = "Invalid node gRPC result"
-            raise BackendError(message) from None
+    watcher = threading.Thread(target=monitor, daemon=True, name="node-grpc-cancel")
+    watcher.start()
+    result: dict[str, Any] | None = None
+    try:
+        for event in call:
+            frame = decode_event(event, identity)
+            if result is not None:
+                message = "Node returned events after its terminal result"
+                raise NodeRpcError(message)
+            if frame["kind"] == "progress":
+                progress(frame)
+            else:
+                result = frame
         if result is None:
             message = "Node gRPC stream ended without a result"
-            raise BackendError(message)
-        return execution_result(result, self._output_config)
-
-    async def cancel(self) -> None:
-        """Keep Execute open for a terminal result when cooperative cancellation is accepted."""
-        if self._call.done():
-            return
+            raise NodeRpcError(message)
+        return result
+    except grpc.RpcError as exc:
+        if cancelled.is_set():
+            message = "Node invocation stopped after cancellation"
+            raise NodeRpcError(message, cancelled=True) from None
+        # Never include remote diagnostic text: it may contain credentials.
+        # exc.code() is normally a grpc.StatusCode with .name; guard against
+        # edge-case RpcError subclasses that lack the Call mixin.
         try:
-            response = await self._stub.Cancel(pb.CancelRequest(invocation_id=self._identity), timeout=5)
-            if response.accepted:
-                return
-        except grpc.RpcError:
-            pass
-        self._call.cancel()
+            code_name = exc.code().name
+        except AttributeError:
+            code_name = "UNKNOWN"
+        message = f"Node gRPC call failed ({code_name})"
+        raise NodeRpcError(message) from None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        message = "Invalid node gRPC result"
+        raise NodeRpcError(message) from None
+    finally:
+        stopped.set()
+        cancel_rpc(call)
+        watcher.join(timeout=6)

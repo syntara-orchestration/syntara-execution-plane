@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from execution_plane.models.work_item import WorkItemStatus
-from execution_plane.node_protocol import client as client_module
 from execution_plane.node_protocol import node_pb2 as pb
-from execution_plane.node_protocol.client import NodeClient
+from execution_plane.worker_manager import node_client as client_module
+from execution_plane.worker_manager.node_client import NodeClient
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

@@ -19,7 +19,6 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import portforward
 
-from execution_plane.node_protocol.client import NodeClient
 from execution_plane.node_protocol.codec import CHANNEL_OPTIONS, MAX_MESSAGE_BYTES, PORT, encode_request
 from execution_plane.worker_manager.blocking import run_blocking
 from execution_plane.worker_manager.lifecycle import (
@@ -33,6 +32,7 @@ from execution_plane.worker_manager.lifecycle import (
     WorkItemPayloadError,
     WorkloadOutcomeUnknownError,
 )
+from execution_plane.worker_manager.node_client import NodeClient
 from execution_plane.worker_manager.vanilla_k8s.forward import forward_socket
 
 if TYPE_CHECKING:
@@ -295,7 +295,7 @@ class KubernetesTarget:
 
 
 class KubernetesWorker(WorkerAllocation):
-    """Own one cold-start Job without knowing about WorkStore or ORM objects."""
+    """Allocate, connect, invoke, and release one owned cold-start Kubernetes Job."""
 
     def __init__(
         self,
@@ -523,7 +523,7 @@ class KubernetesWorker(WorkerAllocation):
         if self._node is None:
             message = "Worker has not established its node connection"
             raise BackendError(message)
-        # No suspension between issuing Execute and returning its handle.
+        # Issue Execute and return its handle in the same event-loop turn.
         return self._node.submit(self._grace)
 
     async def _close_forward(self) -> None:

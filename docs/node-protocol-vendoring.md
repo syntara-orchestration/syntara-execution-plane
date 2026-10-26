@@ -26,3 +26,8 @@ EP pins runtime floors `grpcio>=1.78.0` and `protobuf>=6.31.1`, matching the
 generated client/runtime requirements. The node runtime is single-invocation:
 it accepts one Execute and exits. Do not treat vendoring or the generic
 WorkerManager interface as support for warm reuse or concurrent invocations.
+
+EP-specific lifecycle integration lives in `worker_manager/node_client.py` and
+`worker_manager/node_result.py`. These adapters use the vendored stubs and codec to
+provide staged execution and map terminal results. Synchronize `node_protocol/`
+from its upstream source using the vendoring procedure above.

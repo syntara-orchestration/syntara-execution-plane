@@ -107,13 +107,14 @@ See [worker-manager.md](worker-manager.md),
 The shared `WorkerManager.dispatch` coordinator owns lifecycle persistence. The
 Kubernetes manager prepares an inert allocation; `KubernetesWorker` separately
 allocates, waits for readiness, submits the invocation, and releases resources.
-The node client separately submits Execute and awaits its terminal stream. No
-transport callback crosses back into WorkStore.
+The EP-owned client in `worker_manager/node_client.py` submits Execute and
+awaits its terminal stream. The shared coordinator persists WorkItem transitions
+between lifecycle stages.
 
-The database write follows local Execute submission. It is not an acknowledgement
-from the node. Cancellation winning that write retains `cancel_requested` and
+The database write records local Execute submission. Confirming receipt or
+execution start would require a node acknowledgement. Cancellation winning that write retains `cancel_requested` and
 cancels the live invocation. A persistence failure retains the handle so EP can
-still obtain and persist a terminal result. Ambiguous submission never requeues.
+obtain and persist a terminal result. Ambiguous submission requires reconciliation.
 See [worker-manager.md](worker-manager.md) for the backend contracts and race
 semantics. AO and EP readers are assumed to accept `running` already; emission
 is unconditional.
