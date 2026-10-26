@@ -1014,8 +1014,8 @@ async def test_mark_reconciliation_required_is_idempotent_for_terminal_work() ->
 
 
 @pytest.mark.asyncio
-async def test_requeue_pre_execute_failure_cancels_requested_work() -> None:
-    """A pre-execute cancellation request becomes a durable cancellation."""
+async def test_requeue_does_not_infer_execution_history_from_cancel_requested() -> None:
+    """CANCEL_REQUESTED may follow RUNNING and cannot prove submission never happened."""
     owner_id = uuid.uuid4()
     item = _work_item(
         status=WorkItemStatus.CANCEL_REQUESTED,
@@ -1034,9 +1034,10 @@ async def test_requeue_pre_execute_failure_cancels_requested_work() -> None:
     )
 
     assert result is item
-    assert item.status is WorkItemStatus.CANCELLED
-    assert item.result == {"cancelled": True, "execution_started": False}
-    assert len(session.added) == 1
+    assert item.status is WorkItemStatus.CANCEL_REQUESTED
+    assert item.result is None
+    assert session.added == []
+    assert session.commits == 0
     await store.close()
 
 

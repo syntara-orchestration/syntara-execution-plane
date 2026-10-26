@@ -150,7 +150,7 @@ receptor link TLS, not on encrypting the payload).
   per node type and builds an **invocation envelope** — `{version, operation,
   inputs, credentials:{resolved:{}}, workflow_context, settings, timeout_seconds,
   max_output_bytes}` — persisted to `work_items.payload`.
-- The **EP worker** (`VanillaK8sWorkerManager` → `transport.run_job`) creates one
+- The **EP worker** (`WorkerManager.dispatch` → `KubernetesWorker` lifecycle stages) creates one
   hardened, single-attempt Job around the workload Pod (`job_body`), waits for
   its owned Pod to become ready, and makes the SDK gRPC calls over a
   kube-apiserver **port-forward** bridged to a loopback socket. The Pod gets no

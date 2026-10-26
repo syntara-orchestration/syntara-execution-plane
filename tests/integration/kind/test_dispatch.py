@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import threading
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -35,9 +34,10 @@ from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.work_item_client import build_payload
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
+from execution_plane.worker_manager.vanilla_k8s.transport import KubernetesWorker
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator
 
     from execution_plane.credential_resolution.resolver import CredentialResolver
     from execution_plane.models.cluster import Cluster
@@ -280,7 +280,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
             item = dispatched.item
             assigned = dispatched.assigned
 
-            await _process_item(assigned, work.store, target_store, work.worker_managers, settings)
+            await _process_item(assigned, work.store, target_store, work.worker_managers)
 
             final_item = await work.store.get(item.id, client_id=client_id)
 
@@ -346,7 +346,7 @@ async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_po
                 job_name = dispatched.job_name
 
                 processing_task = asyncio.create_task(
-                    _process_item(assigned, work.store, target_store, work.worker_managers, settings)
+                    _process_item(assigned, work.store, target_store, work.worker_managers)
                 )
 
                 try:
@@ -435,7 +435,7 @@ async def test_work_item_cancel_reaches_cancelled(
             core_api = CoreV1Api(kubernetes_batch_api.api_client)
 
             processing_task = asyncio.create_task(
-                _process_item(assigned, work.store, target_store, work.worker_managers, settings)
+                _process_item(assigned, work.store, target_store, work.worker_managers)
             )
 
             try:
@@ -489,24 +489,16 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
     database_url = os.environ["EP_TEST_DATABASE_URL"]
     settings = get_ep_settings()
     client_id = "ep-it-cancel-before-running"
-    original_execution_start_callback = VanillaK8sWorkerManager.execution_start_callback
-    execute_release = threading.Event()
+    original_wait_ready = KubernetesWorker.wait_ready
+    ready = asyncio.Event()
+    release_ready = asyncio.Event()
 
-    def delayed_execution_start_callback(self: VanillaK8sWorkerManager, work_item: WorkItem) -> Callable[[], None]:
-        original_callback = original_execution_start_callback(self, work_item)
+    async def delayed_readiness(self: KubernetesWorker) -> None:
+        await original_wait_ready(self)
+        ready.set()
+        await release_ready.wait()
 
-        def release_before_execute_submission() -> None:
-            if not execute_release.wait(timeout=_JOB_WAIT_TIMEOUT_SECONDS):
-                pytest.fail("Delayed Execute submission was not released in time")
-            original_callback()
-
-        return release_before_execute_submission
-
-    monkeypatch.setattr(
-        VanillaK8sWorkerManager,
-        "execution_start_callback",
-        delayed_execution_start_callback,
-    )
+    monkeypatch.setattr(KubernetesWorker, "wait_ready", delayed_readiness)
 
     async with (
         ClusterStore.from_database_url(database_url) as cluster_store,
@@ -541,10 +533,13 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
             core_api = CoreV1Api(kubernetes_batch_api.api_client)
 
             processing_task = asyncio.create_task(
-                _process_item(assigned, work.store, target_store, work.worker_managers, settings)
+                _process_item(assigned, work.store, target_store, work.worker_managers)
             )
 
             try:
+                # Synchronize after the real node health check, not merely after
+                # the earlier database dispatch fence.
+                await asyncio.wait_for(ready.wait(), timeout=_JOB_WAIT_TIMEOUT_SECONDS)
                 dispatched_item = await _wait_for_work_status(
                     work.store,
                     item.id,
@@ -557,7 +552,7 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
                 assert cancel_requested.status is WorkItemStatus.CANCEL_REQUESTED
                 assert dispatched_item.status is WorkItemStatus.DISPATCHED
 
-                execute_release.set()
+                release_ready.set()
                 await processing_task
                 await _assert_job_cleaned_up(
                     kubernetes_batch_api,
@@ -568,7 +563,7 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
 
                 final_item = await work.store.get(item.id, client_id=client_id)
             finally:
-                execute_release.set()
+                release_ready.set()
                 await _cancel_processing_task(
                     work,
                     processing_task,

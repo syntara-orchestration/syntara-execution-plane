@@ -58,10 +58,10 @@ release/quarantine policy without changing the WorkItem contract.
 ## Dispatch recovery and cancellation
 
 EP persists `dispatched` before external allocation, then `running` when
-Execute is submitted, and renews a claim lease while the synchronous gRPC call
-runs. Every worker transition is fenced by its claim owner and generation. A
-failure is automatically requeued only when EP has evidence that Execute was
-not submitted. Once Execute may have crossed the gRPC boundary, loss of the
+EP issues Execute and retains its live invocation handle. Claim renewal spans
+preparation, allocation, readiness, result observation, and resource release.
+Every worker transition is fenced by its claim owner and generation. A failure
+is automatically requeued only when EP has evidence that Execute was not submitted. Once Execute may have crossed the gRPC boundary, loss of the
 result becomes `reconciliation_required`; EP never allocates a second worker
 and automatically reruns that attempt. EP emits that state through its
 completion outbox so AO fails the activity with
@@ -101,3 +101,19 @@ cancelling one WorkItem must not delete a shared Pod.
 See [worker-manager.md](worker-manager.md),
 [kubernetes-backend.md](kubernetes-backend.md), and the canonical
 [service-isolation revisit decisions](service-isolation-revisit-decisions.md).
+
+## Staged execution
+
+The shared `WorkerManager.dispatch` coordinator owns lifecycle persistence. The
+Kubernetes manager prepares an inert allocation; `KubernetesWorker` separately
+allocates, waits for readiness, submits the invocation, and releases resources.
+The node client separately submits Execute and awaits its terminal stream. No
+transport callback crosses back into WorkStore.
+
+The database write follows local Execute submission. It is not an acknowledgement
+from the node. Cancellation winning that write retains `cancel_requested` and
+cancels the live invocation. A persistence failure retains the handle so EP can
+still obtain and persist a terminal result. Ambiguous submission never requeues.
+See [worker-manager.md](worker-manager.md) for the backend contracts and race
+semantics. AO and EP readers are assumed to accept `running` already; emission
+is unconditional.

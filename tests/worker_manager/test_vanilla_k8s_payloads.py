@@ -2,7 +2,8 @@
 
 import pytest
 
-from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
+from execution_plane.models.work_item import WorkItemStatus
+from execution_plane.node_protocol.result import execution_result
 from execution_plane.worker_manager.vanilla_k8s.transport import job_body, network_policy_body
 
 
@@ -90,7 +91,7 @@ def test_node_result_preserves_partial_output_on_failure() -> None:
         "error": {"type": "ScriptExecutionError"},
     }
 
-    with pytest.raises(NodeExecutionError) as exc_info:
-        _map_result(frame, {"stdout": "${result.stdout}", "exit_code": "${result.exit_code}"})
-    assert exc_info.value.error_type == "ScriptExecutionError"
-    assert exc_info.value.output == {"stdout": "partial", "exit_code": 2}
+    outcome = execution_result(frame, {"stdout": "${result.stdout}", "exit_code": "${result.exit_code}"})
+    assert outcome.status is WorkItemStatus.FAILED
+    assert outcome.result["error_type"] == "ScriptExecutionError"
+    assert outcome.result["output"] == {"stdout": "partial", "exit_code": 2}

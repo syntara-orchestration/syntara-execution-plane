@@ -1,29 +1,41 @@
-# ruff: noqa: TRY301
-"""One pod and one gRPC invocation over an authenticated Kubernetes port-forward."""
+"""An owned Kubernetes allocation with explicit readiness, submission, and release stages."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import tempfile
 import time
-from contextlib import suppress
+from contextlib import ExitStack
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-import grpc
 import structlog
+from grpc import aio
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import portforward
 
-from execution_plane.node_protocol.client import NodeRpcError, invoke
+from execution_plane.node_protocol.client import NodeClient
 from execution_plane.node_protocol.codec import CHANNEL_OPTIONS, MAX_MESSAGE_BYTES, PORT, encode_request
+from execution_plane.worker_manager.blocking import run_blocking
+from execution_plane.worker_manager.lifecycle import (
+    BackendError,
+    BackendResource,
+    Invocation,
+    ReleaseResult,
+    RetryableDispatchError,
+    WorkAttempt,
+    WorkerAllocation,
+    WorkItemPayloadError,
+    WorkloadOutcomeUnknownError,
+)
 from execution_plane.worker_manager.vanilla_k8s.forward import forward_socket
 
 if TYPE_CHECKING:
-    import threading
     from collections.abc import Callable
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -56,25 +68,6 @@ def _truncate_for_log(value: object) -> str | None:
     if len(text) > _MAX_LOGGED_BODY_CHARS:
         return text[:_MAX_LOGGED_BODY_CHARS] + "…(truncated)"
     return text
-
-
-class TransportError(Exception):
-    """Failure with an explicit safe-to-retry classification."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        retryable: bool = False,
-        submitted: bool = False,
-        cancellation_requested: bool = False,
-    ) -> None:
-        """Initialize the node contract and execution state."""
-        super().__init__(message)
-        self.retryable = retryable
-        self.submitted = submitted
-        self.cancellation_requested = cancellation_requested
-        self.cancelled_confirmed = False
 
 
 def pod_body(
@@ -288,409 +281,369 @@ def job_body(
     }
 
 
-def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
-    *,
-    target: dict[str, Any],
-    image: str,
-    invocation: dict[str, Any],
-    identity: str,
-    attempt_id: str,
-    startup: int,
-    grace: int,
-    cancelled: threading.Event,
-    progress: Callable[[dict[str, Any]], None],
-    on_result: Callable[[dict[str, Any]], None],
-    on_resource: Callable[[str, str | None, str, str | None], None],
-    on_execute_submitted: Callable[[], None] | None = None,
-    node_selectors: list[str] | None = None,
-    tolerations: list[str] | None = None,
-    allowed_egress_cidrs: list[str] | None = None,
-    forbidden_egress_cidrs: list[str] | None = None,
-) -> dict[str, Any]:
-    """Execute once in a cold-start Job; application data travels only over gRPC."""
-    name = "syntara-node-" + hashlib.sha256(attempt_id.encode()).hexdigest()[:32]
-    namespace = target["namespace"]
-    request = encode_request(invocation, attempt_id)
-    if request.ByteSize() > MAX_FRAME_BYTES:
-        message = "Node invocation exceeds transport limit"
-        raise TransportError(message)
-    with tempfile.TemporaryDirectory(prefix="syntara-node-") as directory:
+@dataclass(frozen=True)
+class KubernetesTarget:
+    """Verified cluster connection and placement, resolved before allocation."""
+
+    endpoint: str
+    namespace: str
+    token: str = field(repr=False)
+    ca_certificate: str | None
+    node_selectors: list[str]
+    tolerations: list[str]
+    verify_ssl: bool = True
+
+
+class KubernetesWorker(WorkerAllocation):
+    """Own one cold-start Job without knowing about WorkStore or ORM objects."""
+
+    def __init__(
+        self,
+        *,
+        attempt: WorkAttempt,
+        target: KubernetesTarget,
+        image: str,
+        invocation: dict[str, Any],
+        output_config: dict[str, str] | None,
+        startup: int,
+        grace: int,
+        allowed_egress_cidrs: list[str],
+        forbidden_egress_cidrs: list[str],
+    ) -> None:
+        """Describe the allocation and validate its wire request before external creation."""
+        self._attempt = attempt
+        self._target = target
+        self._image = image
+        self._invocation = invocation
+        self._output_config = output_config
+        self._startup = startup
+        self._grace = grace
+        self._allowed_egress_cidrs = allowed_egress_cidrs
+        self._forbidden_egress_cidrs = forbidden_egress_cidrs
+        self._name = "syntara-node-" + hashlib.sha256(attempt.attempt_id.encode()).hexdigest()[:32]
+        self._namespace = target.namespace
+        self._job_uid: str | None = None
+        self._job_owned = False
+        self._job_may_exist = False
+        self._policy_owned = False
+        self._policy_may_exist = False
+        self._policy_uid: str | None = None
+        self._policy_name = f"{self._name}-network"
+        self._pod_name: str | None = None
+        self._resources = ExitStack()
+        self._forward = ExitStack()
+        self._channel: aio.Channel | None = None
+        self._node: NodeClient | None = None
+        try:
+            self._request = encode_request(invocation, attempt.attempt_id)
+            if self._request.ByteSize() > MAX_FRAME_BYTES:
+                message = "Node invocation exceeds transport limit"
+                raise WorkItemPayloadError(message)
+        except (ValueError, TypeError, OverflowError):
+            message = "Node invocation cannot be encoded for the transport"
+            raise WorkItemPayloadError(message) from None
+
+    @property
+    def resource(self) -> BackendResource:
+        """Expose deterministic intent before creation and the acknowledged UID afterwards."""
+        return BackendResource(self._name, self._job_uid)
+
+    async def allocate(self) -> None:
+        """Create the isolated worker and retain ownership before returning."""
+        await self._call(self._allocate)
+
+    def _open_api(self) -> None:
+        directory = self._resources.enter_context(tempfile.TemporaryDirectory(prefix="syntara-node-"))
         config = client.Configuration()
-        config.host = target["base_url"]
-        # The kubernetes Python client library (PyPI `kubernetes`) renamed the bearer
-        # auth scheme from 'authorization' to 'BearerToken' in v36. Its backward-compat
-        # shim reads the token from the legacy 'authorization' key but looks the prefix
-        # up ONLY under 'BearerToken' (kubernetes-client/python#2595), so setting the
-        # prefix under 'authorization' alone silently drops the "Bearer " scheme and the
-        # API server rejects the header as anonymous. Set both keys so every client
-        # version sends "Bearer <token>".
-        config.api_key["authorization"] = target["token"]
-        config.api_key["BearerToken"] = target["token"]
-        config.api_key_prefix["authorization"] = "Bearer"
-        config.api_key_prefix["BearerToken"] = "Bearer"
-        # Local kind/minikube API servers present a self-signed cert with no CA on
-        # the ExecutionTarget; a target may opt out of verification for local dev.
-        config.verify_ssl = target.get("verify_ssl", True)
-        if target.get("ca_certificate"):
+        config.host = self._target.endpoint
+        # Kubernetes v36's compatibility shim reads the old token key but the
+        # prefix from BearerToken. Set both for supported client versions.
+        for key in ("authorization", "BearerToken"):
+            config.api_key[key] = self._target.token
+            config.api_key_prefix[key] = "Bearer"
+        config.verify_ssl = self._target.verify_ssl
+        if self._target.ca_certificate:
             ca = Path(directory) / "ca.pem"
-            ca.write_text(target["ca_certificate"])
+            ca.write_text(self._target.ca_certificate)
             config.ssl_ca_cert = str(ca)
-        with client.ApiClient(config) as api_client:
-            api = client.CoreV1Api(api_client)
-            batch_api = client.BatchV1Api(api_client)
-            network_api = client.NetworkingV1Api(api_client)
-            job_owned = False
-            job_may_exist = False
-            job_uid: str | None = None
-            submitted = False
-            connection = None
-            pod_name: str | None = None
-            policy_name = f"{name}-network"
-            policy_owned = False
-            pending_transport_error: TransportError | None = None
-            deleted = False
-            cleanup_status = "not_required"
-            cleanup_error: str | None = None
+        api_client = self._resources.enter_context(client.ApiClient(config))
+        self._api = client.CoreV1Api(api_client)
+        self._batch_api = client.BatchV1Api(api_client)
+        self._network_api = client.NetworkingV1Api(api_client)
+
+    def _allocate(self) -> None:
+        self._open_api()
+        self._create_policy()
+        self._job_may_exist = True
+        try:
+            job = self._batch_api.create_namespaced_job(
+                self._namespace,
+                job_body(
+                    self._name,
+                    self._attempt.identity,
+                    self._attempt.attempt_id,
+                    self._image,
+                    self._invocation,
+                    startup=self._startup,
+                    grace=self._grace,
+                    node_selectors=self._target.node_selectors,
+                    tolerations=self._target.tolerations,
+                ),
+                _request_timeout=15,
+            )
+        except ApiException as exc:
+            if exc.status == HTTPStatus.CONFLICT:
+                message = "A Kubernetes Job already exists for this execution attempt"
+                raise WorkloadOutcomeUnknownError(message) from None
             try:
-                on_resource(name, None, "pending", None)
-                policy_body_value = network_policy_body(
-                    identity,
-                    attempt_id,
-                    name,
-                    allowed_egress_cidrs or [],
-                    forbidden_egress_cidrs or [],
-                )
-                try:
-                    network_api.create_namespaced_network_policy(
-                        namespace,
-                        policy_body_value,
-                        _request_timeout=15,
-                    )
-                    policy_owned = True
-                except ApiException as exc:
-                    if exc.status != HTTPStatus.CONFLICT:
-                        raise
-                    existing_policy = network_api.read_namespaced_network_policy(
-                        policy_name,
-                        namespace,
-                        _request_timeout=15,
-                    )
-                    actual = existing_policy.spec.pod_selector.match_labels or {}
-                    existing_labels = existing_policy.metadata.labels or {}
-                    if (
-                        actual.get("execution-plane.syntara.io/work-item") != identity
-                        or actual.get("execution-plane.syntara.io/attempt") != attempt_id
-                        or existing_labels.get("app.kubernetes.io/managed-by") != "execution-plane"
-                    ):
-                        message = "Existing workload NetworkPolicy does not match this work item"
-                        raise TransportError(message) from None
-                    policy_owned = True
-                job_may_exist = True
-                try:
-                    job = batch_api.create_namespaced_job(
-                        namespace,
-                        job_body(
-                            name,
-                            identity,
-                            attempt_id,
-                            image,
-                            invocation,
-                            startup=startup,
-                            grace=grace,
-                            node_selectors=node_selectors,
-                            tolerations=tolerations,
-                        ),
-                        _request_timeout=15,
-                    )
-                    job_owned = True
-                    job_uid = str(job.metadata.uid) if job.metadata and job.metadata.uid else None
-                    on_resource(name, job_uid, "pending", None)
-                except ApiException as exc:
-                    if exc.status == HTTPStatus.CONFLICT:
-                        # A deterministic Job may be left by a controller that lost
-                        # its claim. Never attach and Execute again without persisted
-                        # attempt state proving that Execute was not previously sent.
-                        message = "A Kubernetes Job already exists for this execution attempt"
-                        raise TransportError(message, submitted=True) from None
-                    try:
-                        existing_job = batch_api.read_namespaced_job(name, namespace, _request_timeout=10)
-                    except ApiException as read_error:
-                        if read_error.status == HTTPStatus.NOT_FOUND:
-                            job_may_exist = False
-                            raise exc from read_error
-                        raise exc from read_error
-                    labels = existing_job.metadata.labels or {} if existing_job.metadata else {}
-                    if (
-                        labels.get("execution-plane.syntara.io/work-item") != identity
-                        or labels.get("execution-plane.syntara.io/attempt") != attempt_id
-                    ):
-                        message = "A Kubernetes Job with this deterministic name has different ownership"
-                        raise TransportError(message) from None
-                    message = "Kubernetes Job creation outcome is uncertain"
-                    raise TransportError(message, submitted=True) from None
-
-                if job_uid:
-                    network_api.patch_namespaced_network_policy(
-                        policy_name,
-                        namespace,
-                        {"metadata": {"annotations": {"execution-plane.syntara.io/job-uid": job_uid}}},
-                        _request_timeout=15,
-                    )
-                deadline = time.monotonic() + startup
-                while True:
-                    if cancelled.is_set():
-                        message = "Node execution cancelled"
-                        raise TransportError(message)
-                    pods = api.list_namespaced_pod(
-                        namespace,
-                        label_selector=f"batch.kubernetes.io/job-name={name}",
-                        _request_timeout=15,
-                    ).items
-                    if len(pods) > 1:
-                        message = "Kubernetes Job has multiple worker Pods; execution was not started"
-                        raise TransportError(message, submitted=True)
-                    if pods:
-                        pod = pods[0]
-                        owner_references = pod.metadata.owner_references or [] if pod.metadata else []
-                        if job_uid is None or not any(
-                            owner.uid == job_uid and owner.kind == "Job" and owner.controller
-                            for owner in owner_references
-                        ):
-                            message = "Kubernetes worker Pod ownership does not match its Job"
-                            raise TransportError(message, submitted=True)
-                        pod_name = pod.metadata.name if pod.metadata else None
-                        phase = pod.status.phase if pod.status else None
-                        if phase == "Running" and pod_name:
-                            break
-                        if phase in ("Failed", "Succeeded"):
-                            message = "Node worker Pod stopped before becoming ready"
-                            raise TransportError(message, retryable=True)
-                    job = batch_api.read_namespaced_job(name, namespace, _request_timeout=15)
-                    if job.status and job.status.failed:
-                        message = "Kubernetes Job failed before node execution started"
-                        raise TransportError(message, retryable=True)
-                    if time.monotonic() >= deadline:
-                        message = "Node worker Job did not become ready"
-                        raise TransportError(message, retryable=True)
-                    time.sleep(0.25)
-                grpc_deadline = time.monotonic() + min(30, max(1, startup))
-                while True:
-                    if pod_name is None:
-                        message = "Kubernetes Job has no owned worker Pod"
-                        raise TransportError(message, retryable=True)
-                    connection = portforward(
-                        api.connect_get_namespaced_pod_portforward,
-                        pod_name,
-                        namespace,
-                        ports=str(PORT),
-                        _request_timeout=15,
-                    )
-                    try:
-                        with (
-                            forward_socket(connection.socket(PORT)) as address,
-                            grpc.insecure_channel(address, options=CHANNEL_OPTIONS) as channel,
-                        ):
-
-                            def mark_submitted() -> None:
-                                nonlocal submitted
-                                submitted = True
-                                if on_execute_submitted is None:
-                                    return
-                                try:
-                                    on_execute_submitted()
-                                except TransportError as exc:
-                                    if exc.cancellation_requested:
-                                        submitted = False
-                                    raise
-
-                            frame = invoke(
-                                channel,
-                                invocation,
-                                identity=attempt_id,
-                                progress=progress,
-                                cancelled=cancelled,
-                                startup=min(2, max(0.1, grpc_deadline - time.monotonic())),
-                                grace=grace,
-                                on_execute_submitted=mark_submitted,
-                            )
-                            on_result(frame)
-                            return frame
-                    except NodeRpcError as exc:
-                        # Running can precede the listener. A refused kubelet
-                        # connection needs a new port-forward, before Execute only.
-                        if not exc.retryable or time.monotonic() >= grpc_deadline:
-                            raise
-                        submitted = False
-                        cancelled.wait(0.1)
-                    finally:
-                        with suppress(Exception):
-                            connection.close()
-                        connection = None
-            except NodeRpcError as exc:
-                pending_transport_error = TransportError(
-                    str(exc),
-                    retryable=exc.retryable,
-                    submitted=submitted,
-                    cancellation_requested=exc.cancelled,
-                )
-                raise pending_transport_error from None
-            except TransportError as exc:
-                pending_transport_error = exc
+                self._batch_api.read_namespaced_job(self._name, self._namespace, _request_timeout=10)
+            except ApiException as read_error:
+                if read_error.status == HTTPStatus.NOT_FOUND:
+                    self._job_may_exist = False
+                    raise exc from None
                 raise
+            message = "Kubernetes Job creation outcome is uncertain"
+            raise WorkloadOutcomeUnknownError(message) from None
+        self._job_uid = str(job.metadata.uid) if job.metadata and job.metadata.uid else None
+        self._job_owned = self._job_uid is not None
+        if not self._job_owned:
+            message = "Kubernetes Job creation did not acknowledge its resource identity"
+            raise WorkloadOutcomeUnknownError(message)
+        self._network_api.patch_namespaced_network_policy(
+            self._policy_name,
+            self._namespace,
+            {"metadata": {"annotations": {"execution-plane.syntara.io/job-uid": self._job_uid}}},
+            _request_timeout=15,
+        )
+
+    def _create_policy(self) -> None:
+        self._policy_may_exist = True
+        try:
+            policy = self._network_api.create_namespaced_network_policy(
+                self._namespace,
+                network_policy_body(
+                    self._attempt.identity,
+                    self._attempt.attempt_id,
+                    self._name,
+                    self._allowed_egress_cidrs,
+                    self._forbidden_egress_cidrs,
+                ),
+                _request_timeout=15,
+            )
+        except ApiException as exc:
+            if exc.status != HTTPStatus.CONFLICT:
+                raise
+            policy = self._network_api.read_namespaced_network_policy(
+                self._policy_name, self._namespace, _request_timeout=15
+            )
+            actual = policy.spec.pod_selector.match_labels or {}
+            labels = policy.metadata.labels or {}
+            if (
+                actual.get("execution-plane.syntara.io/work-item") != self._attempt.identity
+                or actual.get("execution-plane.syntara.io/attempt") != self._attempt.attempt_id
+                or labels.get("app.kubernetes.io/managed-by") != "execution-plane"
+            ):
+                message = "Existing workload NetworkPolicy does not match this work item"
+                raise WorkloadOutcomeUnknownError(message) from None
+        self._policy_uid = str(policy.metadata.uid) if policy.metadata and policy.metadata.uid else None
+        self._policy_owned = self._policy_uid is not None
+        if not self._policy_owned:
+            message = "NetworkPolicy creation did not acknowledge its resource identity"
+            raise BackendError(message)
+
+    async def wait_ready(self) -> None:
+        """Verify Pod ownership, establish its tunnel, and health-check the node service."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._startup
+        while self._pod_name is None:
+            self._pod_name = await self._call(self._ready_pod)
+            if self._pod_name is not None:
+                break
+            if loop.time() >= deadline:
+                message = "Node worker Job did not become ready"
+                raise RetryableDispatchError(message)
+            await asyncio.sleep(0.25)
+        grpc_deadline = loop.time() + min(30, self._startup)
+        while True:
+            try:
+                address = await self._call(self._open_forward)
+                self._channel = aio.insecure_channel(address, options=CHANNEL_OPTIONS)
+                self._node = NodeClient(self._channel, self._request, self._output_config)
+                await self._node.wait_ready(min(2, max(0.1, grpc_deadline - loop.time())))
+                return
+            except RetryableDispatchError:
+                await self._close_forward()
+                if loop.time() >= grpc_deadline:
+                    raise
+                await asyncio.sleep(0.1)
+
+    def _ready_pod(self) -> str | None:
+        pods = self._api.list_namespaced_pod(
+            self._namespace,
+            label_selector=f"batch.kubernetes.io/job-name={self._name}",
+            _request_timeout=15,
+        ).items
+        if len(pods) > 1:
+            message = "Kubernetes Job has multiple worker Pods"
+            raise WorkloadOutcomeUnknownError(message)
+        if pods:
+            pod = pods[0]
+            owners = pod.metadata.owner_references or [] if pod.metadata else []
+            if not any(owner.uid == self._job_uid and owner.kind == "Job" and owner.controller for owner in owners):
+                message = "Kubernetes worker Pod ownership does not match its Job"
+                raise WorkloadOutcomeUnknownError(message)
+            phase = pod.status.phase if pod.status else None
+            if phase == "Running" and pod.metadata and pod.metadata.name:
+                return str(pod.metadata.name)
+            if phase in ("Failed", "Succeeded"):
+                message = "Node worker Pod stopped before becoming ready"
+                raise RetryableDispatchError(message)
+        job = self._batch_api.read_namespaced_job(self._name, self._namespace, _request_timeout=15)
+        if not job.metadata or job.metadata.uid != self._job_uid:
+            message = "Kubernetes Job identity changed while waiting for readiness"
+            raise WorkloadOutcomeUnknownError(message)
+        if job.status and job.status.failed:
+            message = "Kubernetes Job failed before node execution started"
+            raise RetryableDispatchError(message)
+        return None
+
+    def _open_forward(self) -> str:
+        connection = portforward(
+            self._api.connect_get_namespaced_pod_portforward,
+            self._pod_name,
+            self._namespace,
+            ports=str(PORT),
+            _request_timeout=15,
+        )
+        self._forward.callback(connection.close)
+        return self._forward.enter_context(forward_socket(connection.socket(PORT)))
+
+    async def submit(self) -> Invocation:
+        """Issue Execute locally; this does not acknowledge receipt or user-code execution."""
+        if self._node is None:
+            message = "Worker has not established its node connection"
+            raise BackendError(message)
+        # No suspension between issuing Execute and returning its handle.
+        return self._node.submit(self._grace)
+
+    async def _close_forward(self) -> None:
+        if self._channel is not None:
+            await self._channel.close()
+            self._channel = None
+        self._node = None
+        await run_blocking(self._forward.close)
+
+    async def release(self) -> ReleaseResult:
+        """Close the protocol and confirm exclusive Job/Pod termination before deleting policy."""
+        close_error = None
+        try:
+            await self._close_forward()
+        except Exception:
+            logger.exception("Could not close worker transport", work_item_id=self._attempt.identity)
+            close_error = "Worker transport cleanup failed"
+        try:
+            released = await run_blocking(self._release_resources)
+        finally:
+            try:
+                await run_blocking(self._resources.close)
+            except Exception:
+                logger.exception("Could not close Kubernetes client", work_item_id=self._attempt.identity)
+                close_error = "Kubernetes client cleanup failed"
+        if close_error is not None:
+            return ReleaseResult("failed", execution_stopped=released.execution_stopped, error=close_error)
+        return released
+
+    def _release_resources(self) -> ReleaseResult:  # noqa: C901 - ownership and termination are independent
+        stopped = not self._job_may_exist
+        status: Literal["not_required", "complete", "failed", "deferred"] = "not_required"
+        error = None
+        if self._job_owned:
+            try:
+                stopped = self._delete_job()
+            except Exception:  # Preserve terminal execution results when cleanup fails.
+                logger.exception("Kubernetes Job cleanup failed", work_item_id=self._attempt.identity)
+            status = "complete" if stopped else "failed"
+            if not stopped:
+                error = "Kubernetes Job and worker Pod cleanup was not confirmed"
+        elif self._job_may_exist:
+            status, error = "deferred", "Kubernetes Job ownership is uncertain; cleanup was deferred"
+        if self._policy_owned and stopped:
+            try:
+                self._network_api.delete_namespaced_network_policy(
+                    self._policy_name,
+                    self._namespace,
+                    body=client.V1DeleteOptions(preconditions=client.V1Preconditions(uid=self._policy_uid)),
+                    _request_timeout=15,
+                )
+                if status == "not_required":
+                    status = "complete"
             except ApiException as exc:
-                # Admins need the full failure detail to diagnose auth/RBAC/quota
-                # problems, but that detail must not leak to whoever reads the
-                # work-item result. Log the rich context server-side — keyed by work
-                # item and pod so it is traceable — then raise a sanitized error.
-                logger.warning(
-                    "Kubernetes API request failed",
-                    work_item_id=identity,
-                    pod=pod_name or name,
-                    namespace=namespace,
-                    http_status=exc.status,
-                    reason=exc.reason,
-                    response_body=_truncate_for_log(exc.body),
-                )
-                # Surface only the HTTP status code — never exc.reason/exc.body, which
-                # can echo request/response detail or credentials. The status alone
-                # distinguishes an auth failure (401/403) from a server error (5xx),
-                # which is otherwise invisible to whoever reads the work-item result.
-                message = f"Kubernetes API request failed (HTTP {exc.status})"
-                raise TransportError(
-                    message,
-                    retryable=not submitted and exc.status in {429, 502, 503, 504},
-                    submitted=submitted or (job_may_exist and not job_owned),
-                ) from None
-            except Exception as exc:  # noqa: BLE001 - never expose raw API credentials or responses
-                # Catch-all for non-API failures (DNS, TLS, socket). Log both the
-                # exception type and message for admin triage. str(exc) is safe here
-                # because this branch only fires for non-ApiException errors (those are
-                # caught above) whose messages do not carry raw Kubernetes responses.
-                logger.warning(
-                    "Node transport failed",
-                    work_item_id=identity,
-                    pod=pod_name or name,
-                    namespace=namespace,
-                    error_type=type(exc).__name__,
-                    error=str(exc),
-                )
-                message = "Node transport failed"
-                raise TransportError(
-                    message,
-                    retryable=False,
-                    submitted=submitted or (job_may_exist and not job_owned),
-                ) from None
-            finally:
-                if connection is not None:
-                    with suppress(Exception):
-                        connection.close()
-                if job_owned:
-                    try:
-                        batch_api.delete_namespaced_job(
-                            name,
-                            namespace,
-                            propagation_policy="Foreground",
-                            grace_period_seconds=grace,
-                            _request_timeout=15,
-                        )
-                        delete_deadline = time.monotonic() + max(grace, 5) + 10
-                        while time.monotonic() < delete_deadline:
-                            try:
-                                batch_api.read_namespaced_job(name, namespace, _request_timeout=15)
-                            except ApiException as exc:
-                                if exc.status == HTTPStatus.NOT_FOUND:
-                                    remaining_pods = api.list_namespaced_pod(
-                                        namespace,
-                                        label_selector=f"batch.kubernetes.io/job-name={name}",
-                                        _request_timeout=15,
-                                    ).items
-                                    if not remaining_pods:
-                                        deleted = True
-                                        break
-                                    time.sleep(0.25)
-                                    continue
-                                raise
-                            time.sleep(0.25)
-                        if not deleted:
-                            cleanup_status = "failed"
-                            cleanup_error = "Kubernetes Job and worker Pod cleanup was not confirmed"
-                            progress(
-                                {"version": 1, "kind": "progress", "event": "cleanup_failed", "data": {"job": name}}
-                            )
-                    except ApiException as exc:
-                        if exc.status == HTTPStatus.NOT_FOUND:
-                            delete_deadline = time.monotonic() + max(grace, 5) + 10
-                            while time.monotonic() < delete_deadline:
-                                remaining_pods = api.list_namespaced_pod(
-                                    namespace,
-                                    label_selector=f"batch.kubernetes.io/job-name={name}",
-                                    _request_timeout=15,
-                                ).items
-                                if not remaining_pods:
-                                    deleted = True
-                                    break
-                                time.sleep(0.25)
-                        else:
-                            cleanup_status = "failed"
-                            cleanup_error = "Kubernetes Job deletion failed"
-                            progress(
-                                {"version": 1, "kind": "progress", "event": "cleanup_failed", "data": {"job": name}}
-                            )
-                    except Exception:  # noqa: BLE001 - cleanup must not hide the execution result
-                        cleanup_status = "failed"
-                        cleanup_error = "Kubernetes Job cleanup failed"
-                        progress({"version": 1, "kind": "progress", "event": "cleanup_failed", "data": {"job": name}})
-                elif job_may_exist:
-                    cleanup_status = "deferred"
-                    cleanup_error = "Kubernetes Job ownership is uncertain; cleanup was deferred"
-                    progress({"version": 1, "kind": "progress", "event": "cleanup_deferred", "data": {"job": name}})
-                if job_owned and deleted:
-                    cleanup_status = "complete"
-                if pending_transport_error is not None and (
-                    pending_transport_error.cancellation_requested or (cancelled.is_set() and not submitted)
-                ):
-                    pending_transport_error.cancelled_confirmed = deleted or not job_may_exist
-                if policy_owned and (deleted or not job_may_exist):
-                    try:
-                        network_api.delete_namespaced_network_policy(policy_name, namespace, _request_timeout=15)
-                    except ApiException as exc:
-                        if exc.status != HTTPStatus.NOT_FOUND:
-                            cleanup_status = "failed"
-                            cleanup_error = "Workload NetworkPolicy cleanup failed"
-                            progress(
-                                {
-                                    "version": 1,
-                                    "kind": "progress",
-                                    "event": "cleanup_failed",
-                                    "data": {"network_policy": policy_name},
-                                }
-                            )
-                    except Exception:  # noqa: BLE001 - policy cleanup must not hide the result
-                        cleanup_status = "failed"
-                        cleanup_error = "Workload NetworkPolicy cleanup failed"
-                        progress(
-                            {
-                                "version": 1,
-                                "kind": "progress",
-                                "event": "cleanup_failed",
-                                "data": {"network_policy": policy_name},
-                            }
-                        )
-                elif policy_owned:
-                    if cleanup_status != "failed":
-                        cleanup_status = "deferred"
-                        cleanup_error = "Workload NetworkPolicy remains while its Job may exist"
-                    progress(
-                        {
-                            "version": 1,
-                            "kind": "progress",
-                            "event": "cleanup_deferred",
-                            "data": {"network_policy": policy_name},
-                        }
-                    )
-                if cleanup_status == "not_required" and policy_owned:
-                    cleanup_status = "complete"
-                try:
-                    on_resource(name, job_uid, cleanup_status, cleanup_error)
-                except Exception:
-                    logger.exception("Could not persist backend resource cleanup state", work_item_id=identity)
+                if exc.status != HTTPStatus.NOT_FOUND:
+                    status, error = "failed", "Workload NetworkPolicy cleanup failed"
+            except Exception:  # noqa: BLE001 - cleanup diagnostics must not expose credentials
+                status, error = "failed", "Workload NetworkPolicy cleanup failed"
+        elif self._policy_may_exist and status != "failed":
+            status, error = "deferred", "Workload NetworkPolicy remains while ownership or termination is uncertain"
+        return ReleaseResult(status, execution_stopped=stopped, error=error)
+
+    def _delete_job(self) -> bool:
+        try:
+            self._batch_api.delete_namespaced_job(
+                self._name,
+                self._namespace,
+                body=client.V1DeleteOptions(preconditions=client.V1Preconditions(uid=self._job_uid)),
+                propagation_policy="Foreground",
+                grace_period_seconds=self._grace,
+                _request_timeout=15,
+            )
+        except ApiException as exc:
+            if exc.status != HTTPStatus.NOT_FOUND:
+                raise
+        deadline = time.monotonic() + max(self._grace, 5) + 10
+        while time.monotonic() < deadline:
+            try:
+                self._batch_api.read_namespaced_job(self._name, self._namespace, _request_timeout=15)
+            except ApiException as exc:
+                if exc.status != HTTPStatus.NOT_FOUND:
+                    raise
+                pods = self._api.list_namespaced_pod(
+                    self._namespace,
+                    label_selector=f"batch.kubernetes.io/job-name={self._name}",
+                    _request_timeout=15,
+                ).items
+                if not pods:
+                    return True
+            time.sleep(0.25)
+        return False
+
+    async def _call[T](self, operation: Callable[[], T]) -> T:
+        """Keep Kubernetes diagnostics server-side and classify only known pre-Execute failures."""
+        try:
+            return await run_blocking(operation)
+        except (BackendError, RetryableDispatchError, WorkloadOutcomeUnknownError):
+            raise
+        except ApiException as exc:
+            logger.warning(
+                "Kubernetes API request failed",
+                work_item_id=self._attempt.identity,
+                namespace=self._namespace,
+                http_status=exc.status,
+                reason=exc.reason,
+                response_body=_truncate_for_log(exc.body),
+            )
+            if self._job_may_exist and not self._job_owned:
+                message = "Kubernetes allocation ownership is uncertain"
+                raise WorkloadOutcomeUnknownError(message) from None
+            message = f"Kubernetes API request failed (HTTP {exc.status})"
+            if exc.status in {429, 502, 503, 504}:
+                raise RetryableDispatchError(message) from None
+            raise BackendError(message) from None
+        except Exception as exc:  # noqa: BLE001 - never expose raw API credentials or responses
+            logger.warning(
+                "Kubernetes transport failed", work_item_id=self._attempt.identity, error_type=type(exc).__name__
+            )
+            if self._job_may_exist and not self._job_owned:
+                message = "Kubernetes allocation ownership is uncertain"
+                raise WorkloadOutcomeUnknownError(message) from None
+            message = "Kubernetes transport failed"
+            raise BackendError(message) from None

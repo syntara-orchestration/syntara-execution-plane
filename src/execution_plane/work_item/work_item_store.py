@@ -313,7 +313,7 @@ class WorkStore(StoreBase):
         claim_owner_id: uuid.UUID,
         claim_generation: int,
     ) -> bool:
-        """Persist that the backend submitted Execute for the current claim."""
+        """Record locally issued execution for the current claim without replacing cancellation."""
         async with self._session_context() as session:
             try:
                 item = await session.get(WorkItem, item_id, with_for_update=True)
@@ -489,34 +489,14 @@ class WorkStore(StoreBase):
         claim_owner_id: uuid.UUID,
         claim_generation: int,
     ) -> WorkItem:
-        """Return a proven pre-Execute failure to PENDING without changing request identity."""
+        """Requeue only DISPATCHED work; cancellation requires separate termination evidence."""
         async with self._session_context() as session:
             try:
                 item = await session.get(WorkItem, item_id, with_for_update=True)
                 if item is None:
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
                 self._validate_claim(item, claim_owner_id, claim_generation)
-                if item.status is WorkItemStatus.CANCEL_REQUESTED:
-                    now = datetime.now(UTC)
-                    result = {"cancelled": True, "execution_started": False}
-                    item.result = result
-                    item.status = WorkItemStatus.CANCELLED
-                    item.completed_at = now
-                    item.claimed_at = None
-                    item.claim_owner_id = None
-                    session.add(
-                        CompletionEvent(
-                            id=uuid.uuid4(),
-                            work_item_id=item.id,
-                            client_id=item.client_id,
-                            state_revision=1,
-                            status=WorkItemStatus.CANCELLED.value,
-                            result=result,
-                            created_at=now,
-                            next_attempt_at=now,
-                        )
-                    )
-                elif item.status is WorkItemStatus.DISPATCHED:
+                if item.status is WorkItemStatus.DISPATCHED:
                     item.status = WorkItemStatus.PENDING
                     item.execution_target_id = None
                     item.claimed_at = None

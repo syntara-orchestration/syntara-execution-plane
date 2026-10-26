@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
 from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
+from execution_plane.worker_manager.lifecycle import WorkAttempt
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
 
 if TYPE_CHECKING:
@@ -40,20 +42,31 @@ class ClusterStoreStub:
 
 
 class WorkStoreStub:
-    """Record WorkItem boundary transitions without database access."""
+    """Record lifecycle decisions without opening a database connection."""
 
-    def __init__(self, *, running_result: bool = True) -> None:
-        """Configure the result returned by ``mark_running``."""
+    def __init__(self, *, dispatch_result: bool = True, running_result: bool = True) -> None:
+        """Configure the dispatch fence and execution-progress race."""
+        self.dispatch_result = dispatch_result
         self.running_result = running_result
-        self.dispatch_calls: list[UUID] = []
+        self.running_error: Exception | None = None
+        self.status = WorkItemStatus.CLAIMED
+        self.lost = False
+        self.events: list[str] = []
+        self.results: list[tuple[WorkItemStatus, dict[str, Any]]] = []
         self.running_calls: list[tuple[UUID, UUID, int]] = []
-
-    async def set_result(self, *_args: object, **_kwargs: object) -> None:
-        return None
+        self.requeues = 0
+        self.reconciliations: list[str] = []
 
     async def mark_dispatched(self, item_id: UUID, **_kwargs: object) -> bool:
-        self.dispatch_calls.append(item_id)
-        return True
+        self.events.append("dispatched")
+        if self.dispatch_result:
+            self.status = WorkItemStatus.DISPATCHED
+        return self.dispatch_result
+
+    async def refresh_claim(self, *_args: object, **_kwargs: object) -> bool | None:
+        if self.lost:
+            return None
+        return self.status is WorkItemStatus.CANCEL_REQUESTED
 
     async def mark_running(
         self,
@@ -63,7 +76,40 @@ class WorkStoreStub:
         claim_generation: int,
     ) -> bool:
         self.running_calls.append((item_id, claim_owner_id, claim_generation))
-        return self.running_result
+        if self.running_error is not None:
+            raise self.running_error
+        if not self.running_result:
+            self.status = WorkItemStatus.CANCEL_REQUESTED
+            return False
+        self.events.append("running")
+        self.status = WorkItemStatus.RUNNING
+        return True
+
+    async def set_result(
+        self,
+        item_id: UUID,
+        result: dict[str, Any],
+        status: WorkItemStatus,
+        **_kwargs: object,
+    ) -> None:
+        self.events.append(status.value)
+        self.status = status
+        self.results.append((status, result))
+
+    async def update_backend_resource(self, *_args: object, cleanup_status: str, **_kwargs: object) -> None:
+        self.events.append("resource_" + cleanup_status)
+
+    async def requeue_pre_execute_failure(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        self.events.append("requeue")
+        if self.status is WorkItemStatus.DISPATCHED:
+            self.requeues += 1
+            self.status = WorkItemStatus.PENDING
+        return SimpleNamespace(status=self.status)
+
+    async def mark_reconciliation_required(self, item_id: UUID, reason: str, **_kwargs: object) -> None:
+        self.events.append("reconciliation_required")
+        self.status = WorkItemStatus.RECONCILIATION_REQUIRED
+        self.reconciliations.append(reason)
 
 
 def vanilla_k8s_resources() -> tuple[Cluster, ExecutionTarget, WorkItem]:
@@ -129,3 +175,10 @@ def vanilla_k8s_manager(
         settings,
         credential_resolver=resolver,
     )
+
+
+def work_attempt(item: WorkItem) -> WorkAttempt:
+    """Snapshot a claimed test WorkItem for backend preparation."""
+    assert item.claim_owner_id is not None
+    assert item.execution_target_id is not None
+    return WorkAttempt(item.id, item.claim_owner_id, item.claim_generation, item.execution_target_id)

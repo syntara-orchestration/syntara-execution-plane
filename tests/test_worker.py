@@ -15,7 +15,6 @@ import pytest
 from execution_plane.models.execution_target import BackendType
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
-from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError
 
 if TYPE_CHECKING:
     from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
@@ -97,11 +96,11 @@ class _Manager:
 
     async def dispatch(self, work_item: object) -> dict[str, object]:
         self.dispatched.append(work_item)
-        raise WorkloadCancelledError(execution_started=True)
+        return {"cancelled": True, "execution_started": True}
 
 
 @pytest.mark.asyncio
-async def test_process_item_preserves_execution_started_for_cancelled_running_work() -> None:
+async def test_process_item_delegates_lifecycle_persistence_to_the_manager() -> None:
     from execution_plane import worker
 
     item = WorkItem(
@@ -122,21 +121,10 @@ async def test_process_item_preserves_execution_started_for_cancelled_running_wo
         work_store,
         _TargetStore(target),
         _Registry(manager),
-        SimpleNamespace(dispatch_retry_backoff_seconds=0),
     )
 
     assert manager.dispatched == [item]
-    assert work_store.results == [
-        (
-            item.id,
-            {
-                "cancelled": True,
-                "execution_started": True,
-                "reason": "Node workload termination was confirmed after execution started",
-            },
-            WorkItemStatus.CANCELLED,
-        )
-    ]
+    assert work_store.results == []
 
 
 class _CompletionDelivery:
@@ -196,7 +184,6 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch:
         _progress: object,
         _target_store: object,
         managers: WorkerManagerRegistry,
-        _settings: object,
         _wakeup_event: object,
     ) -> None:
         poll_calls.append(managers)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import-untyped]
 import structlog
@@ -27,20 +26,11 @@ from execution_plane.models.execution_target import BackendType
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.resource_monitor.monitor import ResourceMonitor
 from execution_plane.runtime import run_until_shutdown
+from execution_plane.store_errors import StaleClaimError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
-from execution_plane.worker_manager.vanilla_k8s.manager import (
-    NodeExecutionError,
-    RetryableDispatchError,
-    VanillaK8sWorkerManager,
-    WorkItemPayloadError,
-    WorkloadCancelledError,
-    WorkloadOutcomeUnknownError,
-)
+from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
 from execution_plane.worker_manager.vanilla_k8s.reconciler import run_orphan_policy_reconciler
-
-if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -48,14 +38,13 @@ POLL_INTERVAL_SECONDS = 5
 NOTIFY_CHANNEL = "execution_plane_work_items"
 
 
-async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinct persistence transitions
+async def _process_item(
     item: WorkItem,
     work_progress: WorkStore,
     target_queries: ExecutionTargetStore,
     worker_managers: WorkerManagerRegistry,
-    settings: EPSettings,
 ) -> None:
-    """Dispatch through the selected WorkerManager and persist safe terminal states."""
+    """Resolve the selected manager; its shared lifecycle owns attempt persistence."""
     wi_id = str(item.id)
     claim_owner_id = item.claim_owner_id
     if claim_owner_id is None:
@@ -96,68 +85,9 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
         )
         return
     try:
-        dispatch_result = await workload_manager.dispatch(item)
-        if dispatch_result is None:
-            return
-        logger.info("Node execution result persisted", work_item_id=wi_id)
-    except RetryableDispatchError as exc:
-        await asyncio.sleep(settings.dispatch_retry_backoff_seconds)
-        await work_progress.requeue_pre_execute_failure(
-            item.id,
-            claim_owner_id=claim_owner_id,
-            claim_generation=claim_generation,
-        )
-        logger.warning("Worker dispatch will retry", work_item_id=wi_id, error=str(exc))
-    except WorkItemPayloadError as exc:
-        await work_progress.set_result(
-            item.id,
-            {"error": str(exc), "error_type": "WorkItemPayloadError"},
-            WorkItemStatus.FAILED,
-            claim_owner_id=claim_owner_id,
-            claim_generation=claim_generation,
-        )
-        logger.warning("Work item payload was rejected", work_item_id=wi_id, error=str(exc))
-    except NodeExecutionError as exc:
-        if exc.persisted:
-            logger.warning("Node returned a terminal failure", work_item_id=wi_id, error=str(exc))
-            return
-        result: dict[str, Any] = {"error": str(exc), "error_type": exc.error_type}
-        if exc.output is not None:
-            result["output"] = exc.output
-        await work_progress.set_result(
-            item.id,
-            result,
-            WorkItemStatus.FAILED,
-            claim_owner_id=claim_owner_id,
-            claim_generation=claim_generation,
-        )
-        logger.warning("Worker dispatch failed", work_item_id=wi_id, error=str(exc))
-    except WorkloadCancelledError as exc:
-        execution_started = exc.execution_started
-        await work_progress.set_result(
-            item.id,
-            {"cancelled": True, "execution_started": execution_started, "reason": str(exc)},
-            WorkItemStatus.CANCELLED,
-            claim_owner_id=claim_owner_id,
-            claim_generation=claim_generation,
-        )
-        logger.info("Node cancellation was confirmed", work_item_id=wi_id, execution_started=execution_started)
-    except WorkloadOutcomeUnknownError as exc:
-        await work_progress.mark_reconciliation_required(
-            item.id,
-            str(exc),
-            claim_owner_id=claim_owner_id,
-            claim_generation=claim_generation,
-        )
-        logger.exception("Work item requires outcome reconciliation", work_item_id=wi_id, error=str(exc))
-    except Exception as e:
-        await work_progress.mark_reconciliation_required(
-            item.id,
-            "Worker failed after dispatch began; the execution outcome is unknown",
-            claim_owner_id=claim_owner_id,
-            claim_generation=claim_generation,
-        )
-        logger.exception("Worker outcome needs reconciliation", work_item_id=wi_id, error_type=type(e).__name__)
+        await workload_manager.dispatch(item)
+    except StaleClaimError:
+        logger.info("Dispatch relinquished a stale claim", work_item_id=wi_id)
 
 
 async def _listen_loop(database_url: str, wakeup_event: asyncio.Event) -> None:
@@ -195,7 +125,6 @@ async def _poll_loop(
     work_progress: WorkStore,
     target_queries: ExecutionTargetStore,
     worker_managers: WorkerManagerRegistry,
-    settings: EPSettings,
     wakeup_event: asyncio.Event,
 ) -> None:
     """Claim one work item at a time; sleep between polls when queue is empty."""
@@ -207,7 +136,7 @@ async def _poll_loop(
             item = await work_scheduler.claim_and_place_work()
             if item:
                 logger.info("Claimed work item", work_item_id=str(item.id))
-                await _process_item(item, work_progress, target_queries, worker_managers, settings)
+                await _process_item(item, work_progress, target_queries, worker_managers)
         except Exception:
             logger.exception("Error in polling loop, will retry")
 
@@ -268,7 +197,6 @@ async def run_worker(database_url: str) -> None:
                         work_item_store,
                         target_store,
                         worker_managers,
-                        settings,
                         wakeup_event,
                     ),
                     name="ep-poll",

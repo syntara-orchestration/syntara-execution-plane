@@ -17,9 +17,11 @@ existing completion outbox. Consumers depend directly on `WorkStore`.
 | `WorkScheduler` | Claims queued Work, resolves placement, revalidates candidates, and assigns or releases the claim |
 
 Command handlers and REST resource queries construct `WorkStore` directly.
-The worker constructs one `WorkStore` and shares it with the scheduler, worker
-managers, Completion Notifier, and drain monitor. Each method signature is
-defined on the concrete store, without separate consumer-specific interfaces.
+The worker constructs one `WorkStore` and shares it with the scheduler, the shared
+WorkerManager lifecycle, Completion Notifier, and drain monitor. Backend
+allocations and invocation transports do not access WorkStore. Each method
+signature is defined on the concrete store, without separate consumer-specific
+interfaces.
 Completion-event persistence stays in `WorkStore`; there is no separate
 completion store.
 
@@ -46,3 +48,9 @@ The Store does not expose generic entity mutation. Every method represents an
 allowed persistence transition.
 `ExecutionTargetStore.finalize_delete` atomically rechecks active work and
 detaches historical work while deleting a drained target.
+
+`mark_running` records locally issued execution only for the current dispatched
+claim and preserves cancellation. Pre-execution requeue is strictly
+`dispatched -> pending`; `cancel_requested` requires a separate cancellation
+decision with submission and termination evidence. Lease expiry and drain checks
+include `running`.

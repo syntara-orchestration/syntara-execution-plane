@@ -97,29 +97,29 @@ async def _process(engine, item_id) -> WorkItem:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
         item = await session.get(WorkItem, item_id)
-    await worker_module._process_item(item, store, target_store, registry, settings)
+    await worker_module._process_item(item, store, target_store, registry)
     async with sessions() as session:
         return await session.get(WorkItem, item_id)
 
 
 async def test_missing_payload_fields_fail_the_work_item(engine, monkeypatch):
     """A payload with no image/invocation is rejected before any Kubernetes call."""
-    run_job = MagicMock(name="run_job")
-    monkeypatch.setattr(manager_module, "run_job", run_job)
+    allocation = MagicMock(name="KubernetesWorker")
+    monkeypatch.setattr(manager_module, "KubernetesWorker", allocation)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     item_id = await _seed_claimed_item(sessions, payload={})
 
     item = await _process(engine, item_id)
 
-    run_job.assert_not_called()
+    allocation.assert_not_called()
     assert item.status is WorkItemStatus.FAILED
     assert item.result["error_type"] == "WorkItemPayloadError"
 
 
 async def test_semantically_invalid_invocation_is_rejected_before_kubernetes(engine, monkeypatch):
     """An invocation with a nonpositive timeout fails before dispatch reaches Kubernetes."""
-    run_job = MagicMock(name="run_job")
-    monkeypatch.setattr(manager_module, "run_job", run_job)
+    allocation = MagicMock(name="KubernetesWorker")
+    monkeypatch.setattr(manager_module, "KubernetesWorker", allocation)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     item_id = await _seed_claimed_item(
         sessions,
@@ -139,6 +139,6 @@ async def test_semantically_invalid_invocation_is_rejected_before_kubernetes(eng
 
     item = await _process(engine, item_id)
 
-    run_job.assert_not_called()
+    allocation.assert_not_called()
     assert item.status is WorkItemStatus.FAILED
     assert item.result["error_type"] == "WorkItemPayloadError"

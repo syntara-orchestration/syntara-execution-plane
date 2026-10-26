@@ -14,9 +14,9 @@ from execution_plane.credential_resolution.resolver import (
     CredentialResolutionUnavailableError,
     CredentialResolver,
 )
-from execution_plane.worker_manager.vanilla_k8s import manager as manager_module
-from execution_plane.worker_manager.vanilla_k8s.manager import RetryableDispatchError
-from tests.worker_manager.factories import vanilla_k8s_manager, vanilla_k8s_resources
+from execution_plane.worker_manager.lifecycle import RetryableDispatchError
+from execution_plane_client.commands.work import WorkExecute
+from tests.worker_manager.factories import vanilla_k8s_manager, vanilla_k8s_resources, work_attempt
 
 
 @pytest.mark.asyncio
@@ -35,18 +35,12 @@ async def test_dispatch_resolves_the_cluster_reference_and_passes_the_token_to_k
 
     monkeypatch.setattr(resolver, "resolve", resolve)
 
-    def run_job(*, target: dict[str, Any], **_kwargs: object) -> dict[str, Any]:
-        calls.append({"target": target})
-        return {"result": {"StatusCode": 0, "Result": {}}}
-
-    monkeypatch.setattr(manager_module, "run_job", run_job)
     manager = vanilla_k8s_manager(settings, resolver, resources)
+    allocation = await manager.prepare(work_attempt(work_item), WorkExecute.model_validate(work_item.payload))
 
-    result = await manager.dispatch(work_item)
-
-    assert result == {"output": {}}
-    assert calls[0] == {"credential_ref": cluster.credential_ref, "client_id": cluster.source_client_id}
-    assert calls[1]["target"]["token"] == "resolved-token"  # noqa: S105
+    assert calls == [{"credential_ref": cluster.credential_ref, "client_id": cluster.source_client_id}]
+    assert allocation._target.token == "resolved-token"  # noqa: S105
+    assert allocation.resource.uid is None
     assert target.credential_ref != cluster.credential_ref
 
 
@@ -66,4 +60,4 @@ async def test_dispatch_maps_credential_resolution_failure_to_a_retryable_pre_ex
     work_item = resources[2]
 
     with pytest.raises(RetryableDispatchError, match="Cluster credential could not be resolved"):
-        await manager.dispatch(work_item)
+        await manager.prepare(work_attempt(work_item), WorkExecute.model_validate(work_item.payload))

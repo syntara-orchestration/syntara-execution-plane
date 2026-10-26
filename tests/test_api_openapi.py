@@ -213,3 +213,11 @@ def test_list_sort_contract_matches_model_fields_and_endpoint_default(path, mode
     schema = next(parameter["schema"] for parameter in parameters if parameter["name"] == "sort")
     assert schema["default"] == default
     assert set(schema["enum"]) == {sort for field in model.__sortable_fields__ for sort in (field, f"-{field}")}
+
+
+def test_running_is_exposed_as_a_work_item_status() -> None:
+    document = create_app().openapi()
+    schema = document["components"]["schemas"]["WorkItemStatus"]
+    assert "running" in schema["enum"]
+    response = document["components"]["schemas"]["WorkItemRead"]
+    assert response["properties"]["status"] == {"$ref": "#/components/schemas/WorkItemStatus"}
