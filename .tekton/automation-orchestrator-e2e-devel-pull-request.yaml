@@ -16,7 +16,7 @@ metadata:
     appstudio.openshift.io/application: ansible-automation-orchestrator-devel
     appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-devel
     pipelines.appstudio.openshift.io/type: test
-  name: automation-orchestrator-ep-e2e-devel-pull-request
+  name: automation-orchestrator-e2e-devel-pull-request
   namespace: nexus-tenant
 spec:
   timeouts:
