@@ -154,8 +154,8 @@ Completion Notifier sends a `work.execute.completed` command to Syntara at
 
 The `Completion` payload contains `status`, `result` and a `work_item` resource
 reference. Status is `succeeded`, `failed` or `cancelled`; work requiring
-reconciliation reports `outcome_unknown`. Configure Syntara's request size
-limit to accommodate the work invocation's output limit.
+reconciliation reports `outcome_unknown`. Syntara's request size limit should
+accommodate the work invocation's output limit.
 
 `parent_command_id` identifies the WorkItem, and `occurred_at` is its completion time.
 
