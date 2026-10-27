@@ -1025,8 +1025,8 @@ components:
             format: uuid
           - type: 'null'
           title: Completion Command Id
-          description: Stable command ID used for the completion callback and client
-            deduplication.
+          description: Stable command ID used for the completion notification and
+            client deduplication.
       type: object
       required:
       - id
