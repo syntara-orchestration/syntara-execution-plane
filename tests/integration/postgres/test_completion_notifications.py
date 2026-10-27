@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 
 pytestmark = pytest.mark.integration
@@ -29,8 +29,8 @@ async def test_concurrent_notifiers_claim_one_work_item_once(migrated_database: 
         second = WorkStore.from_engine(engine)
         try:
             first_claimed, second_claimed = await asyncio.gather(
-                first.claim_due_completion_notifications(),
-                second.claim_due_completion_notifications(),
+                first.claim_work_items_that_need_completion_notification(),
+                second.claim_work_items_that_need_completion_notification(),
             )
             first_ids = {item.id for item in first_claimed}
             second_ids = {item.id for item in second_claimed}
@@ -38,14 +38,13 @@ async def test_concurrent_notifiers_claim_one_work_item_once(migrated_database: 
             all_claimed = [*first_claimed, *second_claimed]
             claimed = next(item for item in all_claimed if item.id == item_id)
             assert sum(item.id == item_id for item in all_claimed) == 1
-            assert claimed.notification_state is NotificationState.DELIVERING
-            assert claimed.notification_claim_owner_id is not None
+            assert claimed.completion_notification_state is CompletionNotificationState.DELIVERING
+            assert claimed.completion_notification_claim_owner_id is not None
 
             claiming_store = first if any(item.id == item_id for item in first_claimed) else second
-            delivered = await claiming_store.record_completion_notification_attempt(
+            delivered = await claiming_store.record_completion_notification_delivery(
                 item_id,
-                claim_owner_id=claimed.notification_claim_owner_id,
-                delivered=True,
+                claim_owner_id=claimed.completion_notification_claim_owner_id,
             )
             assert delivered is True
         finally:
@@ -55,8 +54,8 @@ async def test_concurrent_notifiers_claim_one_work_item_once(migrated_database: 
         async with sessions() as session:
             item = await session.get(WorkItem, item_id)
             assert item is not None
-            assert item.notification_state is NotificationState.DELIVERED
-            assert item.notified_at is not None
+            assert item.completion_notification_state is CompletionNotificationState.DELIVERED
+            assert item.completion_notification_delivered_at is not None
     finally:
         async with sessions() as session:
             item = await session.get(WorkItem, item_id)

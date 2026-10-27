@@ -35,7 +35,7 @@ def bounded_reconciliation_reason(reason: str) -> str:
     return reason[:MAX_RECONCILIATION_REASON_LENGTH]
 
 
-def validate_completion_retry_delay(retry_after_seconds: int) -> None:
+def validate_completion_notification_retry_delay(retry_after_seconds: int) -> None:
     """Reject retry schedules that would run in the past."""
     if retry_after_seconds < 0:
-        raise ValueError("Completion retry delay must be non-negative")  # noqa: TRY003, EM101
+        raise ValueError("Completion notification retry delay must be non-negative")  # noqa: TRY003, EM101

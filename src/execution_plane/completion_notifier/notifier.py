@@ -44,9 +44,9 @@ class CompletionNotifier:
         await self._client.close()
 
     async def run(self, work_store: WorkStore) -> None:
-        """Continuously retry due work-item notifications; callback failure never loses results."""
+        """Continuously retry due work-item completion notifications; callback failure never loses results."""
         while True:
-            items = await work_store.claim_due_completion_notifications()
+            items = await work_store.claim_work_items_that_need_completion_notification()
             if not items:
                 await asyncio.sleep(DELIVERY_POLL_SECONDS)
                 continue
@@ -56,13 +56,12 @@ class CompletionNotifier:
     async def _deliver_one(self, work_store: WorkStore, item: WorkItem) -> None:
         if not self._client.configured:
             logger.warning(
-                "Completion callback is not configured; retaining notification",
+                "Completion callback is not configured; retaining completion notification",
                 work_item_id=str(item.id),
             )
             await work_store.record_completion_notification_attempt(
                 item.id,
-                claim_owner_id=item.notification_claim_owner_id,
-                delivered=False,
+                claim_owner_id=item.completion_notification_claim_owner_id,
                 error="completion callback is not configured",
                 retry_after_seconds=MAX_RETRY_SECONDS,
             )
@@ -97,26 +96,24 @@ class CompletionNotifier:
                 error = "Completion receipt does not match its message"
                 raise ValueError(error)  # noqa: TRY301 - A mismatched receipt follows the same retry path.
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-            retry_after = min(MAX_RETRY_SECONDS, 2 ** min(item.notification_attempts + 1, 8))
+            retry_after = min(MAX_RETRY_SECONDS, 2 ** min(item.completion_notification_attempts + 1, 8))
             retry_after = int(retry_after * secrets.SystemRandom().uniform(0.8, 1.2))
             await work_store.record_completion_notification_attempt(
                 item.id,
-                claim_owner_id=item.notification_claim_owner_id,
-                delivered=False,
+                claim_owner_id=item.completion_notification_claim_owner_id,
                 error=type(exc).__name__,
                 retry_after_seconds=retry_after,
             )
             logger.warning(
                 "Completion notification delivery failed; scheduled retry",
                 work_item_id=str(item.id),
-                attempt=item.notification_attempts + 1,
+                attempt=item.completion_notification_attempts + 1,
                 retry_after_seconds=retry_after,
                 error=type(exc).__name__,
             )
         else:
-            await work_store.record_completion_notification_attempt(
+            await work_store.record_completion_notification_delivery(
                 item.id,
-                claim_owner_id=item.notification_claim_owner_id,
-                delivered=True,
+                claim_owner_id=item.completion_notification_claim_owner_id,
             )
             logger.info("Completion notification acknowledged by client", work_item_id=str(item.id))

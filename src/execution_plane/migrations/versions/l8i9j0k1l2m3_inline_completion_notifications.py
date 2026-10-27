@@ -24,44 +24,48 @@ def upgrade() -> None:
     op.add_column(
         "work_items",
         sa.Column(
-            "notification_state",
-            sa.Enum("pending", "delivering", "delivered", name="notificationstate", native_enum=False),
+            "completion_notification_state",
+            sa.Enum("pending", "delivering", "delivered", name="completionnotificationstate", native_enum=False),
             nullable=True,
         ),
         schema=EP,
     )
     op.add_column(
         "work_items",
-        sa.Column("notification_attempts", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("completion_notification_attempts", sa.Integer(), server_default="0", nullable=False),
         schema=EP,
     )
     op.add_column(
         "work_items",
-        sa.Column("notification_next_attempt_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("completion_notification_next_attempt_at", sa.DateTime(timezone=True), nullable=True),
         schema=EP,
     )
     op.add_column(
         "work_items",
-        sa.Column("notification_last_error", sa.String(length=1000), nullable=True),
-        schema=EP,
-    )
-    op.add_column("work_items", sa.Column("notified_at", sa.DateTime(timezone=True), nullable=True), schema=EP)
-    op.add_column(
-        "work_items",
-        sa.Column("notification_claim_owner_id", sa.UUID(), nullable=True),
+        sa.Column("completion_notification_last_error", sa.String(length=1000), nullable=True),
         schema=EP,
     )
     op.add_column(
         "work_items",
-        sa.Column("notification_claim_expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("completion_notification_delivered_at", sa.DateTime(timezone=True), nullable=True),
+        schema=EP,
+    )
+    op.add_column(
+        "work_items",
+        sa.Column("completion_notification_claim_owner_id", sa.UUID(), nullable=True),
+        schema=EP,
+    )
+    op.add_column(
+        "work_items",
+        sa.Column("completion_notification_claim_expires_at", sa.DateTime(timezone=True), nullable=True),
         schema=EP,
     )
     op.create_index(
         "ix_work_items_completion_delivery",
         "work_items",
-        ["notification_next_attempt_at", "notification_claim_expires_at", "completed_at"],
+        ["completion_notification_next_attempt_at", "completion_notification_claim_expires_at", "completed_at"],
         schema=EP,
-        postgresql_where=sa.text("notification_state IN ('pending', 'delivering')"),
+        postgresql_where=sa.text("completion_notification_state IN ('pending', 'delivering')"),
     )
     op.drop_index("ix_completion_events_delivery", table_name="completion_events", schema=EP)
     op.drop_table("completion_events", schema=EP)
@@ -70,13 +74,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Restore the former completion-event outbox table."""
     op.drop_index("ix_work_items_completion_delivery", table_name="work_items", schema=EP)
-    op.drop_column("work_items", "notification_claim_expires_at", schema=EP)
-    op.drop_column("work_items", "notification_claim_owner_id", schema=EP)
-    op.drop_column("work_items", "notified_at", schema=EP)
-    op.drop_column("work_items", "notification_last_error", schema=EP)
-    op.drop_column("work_items", "notification_next_attempt_at", schema=EP)
-    op.drop_column("work_items", "notification_attempts", schema=EP)
-    op.drop_column("work_items", "notification_state", schema=EP)
+    op.drop_column("work_items", "completion_notification_claim_expires_at", schema=EP)
+    op.drop_column("work_items", "completion_notification_claim_owner_id", schema=EP)
+    op.drop_column("work_items", "completion_notification_delivered_at", schema=EP)
+    op.drop_column("work_items", "completion_notification_last_error", schema=EP)
+    op.drop_column("work_items", "completion_notification_next_attempt_at", schema=EP)
+    op.drop_column("work_items", "completion_notification_attempts", schema=EP)
+    op.drop_column("work_items", "completion_notification_state", schema=EP)
     op.drop_column("work_items", "completion_command_id", schema=EP)
     op.create_table(
         "completion_events",

@@ -26,7 +26,10 @@ class WorkItemRead(BaseModel):
     completed_at: datetime | None
     resource_cleanup_status: str
     resource_cleanup_error: str | None
-    completion_command_id: uuid.UUID | None = None
+    completion_command_id: uuid.UUID | None = Field(
+        default=None,
+        description="Stable command ID used for the completion callback and client deduplication.",
+    )
 
 
 class ExecutionTargetRead(BaseModel):

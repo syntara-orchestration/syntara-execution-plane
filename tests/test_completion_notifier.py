@@ -49,7 +49,7 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
 
     import httpx
 
-    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+    from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
     from execution_plane_client.catalog import CommandCatalog
     from execution_plane_client.protocol import MessageEnvelope
 
@@ -77,9 +77,9 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
         completion_command_id=uuid4(),
-        notification_state=NotificationState.DELIVERING,
-        notification_next_attempt_at=datetime.now(UTC),
-        notification_claim_owner_id=claim_owner_id,
+        completion_notification_state=CompletionNotificationState.DELIVERING,
+        completion_notification_next_attempt_at=datetime.now(UTC),
+        completion_notification_claim_owner_id=claim_owner_id,
     )
     service = AsyncMock()
     try:
@@ -94,7 +94,7 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
     assert bodies[0].command.command_id == item.completion_command_id
     assert bodies[0].command.payload["status"] == "succeeded"
     assert bodies[0].command.payload["result"] == {"stdout": "done"}
-    assert service.record_completion_notification_attempt.await_args_list[0].kwargs["claim_owner_id"] == claim_owner_id
+    assert service.record_completion_notification_delivery.await_args_list[0].kwargs["claim_owner_id"] == claim_owner_id
 
 
 async def test_wrong_completion_receipt_is_retried():
@@ -103,7 +103,7 @@ async def test_wrong_completion_receipt_is_retried():
 
     import httpx
 
-    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+    from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 
     delivery = event_delivery.CompletionNotifier(EPSettings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands"))
     await delivery.close()
@@ -123,24 +123,24 @@ async def test_wrong_completion_receipt_is_retried():
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
         completion_command_id=uuid4(),
-        notification_state=NotificationState.DELIVERING,
-        notification_next_attempt_at=datetime.now(UTC),
-        notification_claim_owner_id=uuid4(),
+        completion_notification_state=CompletionNotificationState.DELIVERING,
+        completion_notification_next_attempt_at=datetime.now(UTC),
+        completion_notification_claim_owner_id=uuid4(),
     )
     service = AsyncMock()
     try:
         await delivery._deliver_one(service, item)
     finally:
         await delivery.close()
-    assert service.record_completion_notification_attempt.call_args.kwargs["delivered"] is False
+    assert service.record_completion_notification_attempt.call_args.kwargs["error"] == "ValueError"
 
 
-async def test_unconfigured_completion_callback_retains_notification():
+async def test_unconfigured_completion_callback_retains_completion_notification():
     """A missing callback URL must retain the completion instead of dropping it."""
     from datetime import UTC, datetime
     from uuid import uuid4
 
-    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+    from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 
     delivery = event_delivery.CompletionNotifier(
         EPSettings(EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test")
@@ -153,9 +153,9 @@ async def test_unconfigured_completion_callback_retains_notification():
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
         completion_command_id=uuid4(),
-        notification_state=NotificationState.DELIVERING,
-        notification_next_attempt_at=datetime.now(UTC),
-        notification_claim_owner_id=uuid4(),
+        completion_notification_state=CompletionNotificationState.DELIVERING,
+        completion_notification_next_attempt_at=datetime.now(UTC),
+        completion_notification_claim_owner_id=uuid4(),
     )
     service = AsyncMock()
     try:
@@ -165,8 +165,7 @@ async def test_unconfigured_completion_callback_retains_notification():
 
     service.record_completion_notification_attempt.assert_awaited_once_with(
         item.id,
-        claim_owner_id=item.notification_claim_owner_id,
-        delivered=False,
+        claim_owner_id=item.completion_notification_claim_owner_id,
         error="completion callback is not configured",
         retry_after_seconds=event_delivery.MAX_RETRY_SECONDS,
     )
@@ -177,7 +176,7 @@ async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pyt
     from datetime import UTC, datetime
     from uuid import uuid4
 
-    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+    from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 
     monkeypatch.setattr(event_delivery, "DELIVERY_POLL_SECONDS", 0)
     delivery = event_delivery.CompletionNotifier(
@@ -196,12 +195,12 @@ async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pyt
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
         completion_command_id=uuid4(),
-        notification_state=NotificationState.DELIVERING,
-        notification_next_attempt_at=datetime.now(UTC),
-        notification_claim_owner_id=uuid4(),
+        completion_notification_state=CompletionNotificationState.DELIVERING,
+        completion_notification_next_attempt_at=datetime.now(UTC),
+        completion_notification_claim_owner_id=uuid4(),
     )
     service = AsyncMock()
-    service.claim_due_completion_notifications.side_effect = [[item], [], asyncio.CancelledError()]
+    service.claim_work_items_that_need_completion_notification.side_effect = [[item], [], asyncio.CancelledError()]
     try:
         with pytest.raises(asyncio.CancelledError):
             await delivery.run(service)
@@ -209,4 +208,4 @@ async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pyt
         await delivery.close()
 
     deliver_one.assert_awaited_once_with(service, item)
-    assert service.claim_due_completion_notifications.await_count == 3
+    assert service.claim_work_items_that_need_completion_notification.await_count == 3

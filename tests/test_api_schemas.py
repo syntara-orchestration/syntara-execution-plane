@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from execution_plane.api.schemas import WorkItemRead
-from execution_plane.models.work_item import NotificationState, WorkItemStatus
+from execution_plane.models.work_item import WorkItemStatus
 from execution_plane_client.commands.work import WorkExecute
 
 
@@ -45,7 +45,6 @@ def test_work_item_read_exposes_inline_completion_command_id() -> None:
         resource_cleanup_status="not_required",
         resource_cleanup_error=None,
         completion_command_id=completion_command_id,
-        notification_state=NotificationState.DELIVERED,
     )
 
     read = WorkItemRead.model_validate(item)

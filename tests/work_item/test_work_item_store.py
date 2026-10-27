@@ -13,7 +13,7 @@ from sqlalchemy.pool import NullPool
 
 from execution_plane.models.cluster import Cluster, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 from execution_plane.store_errors import StaleClaimError
 from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNotFoundError
 from execution_plane.work_item.work_item_store import WorkStore
@@ -140,8 +140,8 @@ def _store() -> WorkStore:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_owns_session_and_commits_notification() -> None:
-    """Dispatch uses an internally managed session and commits the notification."""
+async def test_dispatch_owns_session_and_commits_database_notification() -> None:
+    """Dispatch uses an internally managed session and commits the database notification."""
     store = _store()
     session = _Session()
     session.execute.return_value = _ClaimResult(None)
@@ -178,11 +178,11 @@ async def test_set_result_reloads_item_by_id() -> None:
     assert item.result == {"output": "ok"}
     assert item.completion_command_id is not None
     assert item.completion_command_id != item.id
-    assert item.notification_state is NotificationState.PENDING
-    assert item.notification_attempts == 0
-    assert item.notification_next_attempt_at == item.completed_at
-    assert item.notification_last_error is None
-    assert item.notified_at is None
+    assert item.completion_notification_state is CompletionNotificationState.PENDING
+    assert item.completion_notification_attempts == 0
+    assert item.completion_notification_next_attempt_at == item.completed_at
+    assert item.completion_notification_last_error is None
+    assert item.completion_notification_delivered_at is None
     assert session.commits == 1
     await store.close()
 
@@ -263,8 +263,8 @@ async def test_uncertain_dispatch_records_reconciliation_callback() -> None:
     assert item.result["error_type"] == "WorkloadOutcomeUnknownError"
     assert item.completion_command_id is not None
     assert item.completion_command_id != item.id
-    assert item.notification_state is NotificationState.PENDING
-    assert item.notification_next_attempt_at == item.completed_at
+    assert item.completion_notification_state is CompletionNotificationState.PENDING
+    assert item.completion_notification_next_attempt_at == item.completed_at
     assert session.commits == 1
     await store.close()
 
@@ -330,7 +330,7 @@ async def test_reserve_one_requeues_expired_uncertain_dispatch() -> None:
     assert item.result["cancellation_requested"] is True
     assert item.completion_command_id is not None
     assert item.completion_command_id != item.id
-    assert item.notification_state is NotificationState.PENDING
+    assert item.completion_notification_state is CompletionNotificationState.PENDING
     assert session.commits == 1
     await store.close()
 
@@ -810,7 +810,7 @@ async def test_request_cancel_cancels_unclaimed_work() -> None:
     assert item.status is WorkItemStatus.CANCELLED
     assert item.result == {"cancelled": True, "execution_started": False}
     assert item.completion_command_id is not None
-    assert item.notification_state is NotificationState.PENDING
+    assert item.completion_notification_state is CompletionNotificationState.PENDING
     assert session.commits == 1
     await store.close()
 
@@ -930,7 +930,7 @@ async def test_requeue_pre_execute_failure_cancels_requested_work() -> None:
     assert item.status is WorkItemStatus.CANCELLED
     assert item.result == {"cancelled": True, "execution_started": False}
     assert item.completion_command_id is not None
-    assert item.notification_state is NotificationState.PENDING
+    assert item.completion_notification_state is CompletionNotificationState.PENDING
     await store.close()
 
 
@@ -976,7 +976,7 @@ async def test_completion_retry_rejects_negative_delay() -> None:
         await store.record_completion_notification_attempt(
             uuid.uuid4(),
             claim_owner_id=uuid.uuid4(),
-            delivered=False,
+            error="client unavailable",
             retry_after_seconds=-1,
         )
 
@@ -987,14 +987,14 @@ async def test_completion_retry_rejects_negative_delay() -> None:
 
 @pytest.mark.asyncio
 async def test_completion_notification_delivery_and_retry() -> None:
-    """Inline notification state records successful delivery and failed retries."""
+    """Inline completion notification state records successful delivery and failed retries."""
     delivered = _work_item(
         status=WorkItemStatus.COMPLETED,
-        notification_state=NotificationState.DELIVERING,
+        completion_notification_state=CompletionNotificationState.DELIVERING,
     )
     retryable = _work_item(
         status=WorkItemStatus.FAILED,
-        notification_state=NotificationState.DELIVERING,
+        completion_notification_state=CompletionNotificationState.DELIVERING,
     )
     store = _store()
     session = _Session()
@@ -1002,39 +1002,37 @@ async def test_completion_notification_delivery_and_retry() -> None:
     store._session_factory = _SessionFactory(session)
 
     delivered_claim_owner = uuid.uuid4()
-    delivered.notification_claim_owner_id = delivered_claim_owner
-    await store.record_completion_notification_attempt(
+    delivered.completion_notification_claim_owner_id = delivered_claim_owner
+    await store.record_completion_notification_delivery(
         delivered.id,
         claim_owner_id=delivered_claim_owner,
-        delivered=True,
     )
-    assert delivered.notification_state is NotificationState.DELIVERED
-    assert delivered.notified_at is not None
-    assert delivered.notification_last_error is None
-    assert delivered.notification_attempts == 1
+    assert delivered.completion_notification_state is CompletionNotificationState.DELIVERED
+    assert delivered.completion_notification_delivered_at is not None
+    assert delivered.completion_notification_last_error is None
+    assert delivered.completion_notification_attempts == 1
 
     session.items[WorkItem] = retryable
     retryable_claim_owner = uuid.uuid4()
-    retryable.notification_claim_owner_id = retryable_claim_owner
+    retryable.completion_notification_claim_owner_id = retryable_claim_owner
     await store.record_completion_notification_attempt(
         retryable.id,
         claim_owner_id=retryable_claim_owner,
-        delivered=False,
         error="client unavailable",
         retry_after_seconds=30,
     )
-    assert retryable.notification_state is NotificationState.PENDING
-    assert retryable.notified_at is None
-    assert retryable.notification_last_error == "client unavailable"
-    assert retryable.notification_next_attempt_at is not None
-    assert retryable.notification_attempts == 1
+    assert retryable.completion_notification_state is CompletionNotificationState.PENDING
+    assert retryable.completion_notification_delivered_at is None
+    assert retryable.completion_notification_last_error == "client unavailable"
+    assert retryable.completion_notification_next_attempt_at is not None
+    assert retryable.completion_notification_attempts == 1
     assert session.commits == 2
     await store.close()
 
 
 @pytest.mark.asyncio
 async def test_completion_notification_attempt_ignores_missing_work() -> None:
-    """A missing work item does not create a notification retry."""
+    """A missing work item does not create a completion notification retry."""
     store = _store()
     session = _Session()
     store._session_factory = _SessionFactory(session)
@@ -1043,7 +1041,8 @@ async def test_completion_notification_attempt_ignores_missing_work() -> None:
         await store.record_completion_notification_attempt(
             uuid.uuid4(),
             claim_owner_id=uuid.uuid4(),
-            delivered=True,
+            error="client unavailable",
+            retry_after_seconds=10,
         )
         is False
     )
@@ -1057,41 +1056,40 @@ async def test_due_completion_notifications_are_claimed_in_batches() -> None:
     """Only due, undelivered work items are atomically claimed for delivery."""
     item = _work_item(
         status=WorkItemStatus.COMPLETED,
-        notification_state=NotificationState.PENDING,
+        completion_notification_state=CompletionNotificationState.PENDING,
     )
     store = _store()
     session = _Session()
     session.execute.return_value = _ClaimResult(item)
     store._session_factory = _SessionFactory(session)
 
-    assert await store.claim_due_completion_notifications(limit=25) == [item]
-    assert item.notification_state is NotificationState.DELIVERING
-    assert item.notification_claim_owner_id is not None
-    assert item.notification_claim_expires_at is not None
+    assert await store.claim_work_items_that_need_completion_notification(limit=25) == [item]
+    assert item.completion_notification_state is CompletionNotificationState.DELIVERING
+    assert item.completion_notification_claim_owner_id is not None
+    assert item.completion_notification_claim_expires_at is not None
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_stale_notification_claim_is_rejected() -> None:
+async def test_stale_completion_notification_claim_is_rejected() -> None:
     """An expired notifier cannot overwrite the state owned by a newer claim."""
     item = _work_item(
         status=WorkItemStatus.COMPLETED,
-        notification_state=NotificationState.DELIVERING,
+        completion_notification_state=CompletionNotificationState.DELIVERING,
     )
-    item.notification_claim_owner_id = uuid.uuid4()
+    item.completion_notification_claim_owner_id = uuid.uuid4()
     store = _store()
     session = _Session()
     session.items[WorkItem] = item
     store._session_factory = _SessionFactory(session)
 
     assert (
-        await store.record_completion_notification_attempt(
+        await store.record_completion_notification_delivery(
             item.id,
             claim_owner_id=uuid.uuid4(),
-            delivered=True,
         )
         is False
     )
-    assert item.notification_state is NotificationState.DELIVERING
+    assert item.completion_notification_state is CompletionNotificationState.DELIVERING
     assert session.commits == 0
     await store.close()

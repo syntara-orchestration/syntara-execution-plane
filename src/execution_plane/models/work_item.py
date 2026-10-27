@@ -29,7 +29,7 @@ class WorkItemStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-class NotificationState(StrEnum):
+class CompletionNotificationState(StrEnum):
     """Delivery progress for a completion command, independent of execution status."""
 
     PENDING = "pending"
@@ -62,10 +62,10 @@ class WorkItem(SQLModel, table=True):
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),
         sa.Index(
             "ix_work_items_completion_delivery",
-            "notification_next_attempt_at",
-            "notification_claim_expires_at",
+            "completion_notification_next_attempt_at",
+            "completion_notification_claim_expires_at",
             "completed_at",
-            postgresql_where=sa.text("notification_state IN ('pending', 'delivering')"),
+            postgresql_where=sa.text("completion_notification_state IN ('pending', 'delivering')"),
         ),
         {"schema": EP_SCHEMA},
     )
@@ -107,30 +107,50 @@ class WorkItem(SQLModel, table=True):
     resource_cleanup_status: str = Field(default="not_required", sa_column=Column(String(32), nullable=False))
     resource_cleanup_error: str | None = Field(default=None, sa_column=Column(String(1000), nullable=True))
     completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    completion_command_id: uuid.UUID | None = Field(default=None, sa_column=Column(sa.UUID(), nullable=True))
-    notification_state: NotificationState | None = Field(
+    completion_command_id: uuid.UUID | None = Field(
         default=None,
+        sa_column=Column(sa.UUID(), nullable=True),
+        description="Stable command ID used for the completion callback and client deduplication.",
+    )
+    completion_notification_state: CompletionNotificationState | None = Field(
+        default=None,
+        description="Delivery state of the completion callback.",
         sa_column=Column(
             SAEnum(
-                NotificationState,
+                CompletionNotificationState,
                 native_enum=False,
                 values_callable=lambda members: [member.value for member in members],
             ),
             nullable=True,
         ),
     )
-    notification_attempts: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
-    notification_next_attempt_at: datetime | None = Field(
+    completion_notification_attempts: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default="0"),
+        description="Number of completion callback attempts made for this work item.",
+    )
+    completion_notification_next_attempt_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="Earliest time at which to retry the completion callback.",
     )
-    notification_last_error: str | None = Field(
+    completion_notification_last_error: str | None = Field(
         default=None,
         sa_column=Column(String(1000), nullable=True),
+        description="Most recent completion callback delivery error, if any.",
     )
-    notified_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    notification_claim_owner_id: uuid.UUID | None = Field(default=None, sa_column=Column(sa.UUID(), nullable=True))
-    notification_claim_expires_at: datetime | None = Field(
+    completion_notification_delivered_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="Time at which the client acknowledged the completion callback.",
+    )
+    completion_notification_claim_owner_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(sa.UUID(), nullable=True),
+        description="Fencing token for the notifier delivering the completion callback.",
+    )
+    completion_notification_claim_expires_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="Deadline after which another notifier may reclaim completion callback delivery.",
     )
