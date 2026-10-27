@@ -148,27 +148,27 @@ to retryable dispatch failures rather than unknown workload outcomes.
 
 ## Work completion is a command
 
-EP saves each work outcome and callback delivery state on its WorkItem. The
-Completion Notifier sends a `work.execute.completed` command to
+EP saves each work outcome and callback delivery state on its WorkItem. EP's
+Completion Notifier sends a `work.execute.completed` command to Syntara at
 `EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
 The `Completion` payload contains `status`, `result` and a `work_item` resource
 reference. Status is `succeeded`, `failed` or `cancelled`; work requiring
-reconciliation reports `outcome_unknown`. Configure the receiver's request size
+reconciliation reports `outcome_unknown`. Configure Syntara's request size
 limit to accommodate the work invocation's output limit.
 
 `parent_command_id` identifies the WorkItem, and `occurred_at` is its completion time.
 
-Register a handler for `CommandCatalog().definition("work.execute.completed", 1)`
-in the receiver's `CommandRegistry`. Authenticate EP's client certificate and
-authorize the command's source, destination and client scope. After handling the
-callback, return a successful HTTP status and a `TransportReceipt` containing
-its `message_id`.
+Syntara registers a handler for `CommandCatalog().definition("work.execute.completed", 1)`
+in its `CommandRegistry`. Syntara authenticates EP's client certificate and
+authorizes the command's source, destination and client scope. Its handler uses
+`parent_command_id` to find and complete or fail the originating Temporal activity.
+After handling the callback, Syntara returns a successful HTTP status and a
+`TransportReceipt` containing its `message_id`.
 
-Delivery is at least once: handle repeated and concurrent callbacks idempotently
-using the WorkItem UUID, and acknowledge already-handled completions. EP retries
-failed requests and invalid receipts with backoff, and reclaims expired delivery
-leases. Syntara uses `parent_command_id` to find and complete or fail the
-originating Temporal activity.
+Delivery is at least once. Syntara handles repeated and concurrent callbacks
+idempotently by WorkItem UUID and acknowledges already-handled completions.
+EP retries failed requests and invalid receipts with backoff and reclaims expired
+delivery leases.
 
 See [cold-start-node-dispatch.md](cold-start-node-dispatch.md) for execution and recovery.
