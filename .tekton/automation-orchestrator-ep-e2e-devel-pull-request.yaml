@@ -84,7 +84,10 @@ spec:
       - name: ao-revision
         type: string
         description: >
-          Branch, tag, or SHA of syntara-orchestration/syntara for deploy-ao.
+          The commit deploy-ao actually checks out and builds. Branch, tag, or
+          SHA of syntara-orchestration/syntara; to build a fork PR, set this to
+          that PR's head SHA and set ao-pr-number so the commit is fetchable
+          (ao-pr-number alone does NOT change what is built).
           Must include EP script dispatch (feat/ANSTRAT-1803) and
           credential.resolve on /api/execution_plane/v1/commands
           (syntara#1006 / 70971e34645988ba9f4784c2d422d9758ff9c507) until
@@ -95,8 +98,10 @@ spec:
       - name: ao-pr-number
         type: string
         description: >
-          Optional syntara PR number so deploy-ao can fetch a fork head SHA.
-          Leave empty to check out ao-revision from the base syntara repo.
+          Optional syntara PR number. Makes that PR's (fork) commits fetchable
+          into the clone so ao-revision can name one of them; it does NOT by
+          itself select what is checked out -- ao-revision is always what gets
+          built. Leave empty when ao-revision resolves in the base syntara repo.
           1006 is manstis/syntara feat/ANSTRAT-1803-AAP-97919.
         default: "1006"
       - name: oci-secret
