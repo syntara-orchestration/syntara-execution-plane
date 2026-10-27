@@ -28,7 +28,7 @@ class WorkItemRead(BaseModel):
     resource_cleanup_error: str | None
     completion_command_id: uuid.UUID | None = Field(
         default=None,
-        description="Stable command ID used for the completion callback and client deduplication.",
+        description="Stable command ID used for the completion notification and client deduplication.",
     )
 
 

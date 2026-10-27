@@ -110,11 +110,11 @@ class WorkItem(SQLModel, table=True):
     completion_command_id: uuid.UUID | None = Field(
         default=None,
         sa_column=Column(sa.UUID(), nullable=True),
-        description="Stable command ID used for the completion callback and client deduplication.",
+        description="Stable command ID used for the completion notification and client deduplication.",
     )
     completion_notification_state: CompletionNotificationState | None = Field(
         default=None,
-        description="Delivery state of the completion callback.",
+        description="Delivery state of the completion notification.",
         sa_column=Column(
             SAEnum(
                 CompletionNotificationState,
@@ -127,30 +127,30 @@ class WorkItem(SQLModel, table=True):
     completion_notification_attempts: int = Field(
         default=0,
         sa_column=Column(Integer, nullable=False, server_default="0"),
-        description="Number of completion callback attempts made for this work item.",
+        description="Number of completion notification attempts made for this work item.",
     )
     completion_notification_next_attempt_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
-        description="Earliest time at which to retry the completion callback.",
+        description="Earliest time at which to retry the completion notification.",
     )
     completion_notification_last_error: str | None = Field(
         default=None,
         sa_column=Column(String(1000), nullable=True),
-        description="Most recent completion callback delivery error, if any.",
+        description="Most recent completion notification delivery error, if any.",
     )
     completion_notification_delivered_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
-        description="Time at which the client acknowledged the completion callback.",
+        description="Time at which the client acknowledged the completion notification.",
     )
     completion_notification_claim_owner_id: uuid.UUID | None = Field(
         default=None,
         sa_column=Column(sa.UUID(), nullable=True),
-        description="Fencing token for the notifier delivering the completion callback.",
+        description="Fencing token for the notifier delivering the completion notification.",
     )
     completion_notification_claim_expires_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
-        description="Deadline after which another notifier may reclaim completion callback delivery.",
+        description="Deadline after which another notifier may reclaim completion notification delivery.",
     )

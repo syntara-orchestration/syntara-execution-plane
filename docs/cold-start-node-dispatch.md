@@ -28,7 +28,7 @@ Temporal retry it decrypts and reuses that original payload and stable request
 ID, including the selected image and execution limits. EP idempotency rejects a
 different payload for the same caller/project/request identity. Failure details
 and partial output are retained as Temporal error details in both the
-synchronous-response and callback paths.
+synchronous-response and completion-notification paths.
 
 ## Logical attempt and cold-start resource lifecycle
 
@@ -65,7 +65,7 @@ gRPC boundary, loss of the result becomes `reconciliation_required`; EP never
 allocates a second worker and automatically reruns that attempt. EP emits that
 state through its completion outbox so AO fails the activity with
 `WorkloadOutcomeUnknownError` instead of leaving it waiting indefinitely. The
-WorkItem remains visible for operator investigation; callback delivery does not
+WorkItem remains visible for operator investigation; completion notification delivery does not
 claim that execution stopped.
 
 The current node runtime accepts one invocation and has no result replay or

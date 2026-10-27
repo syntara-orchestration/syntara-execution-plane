@@ -1,4 +1,4 @@
-"""Tests for durable completion callback delivery configuration."""
+"""Tests for durable completion notification delivery configuration."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from execution_plane.completion_notifier import notifier as event_delivery
 from execution_plane.config import EPSettings
 
 
-def test_callback_client_loads_client_identity_into_ca_context(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The callback TLS context must include both the trusted CA and EP client identity."""
+def test_completion_notification_client_loads_identity_into_ca_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The completion notification TLS context must include the trusted CA and EP identity."""
     context = MagicMock(spec=ssl.SSLContext)
     context_factory = MagicMock(return_value=context)
     client_factory = MagicMock()
@@ -135,8 +135,8 @@ async def test_wrong_completion_receipt_is_retried():
     assert service.record_completion_notification_attempt.call_args.kwargs["error"] == "ValueError"
 
 
-async def test_unconfigured_completion_callback_retains_completion_notification():
-    """A missing callback URL must retain the completion instead of dropping it."""
+async def test_unconfigured_completion_notification_is_retained():
+    """A missing notification endpoint must retain the completion instead of dropping it."""
     from datetime import UTC, datetime
     from uuid import uuid4
 
@@ -166,7 +166,7 @@ async def test_unconfigured_completion_callback_retains_completion_notification(
     service.record_completion_notification_attempt.assert_awaited_once_with(
         item.id,
         claim_owner_id=item.completion_notification_claim_owner_id,
-        error="completion callback is not configured",
+        error="completion notification endpoint is not configured",
         retry_after_seconds=event_delivery.MAX_RETRY_SECONDS,
     )
 

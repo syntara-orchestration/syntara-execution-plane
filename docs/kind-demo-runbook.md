@@ -10,7 +10,7 @@ when repeating the test against updated PR heads.
 
 The test target is one script workflow submitted through AO, accepted by the
 separate EP API, run by the EP worker as a cold-start Job, returned over the
-SDK gRPC protocol, committed to the EP completion outbox, and delivered to AO
+SDK gRPC protocol, committed to the EP completion notification state, and delivered to AO
 for Temporal completion. AO and EP use distinct databases on the same local
 PostgreSQL server.
 
@@ -44,12 +44,12 @@ PostgreSQL server.
    write EP tables directly from AO or the demo harness.
 4. Submit a script workflow through AO. Confirm one AO request ID maps to one
    EP WorkItem and one claim-generation Job. Confirm the result fields,
-   including stdout/stderr, arrived through gRPC and the AO callback completed
+   including stdout/stderr, arrived through gRPC and the AO completion notification completed
    the Temporal activity.
-5. Inspect the WorkItem and completion event in the EP database, AO's callback
+5. Inspect the WorkItem and completion notification state in the EP database, AO's command
    inbox/binding in the AO database, and the worker Job/NetworkPolicy lifecycle.
    Verify both databases remain inaccessible to the other service runtime role.
-6. Repeat with callback outage, AO/EP restart, cancellation, startup failure,
+6. Repeat with completion notification outage, AO/EP restart, cancellation, startup failure,
    and an ambiguous Execute result. An uncertain attempt must remain visible as
    `reconciliation_required` and must not get a second Job automatically.
 
@@ -69,9 +69,9 @@ uv run --no-sync pytest \
 
 Expected evidence is a completed AO execution and script activity, an EP
 WorkItem with `completed` status and exit code `0`, the returned `stdout` and
-`stderr` in the persisted result, an acknowledged callback, and completed
+`stderr` in the persisted result, an acknowledged completion notification, and completed
 resource cleanup. The 6 October run returned `stdout = "gate test\n"`, empty
-`stderr`, exit code `0`, and cleanup status `complete`; AO accepted the callback
+`stderr`, exit code `0`, and cleanup status `complete`; AO accepted the completion notification
 with HTTP `202`. This test covers the service-to-service happy path, not
 restart/retry recovery or network-policy enforcement.
 
@@ -103,7 +103,7 @@ This was a direct EP WorkItem submission using the first-release API contract,
 which currently accepts `workload_type: "script"`; the submitted image was the
 HTTP executor. It validates EP's generic Job/gRPC execution path for that image.
 It did not run AO's native `http_request` Temporal activity, exercise AO's
-workflow-to-EP dispatch or completion callback, or test another EP workload type.
+workflow-to-EP dispatch or completion notification, or test another EP workload type.
 The pod's NetworkPolicy was created with the Job, but Flannel does not enforce
 NetworkPolicies, so this run is not evidence for either allowed-versus-blocked
 egress enforcement or the deny-egress case. Repeat those checks on Calico or an

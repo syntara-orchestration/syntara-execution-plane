@@ -236,7 +236,7 @@ async def test_reserve_one_claims_pending_work_without_choosing_target() -> None
 
 
 @pytest.mark.asyncio
-async def test_uncertain_dispatch_records_reconciliation_callback() -> None:
+async def test_uncertain_dispatch_records_reconciliation_completion_notification() -> None:
     """An unknown node result remains visible and reaches AO through inline state."""
     owner_id = uuid.uuid4()
     item = WorkItem(
@@ -750,7 +750,7 @@ async def test_set_result_rejects_non_terminal_status() -> None:
 
 @pytest.mark.asyncio
 async def test_set_result_is_idempotent_for_terminal_work() -> None:
-    """Terminal work retains its original result and callback event."""
+    """Terminal work retains its original result and completion notification."""
     item = _work_item(status=WorkItemStatus.COMPLETED, result={"output": "old"})
     store = _store()
     session = _Session()

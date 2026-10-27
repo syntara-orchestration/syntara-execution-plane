@@ -149,8 +149,8 @@ endpoint. Set `KIND_EXPERIMENTAL_PROVIDER=podman` for Podman,
 `KIND_ARGS` when replacing the local Kind cluster.
 
 The Kubernetes base manifests are in `deploy/kubernetes/base`; provide the
-database URLs, AES key, AO JWT verification key, callback mTLS material, server
-TLS certificate, and AO callback/JWT issuer URLs as Kubernetes Secrets and a
+database URLs, AES key, AO JWT verification key, outbound mTLS material, server
+TLS certificate, and AO completion-notification/credential-resolution/JWT issuer URLs as Kubernetes Secrets and a
 ConfigMap before applying them. Target-cluster dispatcher RBAC is
 `deploy/kubernetes/execution-target/rbac.yaml`. AO supplies the node image reference in the
 request and must pin it by digest. EP applies a NetworkPolicy before creating the
@@ -175,5 +175,5 @@ The separately installable `src/execution_plane_client` package contains only
 command contracts, validation, the handler registry and handler protocol. EP
 owns the routes, handlers and existing domain persistence. See
 [the integration contract](docs/integration.md) for payloads, permissions,
-resource identities and callback configuration. The former REST mutation API
+resource identities and outbound notification configuration. The former REST mutation API
 and completion-event wire format are replaced.

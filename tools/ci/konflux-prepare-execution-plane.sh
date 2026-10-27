@@ -8,7 +8,7 @@
 #      namespace); aap-dev applies it during deploy when
 #      AO_EXECUTION_PLANE=true (AAP-99675).
 #   2. Waits for the operator EP API and worker.
-#   3. Allows the operator callback CN on the AO backend before EP starts
+#   3. Allows the operator outbound CN on the AO backend before EP starts
 #      posting (the backend NetworkPolicy itself now admits the EP worker
 #      callback ingress; operator AAP-90779-ep-from-source).
 #   4. Sets EP_COMPLETION_CALLBACK_URL and

@@ -29,7 +29,7 @@ class CompletionNotifier:
     """Send committed work-item completions to a fixed, operator-configured AO URL."""
 
     def __init__(self, settings: EPSettings) -> None:
-        """Prepare the callback client from EP-owned identity and endpoint settings."""
+        """Prepare the completion notification client from EP-owned identity and endpoint settings."""
         self._local_id = settings.service_jwt_audience
         self._client = CallbackHTTPClient(
             url=settings.completion_callback_url,
@@ -44,7 +44,7 @@ class CompletionNotifier:
         await self._client.close()
 
     async def run(self, work_store: WorkStore) -> None:
-        """Continuously retry due work-item completion notifications; callback failure never loses results."""
+        """Continuously retry due work-item completion notifications; delivery failure never loses results."""
         while True:
             items = await work_store.claim_work_items_that_need_completion_notification()
             if not items:
@@ -56,13 +56,13 @@ class CompletionNotifier:
     async def _deliver_one(self, work_store: WorkStore, item: WorkItem) -> None:
         if not self._client.configured:
             logger.warning(
-                "Completion callback is not configured; retaining completion notification",
+                "Completion notification endpoint is not configured; retaining completion notification",
                 work_item_id=str(item.id),
             )
             await work_store.record_completion_notification_attempt(
                 item.id,
                 claim_owner_id=item.completion_notification_claim_owner_id,
-                error="completion callback is not configured",
+                error="completion notification endpoint is not configured",
                 retry_after_seconds=MAX_RETRY_SECONDS,
             )
             return

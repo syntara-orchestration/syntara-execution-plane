@@ -61,7 +61,7 @@ flowchart LR
     S --> TW
     TW -->|persist WorkItem| DB
     DB -->|claim and update WorkItem| EP
-    EP -->|completion callback| T
+    EP -->|completion notification| T
     EP -->|Kubernetes API| C
     C --> NS
     NS --> W
