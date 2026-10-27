@@ -39,9 +39,9 @@ spec:
     - name: ao-operator-revision
       value: AAP-90779-ep-from-source
     - name: ao-revision
-      value: 70971e34645988ba9f4784c2d422d9758ff9c507
+      value: feat/ANSTRAT-1803
     - name: ao-pr-number
-      value: "1006"
+      value: ""
   taskRunTemplate:
     serviceAccountName: konflux-integration-runner
   pipelineSpec:
@@ -53,7 +53,7 @@ spec:
       myao-execution-plane-api. The prebuilt operator bundle ignores
       ENABLE_EXECUTION_PLANE. Does not run AO API tests. AO must dispatch
       script activities to EP and resolve cluster credential_ref
-      (syntara#1006 on feat/ANSTRAT-1803 until those land on devel).
+      (syntara feat/ANSTRAT-1803 until those land on devel).
 
       Promote prepare-execution-plane into aap-konflux-pipelines when this path
       is proven; then restore a bundle pipelineRef.
@@ -88,22 +88,21 @@ spec:
           SHA of syntara-orchestration/syntara; to build a fork PR, set this to
           that PR's head SHA and set ao-pr-number so the commit is fetchable
           (ao-pr-number alone does NOT change what is built).
-          Must include EP script dispatch (feat/ANSTRAT-1803) and
-          credential.resolve on /api/execution_plane/v1/commands
-          (syntara#1006 / 70971e34645988ba9f4784c2d422d9758ff9c507) until
-          those land on devel. Without dispatch, hello-world completes in
-          Temporal with no EP work item. Without credential.resolve, the Kind
-          target goes degraded and placement finds no match.
-        default: 70971e34645988ba9f4784c2d422d9758ff9c507
+          Tracks the feat/ANSTRAT-1803 branch, which carries EP script dispatch
+          and credential.resolve on /api/execution_plane/v1/commands until those
+          land on devel. Without dispatch, hello-world completes in Temporal with
+          no EP work item. Without credential.resolve, the Kind target goes
+          degraded and placement finds no match.
+        default: feat/ANSTRAT-1803
       - name: ao-pr-number
         type: string
         description: >
           Optional syntara PR number. Makes that PR's (fork) commits fetchable
           into the clone so ao-revision can name one of them; it does NOT by
           itself select what is checked out -- ao-revision is always what gets
-          built. Leave empty when ao-revision resolves in the base syntara repo.
-          1006 is manstis/syntara feat/ANSTRAT-1803-AAP-97919.
-        default: "1006"
+          built. Empty here because ao-revision (feat/ANSTRAT-1803) resolves in
+          the base syntara repo.
+        default: ""
       - name: oci-secret
         type: string
         default: quay-aap-ci-pipeline-artifacts-publisher
