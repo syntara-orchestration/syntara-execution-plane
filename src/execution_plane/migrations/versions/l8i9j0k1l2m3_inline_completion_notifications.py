@@ -20,7 +20,6 @@ EP = "execution_plane"
 
 def upgrade() -> None:
     """Move green-field completion delivery state onto work items."""
-    op.add_column("work_items", sa.Column("completion_command_id", sa.UUID(), nullable=True), schema=EP)
     op.add_column(
         "work_items",
         sa.Column(
@@ -81,7 +80,6 @@ def downgrade() -> None:
     op.drop_column("work_items", "completion_notification_next_attempt_at", schema=EP)
     op.drop_column("work_items", "completion_notification_attempts", schema=EP)
     op.drop_column("work_items", "completion_notification_state", schema=EP)
-    op.drop_column("work_items", "completion_command_id", schema=EP)
     op.create_table(
         "completion_events",
         sa.Column("id", sa.UUID(), nullable=False),

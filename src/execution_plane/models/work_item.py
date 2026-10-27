@@ -107,11 +107,6 @@ class WorkItem(SQLModel, table=True):
     resource_cleanup_status: str = Field(default="not_required", sa_column=Column(String(32), nullable=False))
     resource_cleanup_error: str | None = Field(default=None, sa_column=Column(String(1000), nullable=True))
     completed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
-    completion_command_id: uuid.UUID | None = Field(
-        default=None,
-        sa_column=Column(sa.UUID(), nullable=True),
-        description="Stable command ID used for the completion notification and client deduplication.",
-    )
     completion_notification_state: CompletionNotificationState | None = Field(
         default=None,
         description="Delivery state of the completion notification.",

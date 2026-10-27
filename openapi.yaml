@@ -1019,14 +1019,6 @@ components:
           - type: string
           - type: 'null'
           title: Resource Cleanup Error
-        completion_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Completion Command Id
-          description: Stable command ID used for the completion notification and
-            client deduplication.
       type: object
       required:
       - id

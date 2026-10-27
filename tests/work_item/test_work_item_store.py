@@ -176,8 +176,6 @@ async def test_set_result_reloads_item_by_id() -> None:
 
     assert item.status == WorkItemStatus.COMPLETED
     assert item.result == {"output": "ok"}
-    assert item.completion_command_id is not None
-    assert item.completion_command_id != item.id
     assert item.completion_notification_state is CompletionNotificationState.PENDING
     assert item.completion_notification_attempts == 0
     assert item.completion_notification_next_attempt_at == item.completed_at
@@ -261,8 +259,6 @@ async def test_uncertain_dispatch_records_reconciliation_completion_notification
     assert item.status is WorkItemStatus.RECONCILIATION_REQUIRED
     assert item.completed_at is not None
     assert item.result["error_type"] == "WorkloadOutcomeUnknownError"
-    assert item.completion_command_id is not None
-    assert item.completion_command_id != item.id
     assert item.completion_notification_state is CompletionNotificationState.PENDING
     assert item.completion_notification_next_attempt_at == item.completed_at
     assert session.commits == 1
@@ -328,8 +324,6 @@ async def test_reserve_one_requeues_expired_uncertain_dispatch() -> None:
     assert item.status is WorkItemStatus.RECONCILIATION_REQUIRED
     assert item.claim_owner_id is None
     assert item.result["cancellation_requested"] is True
-    assert item.completion_command_id is not None
-    assert item.completion_command_id != item.id
     assert item.completion_notification_state is CompletionNotificationState.PENDING
     assert session.commits == 1
     await store.close()
@@ -809,7 +803,6 @@ async def test_request_cancel_cancels_unclaimed_work() -> None:
     assert cancelled is item
     assert item.status is WorkItemStatus.CANCELLED
     assert item.result == {"cancelled": True, "execution_started": False}
-    assert item.completion_command_id is not None
     assert item.completion_notification_state is CompletionNotificationState.PENDING
     assert session.commits == 1
     await store.close()
@@ -929,7 +922,6 @@ async def test_requeue_pre_execute_failure_cancels_requested_work() -> None:
     assert result is item
     assert item.status is WorkItemStatus.CANCELLED
     assert item.result == {"cancelled": True, "execution_started": False}
-    assert item.completion_command_id is not None
     assert item.completion_notification_state is CompletionNotificationState.PENDING
     await store.close()
 

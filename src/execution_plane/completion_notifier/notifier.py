@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import uuid
 from typing import TYPE_CHECKING
 
 import httpx
@@ -84,7 +85,7 @@ class CompletionNotifier:
             source_id=self._local_id,
             destination_id=item.client_id,
             client_id=item.client_id,
-            command_id=item.completion_command_id,
+            command_id=uuid.uuid5(item.id, "work.execute.completed"),
             parent_command_id=item.id,
             occurred_at=item.completed_at or item.created_at,
         )

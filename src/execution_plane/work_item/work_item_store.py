@@ -443,10 +443,9 @@ class WorkStore(StoreBase):
 
     @staticmethod
     def _initialize_completion_notification_fields(item: WorkItem, now: datetime) -> None:
-        """Create the stable delivery identity exactly once for terminal work."""
-        if item.completion_command_id is not None:
+        """Create the delivery state exactly once for terminal work."""
+        if item.completion_notification_state is not None:
             return
-        item.completion_command_id = uuid.uuid4()
         item.completion_notification_state = CompletionNotificationState.PENDING
         item.completion_notification_attempts = 0
         item.completion_notification_next_attempt_at = now
@@ -509,7 +508,7 @@ class WorkStore(StoreBase):
                             }
                         )
                     )
-                    .where(col(WorkItem.completion_command_id).is_not(None))
+                    .where(col(WorkItem.completion_notification_state).is_not(None))
                     .where(
                         or_(
                             and_(

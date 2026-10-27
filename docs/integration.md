@@ -148,11 +148,12 @@ to retryable dispatch failures rather than unknown workload outcomes.
 
 ## Work completion is a command
 
-The existing worker persists work outcomes and completion events. Delivery
-constructs a `work.execute.completed` envelope from that domain event each time;
-it does not persist the envelope or a command record. Both command and message
-IDs equal the stable completion-event UUID, `parent_command_id` equals the work
-UUID, and `occurred_at` uses the event time. Retries reconstruct the same command.
+The existing worker persists work outcomes and completion delivery state. Delivery
+constructs a `work.execute.completed` envelope each time; it does not persist the
+envelope or a command record. Command and message IDs are the UUIDv5 derived by
+using the work UUID as the namespace and `work.execute.completed` as the name, while
+`parent_command_id` and the work-item resource ID equal the work UUID. Retries
+reconstruct the same command and `occurred_at` uses the completion time.
 
 The payload uses `Completion`: `status`, `result` and a `work_item` resource
 reference. Terminal work maps to `succeeded`, `failed`, `cancelled` or

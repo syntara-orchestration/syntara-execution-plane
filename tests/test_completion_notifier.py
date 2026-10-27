@@ -45,7 +45,7 @@ def test_completion_notification_client_loads_identity_into_ca_context(monkeypat
 async def test_completion_is_a_stable_command_rebuilt_from_work_item():
     """Retries reuse the command identity and correlate directly with the work UUID."""
     from datetime import UTC, datetime
-    from uuid import uuid4
+    from uuid import uuid4, uuid5
 
     import httpx
 
@@ -76,7 +76,6 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
         result={"stdout": "done"},
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
-        completion_command_id=uuid4(),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
         completion_notification_claim_owner_id=claim_owner_id,
@@ -91,7 +90,7 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
     assert bodies[0] == bodies[1]
     assert bodies[0].command.command_type == "work.execute.completed"
     assert bodies[0].command.parent_command_id == item.id
-    assert bodies[0].command.command_id == item.completion_command_id
+    assert bodies[0].command.command_id == uuid5(item.id, "work.execute.completed")
     assert bodies[0].command.payload["status"] == "succeeded"
     assert bodies[0].command.payload["result"] == {"stdout": "done"}
     assert service.record_completion_notification_delivery.await_args_list[0].kwargs["claim_owner_id"] == claim_owner_id
@@ -122,7 +121,6 @@ async def test_wrong_completion_receipt_is_retried():
         result={},
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
-        completion_command_id=uuid4(),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
         completion_notification_claim_owner_id=uuid4(),
@@ -152,7 +150,6 @@ async def test_unconfigured_completion_notification_is_retained():
         result={},
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
-        completion_command_id=uuid4(),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
         completion_notification_claim_owner_id=uuid4(),
@@ -194,7 +191,6 @@ async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pyt
         result={},
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
-        completion_command_id=uuid4(),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
         completion_notification_claim_owner_id=uuid4(),
