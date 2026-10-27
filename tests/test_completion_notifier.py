@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import ssl
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from execution_plane import callback_client as callback_client_module
 from execution_plane.callback_client import CallbackHTTPClient
 from execution_plane.completion_notifier import notifier as event_delivery
 from execution_plane.config import EPSettings
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_callback_client_loads_client_identity_into_ca_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,7 +45,6 @@ def test_callback_client_loads_client_identity_into_ca_context(monkeypatch: pyte
 async def test_completion_is_a_stable_command_rebuilt_from_work_item():
     """Retries reuse the command identity and correlate directly with the work UUID."""
     from datetime import UTC, datetime
-    from unittest.mock import AsyncMock
     from uuid import uuid4
 
     import httpx
@@ -101,7 +99,6 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
 
 async def test_wrong_completion_receipt_is_retried():
     from datetime import UTC, datetime
-    from unittest.mock import AsyncMock
     from uuid import uuid4
 
     import httpx
@@ -136,3 +133,80 @@ async def test_wrong_completion_receipt_is_retried():
     finally:
         await delivery.close()
     assert service.record_completion_notification_attempt.call_args.kwargs["delivered"] is False
+
+
+async def test_unconfigured_completion_callback_retains_notification():
+    """A missing callback URL must retain the completion instead of dropping it."""
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+
+    delivery = event_delivery.CompletionNotifier(
+        EPSettings(EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test")
+    )
+    item = WorkItem(
+        id=uuid4(),
+        client_id="ao",
+        status=WorkItemStatus.CANCELLED,
+        result={},
+        created_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        completion_command_id=uuid4(),
+        notification_state=NotificationState.DELIVERING,
+        notification_next_attempt_at=datetime.now(UTC),
+        notification_claim_owner_id=uuid4(),
+    )
+    service = AsyncMock()
+    try:
+        await delivery._deliver_one(service, item)
+    finally:
+        await delivery.close()
+
+    service.record_completion_notification_attempt.assert_awaited_once_with(
+        item.id,
+        claim_owner_id=item.notification_claim_owner_id,
+        delivered=False,
+        error="completion callback is not configured",
+        retry_after_seconds=event_delivery.MAX_RETRY_SECONDS,
+    )
+
+
+async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pytest.MonkeyPatch):
+    """The run loop should deliver claimed work and wait when the backlog is empty."""
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from execution_plane.models.work_item import NotificationState, WorkItem, WorkItemStatus
+
+    monkeypatch.setattr(event_delivery, "DELIVERY_POLL_SECONDS", 0)
+    delivery = event_delivery.CompletionNotifier(
+        EPSettings(
+            EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test",
+            EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands",
+        )
+    )
+    deliver_one = AsyncMock()
+    monkeypatch.setattr(delivery, "_deliver_one", deliver_one)
+    item = WorkItem(
+        id=uuid4(),
+        client_id="ao",
+        status=WorkItemStatus.RECONCILIATION_REQUIRED,
+        result={},
+        created_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        completion_command_id=uuid4(),
+        notification_state=NotificationState.DELIVERING,
+        notification_next_attempt_at=datetime.now(UTC),
+        notification_claim_owner_id=uuid4(),
+    )
+    service = AsyncMock()
+    service.claim_due_completion_notifications.side_effect = [[item], [], asyncio.CancelledError()]
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await delivery.run(service)
+    finally:
+        await delivery.close()
+
+    deliver_one.assert_awaited_once_with(service, item)
+    assert service.claim_due_completion_notifications.await_count == 3
