@@ -42,10 +42,11 @@ def test_completion_notification_client_loads_identity_into_ca_context(monkeypat
     assert "cert" not in client_factory.call_args.kwargs
 
 
-async def test_completion_is_a_stable_command_rebuilt_from_work_item():
-    """Retries reuse the command identity and correlate directly with the work UUID."""
+@pytest.mark.parametrize("lose_first_acknowledgement", [False, True])
+async def test_completion_retries_correlate_with_work_item(lose_first_acknowledgement):
+    """Repeated deliveries identify the same work and preserve its completion content."""
     from datetime import UTC, datetime
-    from uuid import uuid4, uuid5
+    from uuid import uuid4
 
     import httpx
 
@@ -59,6 +60,9 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
         envelope = MessageEnvelope.model_validate_json(request.content)
         CommandCatalog().validate(envelope)
         bodies.append(envelope)
+        if lose_first_acknowledgement and len(bodies) == 1:
+            error = "Acknowledgement lost after callback processing"
+            raise httpx.ReadError(error, request=request)
         return httpx.Response(202, json={"received": True, "message_id": str(envelope.message_id)})
 
     settings = EPSettings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands")
@@ -68,7 +72,6 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
     await callback_client.close()
     callback_client._client = httpx.AsyncClient(transport=httpx.MockTransport(receive))
     delivery._client = callback_client
-    claim_owner_id = uuid4()
     item = WorkItem(
         id=uuid4(),
         client_id="ao",
@@ -78,22 +81,25 @@ async def test_completion_is_a_stable_command_rebuilt_from_work_item():
         completed_at=datetime.now(UTC),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
-        completion_notification_claim_owner_id=claim_owner_id,
     )
     service = AsyncMock()
     try:
         await delivery._deliver_one(service, item)
-        await delivery._deliver_one(service, item)
+        # Reconstruct from persisted fields as another process would after a restart.
+        await delivery._deliver_one(service, WorkItem.model_validate(item.model_dump()))
     finally:
         await delivery.close()
     assert len(bodies) == 2
-    assert bodies[0] == bodies[1]
-    assert bodies[0].command.command_type == "work.execute.completed"
-    assert bodies[0].command.parent_command_id == item.id
-    assert bodies[0].command.command_id == uuid5(item.id, "work.execute.completed")
-    assert bodies[0].command.payload["status"] == "succeeded"
-    assert bodies[0].command.payload["result"] == {"stdout": "done"}
-    assert service.record_completion_notification_delivery.await_args_list[0].kwargs["claim_owner_id"] == claim_owner_id
+    assert bodies[0].command.payload == bodies[1].command.payload
+    for body in bodies:
+        assert body.command.command_type == "work.execute.completed"
+        assert body.command.parent_command_id == item.id
+        assert body.command.occurred_at == item.completed_at
+        assert body.command.payload["status"] == "succeeded"
+        assert body.command.payload["result"] == {"stdout": "done"}
+    assert service.record_completion_notification_delivery.await_count == (1 if lose_first_acknowledgement else 2)
+    assert service.record_completion_notification_attempt.await_count == int(lose_first_acknowledgement)
+    service.record_completion_notification_delivery.assert_awaited_with(item.id)
 
 
 async def test_wrong_completion_receipt_is_retried():
@@ -123,7 +129,6 @@ async def test_wrong_completion_receipt_is_retried():
         completed_at=datetime.now(UTC),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
-        completion_notification_claim_owner_id=uuid4(),
     )
     service = AsyncMock()
     try:
@@ -152,7 +157,6 @@ async def test_unconfigured_completion_notification_is_retained():
         completed_at=datetime.now(UTC),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
-        completion_notification_claim_owner_id=uuid4(),
     )
     service = AsyncMock()
     try:
@@ -162,7 +166,6 @@ async def test_unconfigured_completion_notification_is_retained():
 
     service.record_completion_notification_attempt.assert_awaited_once_with(
         item.id,
-        claim_owner_id=item.completion_notification_claim_owner_id,
         error="completion notification endpoint is not configured",
         retry_after_seconds=event_delivery.MAX_RETRY_SECONDS,
     )
@@ -193,7 +196,6 @@ async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pyt
         completed_at=datetime.now(UTC),
         completion_notification_state=CompletionNotificationState.DELIVERING,
         completion_notification_next_attempt_at=datetime.now(UTC),
-        completion_notification_claim_owner_id=uuid4(),
     )
     service = AsyncMock()
     service.claim_work_items_that_need_completion_notification.side_effect = [[item], [], asyncio.CancelledError()]

@@ -148,34 +148,27 @@ to retryable dispatch failures rather than unknown workload outcomes.
 
 ## Work completion is a command
 
-The existing worker persists work outcomes and completion delivery state. Delivery
-constructs a `work.execute.completed` envelope each time; it does not persist the
-envelope or a command record. Command and message IDs are the UUIDv5 derived by
-using the work UUID as the namespace and `work.execute.completed` as the name, while
-`parent_command_id` and the work-item resource ID equal the work UUID. Retries
-reconstruct the same command and `occurred_at` uses the completion time.
+EP saves each work outcome and callback delivery state on its WorkItem. The
+Completion Notifier sends a `work.execute.completed` command to
+`EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
-The payload uses `Completion`: `status`, `result` and a `work_item` resource
-reference. Terminal work maps to `succeeded`, `failed`, `cancelled` or
-`outcome_unknown` for reconciliation-required work. Completion result size is
-governed by the work invocation's output limit, rather than the action payload
-limit; receiving callers must configure a suitable completion request limit.
+The `Completion` payload contains `status`, `result` and a `work_item` resource
+reference. Status is `succeeded`, `failed` or `cancelled`; work requiring
+reconciliation reports `outcome_unknown`. Configure the receiver's request size
+limit to accommodate the work invocation's output limit.
 
-Set `EP_COMPLETION_CALLBACK_URL` to the caller's command-ingress URL. It remains
-operator-controlled, with the existing callback CA/client certificate settings;
-the inbound command cannot redirect delivery. Completion delivery retains its
-existing retry/backoff behavior. The receiving participant must authenticate
-EP's client certificate and authorize its source, destination and client scope.
-The shared client package provides contracts, not authentication or routing.
-After handling a completion command, respond with a successful HTTP status and
-a `TransportReceipt` containing its `message_id`. Failed requests, malformed
-receipts and mismatched message IDs are retried.
+`parent_command_id` identifies the WorkItem, and `occurred_at` is its completion time.
 
-The caller registers a handler for `CommandCatalog().definition("work.execute.completed", 1)`
-in its own `CommandRegistry`. EP advertises only the action handlers it installs.
-AO integration changes are outside this EP repository; AO must consume the new
-completion envelope instead of the former event payload.
+Register a handler for `CommandCatalog().definition("work.execute.completed", 1)`
+in the receiver's `CommandRegistry`. Authenticate EP's client certificate and
+authorize the command's source, destination and client scope. After handling the
+callback, return a successful HTTP status and a `TransportReceipt` containing
+its `message_id`.
 
-See [cold-start-node-dispatch.md](cold-start-node-dispatch.md) for provider work
-and recovery behavior. No command persistence or database migration is added by
-this API change.
+Delivery is at least once: handle repeated and concurrent callbacks idempotently
+using the WorkItem UUID, and acknowledge already-handled completions. EP retries
+failed requests and invalid receipts with backoff, and reclaims expired delivery
+leases. Syntara uses `parent_command_id` to find and complete or fail the
+originating Temporal activity.
+
+See [cold-start-node-dispatch.md](cold-start-node-dispatch.md) for execution and recovery.

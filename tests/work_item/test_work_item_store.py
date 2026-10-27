@@ -49,8 +49,9 @@ class _Session:
         _item_id: uuid.UUID,
         *,
         with_for_update: bool = False,
+        populate_existing: bool = False,
     ) -> object:
-        del with_for_update
+        del with_for_update, populate_existing
         if model in self.items:
             return self.items[model]
         return self.item
@@ -967,7 +968,6 @@ async def test_completion_retry_rejects_negative_delay() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         await store.record_completion_notification_attempt(
             uuid.uuid4(),
-            claim_owner_id=uuid.uuid4(),
             error="client unavailable",
             retry_after_seconds=-1,
         )
@@ -993,23 +993,15 @@ async def test_completion_notification_delivery_and_retry() -> None:
     session.items[WorkItem] = delivered
     store._session_factory = _SessionFactory(session)
 
-    delivered_claim_owner = uuid.uuid4()
-    delivered.completion_notification_claim_owner_id = delivered_claim_owner
-    await store.record_completion_notification_delivery(
-        delivered.id,
-        claim_owner_id=delivered_claim_owner,
-    )
+    await store.record_completion_notification_delivery(delivered.id)
     assert delivered.completion_notification_state is CompletionNotificationState.DELIVERED
     assert delivered.completion_notification_delivered_at is not None
     assert delivered.completion_notification_last_error is None
     assert delivered.completion_notification_attempts == 1
 
     session.items[WorkItem] = retryable
-    retryable_claim_owner = uuid.uuid4()
-    retryable.completion_notification_claim_owner_id = retryable_claim_owner
     await store.record_completion_notification_attempt(
         retryable.id,
-        claim_owner_id=retryable_claim_owner,
         error="client unavailable",
         retry_after_seconds=30,
     )
@@ -1032,7 +1024,6 @@ async def test_completion_notification_attempt_ignores_missing_work() -> None:
     assert (
         await store.record_completion_notification_attempt(
             uuid.uuid4(),
-            claim_owner_id=uuid.uuid4(),
             error="client unavailable",
             retry_after_seconds=10,
         )
@@ -1057,31 +1048,59 @@ async def test_due_completion_notifications_are_claimed_in_batches() -> None:
 
     assert await store.claim_work_items_that_need_completion_notification(limit=25) == [item]
     assert item.completion_notification_state is CompletionNotificationState.DELIVERING
-    assert item.completion_notification_claim_owner_id is not None
     assert item.completion_notification_claim_expires_at is not None
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_stale_completion_notification_claim_is_rejected() -> None:
-    """An expired notifier cannot overwrite the state owned by a newer claim."""
+@pytest.mark.parametrize("state", [None, CompletionNotificationState.PENDING, CompletionNotificationState.DELIVERED])
+@pytest.mark.parametrize("succeeded", [True, False])
+async def test_completion_notification_updates_only_delivering_work(state, succeeded) -> None:
+    """Late and duplicate responses cannot change a notification outside DELIVERING."""
+    now = datetime.now(UTC)
     item = _work_item(
         status=WorkItemStatus.COMPLETED,
-        completion_notification_state=CompletionNotificationState.DELIVERING,
+        completion_notification_state=state,
+        completion_notification_attempts=2,
+        completion_notification_delivered_at=now if state is CompletionNotificationState.DELIVERED else None,
     )
-    item.completion_notification_claim_owner_id = uuid.uuid4()
+    before = item.model_dump()
+    session = _Session(item)
     store = _store()
-    session = _Session()
-    session.items[WorkItem] = item
     store._session_factory = _SessionFactory(session)
 
-    assert (
-        await store.record_completion_notification_delivery(
-            item.id,
-            claim_owner_id=uuid.uuid4(),
-        )
-        is False
-    )
-    assert item.completion_notification_state is CompletionNotificationState.DELIVERING
+    if succeeded:
+        changed = await store.record_completion_notification_delivery(item.id)
+    else:
+        changed = await store.record_completion_notification_attempt(item.id, error="late failure")
+
+    assert changed is False
+    assert item.model_dump() == before
     assert session.commits == 0
+    await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", list(CompletionNotificationState))
+async def test_reconciliation_preserves_initialized_completion_notification(state) -> None:
+    """Repeated lifecycle updates retain notification progress without a separate identity marker."""
+    now = datetime.now(UTC)
+    item = _work_item(
+        status=WorkItemStatus.RECONCILIATION_REQUIRED,
+        completion_notification_state=state,
+        completion_notification_attempts=3,
+        completion_notification_next_attempt_at=now,
+        completion_notification_last_error="client unavailable",
+        completion_notification_delivered_at=now if state is CompletionNotificationState.DELIVERED else None,
+        completion_notification_claim_expires_at=now if state is CompletionNotificationState.DELIVERING else None,
+    )
+    before = {key: value for key, value in item.model_dump().items() if key.startswith("completion_notification_")}
+    store = _store()
+    session = _Session(item)
+    store._session_factory = _SessionFactory(session)
+
+    await store.mark_reconciliation_required(item.id, "still uncertain")
+
+    after = {key: value for key, value in item.model_dump().items() if key.startswith("completion_notification_")}
+    assert after == before
     await store.close()

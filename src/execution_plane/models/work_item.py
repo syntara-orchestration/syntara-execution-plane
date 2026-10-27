@@ -139,11 +139,6 @@ class WorkItem(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Time at which the client acknowledged the completion notification.",
     )
-    completion_notification_claim_owner_id: uuid.UUID | None = Field(
-        default=None,
-        sa_column=Column(sa.UUID(), nullable=True),
-        description="Fencing token for the notifier delivering the completion notification.",
-    )
     completion_notification_claim_expires_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),

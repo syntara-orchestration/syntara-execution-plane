@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-import uuid
 from typing import TYPE_CHECKING
 
 import httpx
@@ -62,7 +61,6 @@ class CompletionNotifier:
             )
             await work_store.record_completion_notification_attempt(
                 item.id,
-                claim_owner_id=item.completion_notification_claim_owner_id,
                 error="completion notification endpoint is not configured",
                 retry_after_seconds=MAX_RETRY_SECONDS,
             )
@@ -85,7 +83,6 @@ class CompletionNotifier:
             source_id=self._local_id,
             destination_id=item.client_id,
             client_id=item.client_id,
-            command_id=uuid.uuid5(item.id, "work.execute.completed"),
             parent_command_id=item.id,
             occurred_at=item.completed_at or item.created_at,
         )
@@ -101,7 +98,6 @@ class CompletionNotifier:
             retry_after = int(retry_after * secrets.SystemRandom().uniform(0.8, 1.2))
             await work_store.record_completion_notification_attempt(
                 item.id,
-                claim_owner_id=item.completion_notification_claim_owner_id,
                 error=type(exc).__name__,
                 retry_after_seconds=retry_after,
             )
@@ -113,8 +109,5 @@ class CompletionNotifier:
                 error=type(exc).__name__,
             )
         else:
-            await work_store.record_completion_notification_delivery(
-                item.id,
-                claim_owner_id=item.completion_notification_claim_owner_id,
-            )
+            await work_store.record_completion_notification_delivery(item.id)
             logger.info("Completion notification acknowledged by client", work_item_id=str(item.id))

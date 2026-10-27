@@ -40,6 +40,8 @@ explanations, claim fencing, and non-negative completion retry delays.
 - Claim fencing rejects stale owners or generations before lifecycle updates.
 - Cancellation and dispatch transitions are serialized against the same locked Work row.
 - Terminal results and their inline completion-notification state are committed together.
+- Completion delivery uses `SELECT ... FOR UPDATE` to serialize `delivering -> delivered`
+  acknowledgements and `delivering -> pending` retries.
 - Lease-expired uncertain work is moved to `RECONCILIATION_REQUIRED` with a durable event.
 
 The Store does not expose generic entity mutation. Every method represents an

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypeGuard
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -443,7 +443,7 @@ class WorkStore(StoreBase):
 
     @staticmethod
     def _initialize_completion_notification_fields(item: WorkItem, now: datetime) -> None:
-        """Create the delivery state exactly once for terminal work."""
+        """Initialize completion delivery once, preserving retries and acknowledgements."""
         if item.completion_notification_state is not None:
             return
         item.completion_notification_state = CompletionNotificationState.PENDING
@@ -451,7 +451,6 @@ class WorkStore(StoreBase):
         item.completion_notification_next_attempt_at = now
         item.completion_notification_last_error = None
         item.completion_notification_delivered_at = None
-        item.completion_notification_claim_owner_id = None
         item.completion_notification_claim_expires_at = None
 
     @staticmethod
@@ -508,7 +507,6 @@ class WorkStore(StoreBase):
                             }
                         )
                     )
-                    .where(col(WorkItem.completion_notification_state).is_not(None))
                     .where(
                         or_(
                             and_(
@@ -526,11 +524,9 @@ class WorkStore(StoreBase):
                     .with_for_update(skip_locked=True)
                 )
                 items = list(result.scalars().all())
-                claim_owner_id = uuid.uuid4()
                 claim_expires_at = now + timedelta(seconds=_COMPLETION_NOTIFICATION_CLAIM_SECONDS)
                 for item in items:
                     item.completion_notification_state = CompletionNotificationState.DELIVERING
-                    item.completion_notification_claim_owner_id = claim_owner_id
                     item.completion_notification_claim_expires_at = claim_expires_at
                 await session.commit()
                 return items
@@ -538,23 +534,17 @@ class WorkStore(StoreBase):
                 await session.rollback()
                 raise
 
-    async def record_completion_notification_delivery(
-        self,
-        item_id: uuid.UUID,
-        *,
-        claim_owner_id: uuid.UUID | None,
-    ) -> bool:
-        """Record successful delivery of a claimed completion notification."""
+    async def record_completion_notification_delivery(self, item_id: uuid.UUID) -> bool:
+        """Transition DELIVERING to DELIVERED while holding the work-item row lock."""
         async with self._session_context() as session:
             try:
-                item = await session.get(WorkItem, item_id, with_for_update=True)
-                if not self._owns_completion_notification_claim(item, claim_owner_id):
+                item = await session.get(WorkItem, item_id, with_for_update=True, populate_existing=True)
+                if item is None or item.completion_notification_state is not CompletionNotificationState.DELIVERING:
                     return False
                 item.completion_notification_attempts += 1
                 item.completion_notification_last_error = None
                 item.completion_notification_state = CompletionNotificationState.DELIVERED
                 item.completion_notification_delivered_at = datetime.now(UTC)
-                item.completion_notification_claim_owner_id = None
                 item.completion_notification_claim_expires_at = None
                 await session.commit()
                 return True
@@ -566,16 +556,15 @@ class WorkStore(StoreBase):
         self,
         item_id: uuid.UUID,
         *,
-        claim_owner_id: uuid.UUID | None,
         error: str,
         retry_after_seconds: int = 10,
     ) -> bool:
-        """Record a failed delivery and schedule a completion notification retry."""
+        """Transition DELIVERING to PENDING under the row lock; delivered work stays delivered."""
         validate_completion_notification_retry_delay(retry_after_seconds)
         async with self._session_context() as session:
             try:
-                item = await session.get(WorkItem, item_id, with_for_update=True)
-                if not self._owns_completion_notification_claim(item, claim_owner_id):
+                item = await session.get(WorkItem, item_id, with_for_update=True, populate_existing=True)
+                if item is None or item.completion_notification_state is not CompletionNotificationState.DELIVERING:
                     return False
                 item.completion_notification_attempts += 1
                 item.completion_notification_last_error = error[:1000]
@@ -583,24 +572,12 @@ class WorkStore(StoreBase):
                 item.completion_notification_next_attempt_at = datetime.now(UTC) + timedelta(
                     seconds=retry_after_seconds
                 )
-                item.completion_notification_claim_owner_id = None
                 item.completion_notification_claim_expires_at = None
                 await session.commit()
                 return True
             except Exception:
                 await session.rollback()
                 raise
-
-    @staticmethod
-    def _owns_completion_notification_claim(
-        item: WorkItem | None, claim_owner_id: uuid.UUID | None
-    ) -> TypeGuard[WorkItem]:
-        """Return whether the caller still owns the claimed completion notification."""
-        return (
-            item is not None
-            and item.completion_notification_claim_owner_id == claim_owner_id
-            and item.completion_notification_state is CompletionNotificationState.DELIVERING
-        )
 
     async def is_target_drained(self, target_id: uuid.UUID) -> bool:
         """Return whether no owned or uncertain work remains on a target."""

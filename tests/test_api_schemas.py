@@ -1,10 +1,15 @@
 """Request-schema validation for the standalone Execution Plane API."""
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
+from execution_plane.api.schemas import WorkItemRead
+from execution_plane.models.work_item import WorkItemStatus
 from execution_plane_client.commands.work import WorkExecute
 
 
@@ -25,6 +30,36 @@ def _payload(**invocation_overrides: object) -> dict[str, Any]:
 
 def test_work_item_submit_accepts_a_versioned_node_invocation() -> None:
     WorkExecute.model_validate(_payload())
+
+
+def test_work_item_read_excludes_completion_delivery_internals() -> None:
+    item = SimpleNamespace(
+        id=uuid4(),
+        client_id="ao",
+        status=WorkItemStatus.COMPLETED,
+        result={"output": "ok"},
+        created_at=datetime.now(UTC),
+        claimed_at=None,
+        completed_at=datetime.now(UTC),
+        resource_cleanup_status="not_required",
+        resource_cleanup_error=None,
+        completion_notification_state="delivering",
+    )
+
+    read = WorkItemRead.model_validate(item)
+
+    assert set(read.model_dump()) == {
+        "id",
+        "status",
+        "result",
+        "result_omitted",
+        "result_size_bytes",
+        "created_at",
+        "claimed_at",
+        "completed_at",
+        "resource_cleanup_status",
+        "resource_cleanup_error",
+    }
 
 
 def test_non_object_credentials_raise_validation_error_not_type_error() -> None:
