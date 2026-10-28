@@ -507,10 +507,13 @@ spec:
         taskSpec:
           description: |
             Clone aap-dev on the Kind VM, install git-core in the
-            install-syntara-from-src overlay, default AO_EXECUTION_PLANE to
-            true, and hook wait-for-myao-ready into skaffold deploy. Copies
-            tools/ci/wait-for-myao-ready.sh from the staged EP tree, so
-            stage-ep-source must finish first. The catalog wait-for-ao-ready
+            install-syntara-from-src overlay, patch AO's ActivityExecution
+            lookup to retry until monitoring creates the row, default
+            AO_EXECUTION_PLANE to true, and hook wait-for-myao-ready into
+            skaffold deploy. Copies tools/ci/wait-for-myao-ready.sh and
+            tools/ci/patch-ao-activity-execution-lookup.py from the staged
+            EP tree, so stage-ep-source must finish first. The catalog
+            wait-for-ao-ready
             SSHes a silent kubectl wait; with EP enabled that idles long
             enough for NAT to drop the session (Tekton then reports context
             deadline exceeded). feat/ANSTRAT-1803 fetches
@@ -634,12 +637,21 @@ spec:
 
                   WAIT_SRC=\$HOME/syntara-execution-plane/tools/ci/wait-for-myao-ready.sh
                   WAIT_DST=\$HOME/aap-dev/hack/skaffold-utils/wait-for-myao-ready.sh
+                  LOOKUP_PATCH=\$HOME/syntara-execution-plane/tools/ci/patch-ao-activity-execution-lookup.py
+                  OVERLAY_DST=\$HOME/aap-dev/skaffolding/addons/ao/containers/fragments/ao/install-syntara-from-src
                   if [[ ! -f \"\${WAIT_SRC}\" ]]; then
                     echo \"ERROR: \${WAIT_SRC} missing; stage-ep-source must finish before patch-ao-src-overlay\" >&2
                     ls -la \$HOME/syntara-execution-plane/tools/ci >&2 || true
                     exit 1
                   fi
+                  if [[ ! -f \"\${LOOKUP_PATCH}\" ]]; then
+                    echo \"ERROR: \${LOOKUP_PATCH} missing; stage-ep-source must finish before patch-ao-src-overlay\" >&2
+                    ls -la \$HOME/syntara-execution-plane/tools/ci >&2 || true
+                    exit 1
+                  fi
                   install -m 755 \"\${WAIT_SRC}\" \"\${WAIT_DST}\"
+                  python3 \"\${LOOKUP_PATCH}\" --install-overlay \"\${OVERLAY_DST}\"
+                  grep -F 'patch-ao-activity-execution-lookup.py' \"\${OVERLAY_DST}\"
                   echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnAgPSBQYXRoLmhvbWUoKSAvICJhYXAtZGV2L3NrYWZmb2xkaW5nL2FkZG9ucy9hby1vcGVyYXRvci9za2FmZm9sZC55YW1sIgp0ZXh0ID0gcC5yZWFkX3RleHQoKQpuZWVkbGUgPSAnd2FpdC1mb3ItYW8tb3BlcmF0b3ItcmVhZHkuc2giXScKaG9vayA9IG5lZWRsZSArICIiIgogICAgICAgICAgYWZ0ZXI6CiAgICAgICAgICAgIC0gaG9zdDoKICAgICAgICAgICAgICAgIGNvbW1hbmQ6IFsic2giLCAiLWMiLCAid2FpdC1mb3ItbXlhby1yZWFkeS5zaCJdIiIiCmlmICJ3YWl0LWZvci1teWFvLXJlYWR5LnNoIiBpbiB0ZXh0OgogICAgcHJpbnQoInNrYWZmb2xkIGFmdGVyLWhvb2sgYWxyZWFkeSBwcmVzZW50IikKZWxpZiBuZWVkbGUgbm90IGluIHRleHQ6CiAgICByYWlzZSBTeXN0ZW1FeGl0KGYiRVJST1I6IHdhaXQtZm9yLWFvLW9wZXJhdG9yLXJlYWR5LnNoIGhvb2sgbm90IGZvdW5kIGluIHtwfSIpCmVsc2U6CiAgICBwLndyaXRlX3RleHQodGV4dC5yZXBsYWNlKG5lZWRsZSwgaG9vaywgMSkpCiAgICBwcmludCgiaW5zdGFsbGVkIHdhaXQtZm9yLW15YW8tcmVhZHkgYWZ0ZXIgaG9vayIpCg==' \
                     | base64 -d > /tmp/patch-skaffold-wait.py
                   python3 /tmp/patch-skaffold-wait.py

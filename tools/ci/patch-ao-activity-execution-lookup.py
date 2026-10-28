@@ -12,7 +12,8 @@ interceptor starts in the background. The script activity can run first
 instead of failing the node.
 
 Applied to the AO image via install-syntara-from-src during Konflux e2e.
-Remove once AO retries this lookup itself.
+Older checkouts still receive the lookup retry; checkouts using shared
+activity identity do not need the patch.
 """
 
 from __future__ import annotations
@@ -77,6 +78,11 @@ def patch(path: Path) -> str:
     text = path.read_text()
     if MARKER in text:
         return "ActivityExecution lookup retry already patched"
+    if (
+        "_lookup_activity_execution_id" not in text
+        and "work_item_id = uuid.uuid5(execution_id, info.activity_id)" in text
+    ):
+        return "AO uses shared activity identity; lookup patch is not needed"
     if OLD not in text:
         raise SystemExit(
             f"{path}: _lookup_activity_execution_id changed; update "
