@@ -1,13 +1,53 @@
+---
 name: Release
 
-on:
+"on":
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  publish-client:
+    name: Publish execution-plane-client to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/execution-plane-client/
+    permissions:
+      id-token: write  # mandatory for trusted publishing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history so hatch-vcs can read the tag; a shallow checkout
+          # of an annotated tag works, but depth 0 removes all doubt.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688b # v6
+
+      - name: Build the client distribution
+        run: uv build ./src/execution_plane_client/
+
+      - name: Verify the built version matches the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          expected="${TAG#v}"
+          ls dist/
+          if ! ls "dist/execution_plane_client-${expected}"* >/dev/null 2>&1; then
+            echo "ERROR: no dist artifact for version ${expected} (tag ${TAG})." >&2
+            echo "hatch-vcs probably fell back (missing git metadata?) or the tag" >&2
+            echo "does not match the derived version. Refusing to publish." >&2
+            exit 1
+          fi
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@ed0c5f2b7211eb9e215ace18b7f9aa2f5e268aee # release/v1
+
   publish-image:
     runs-on: ubuntu-latest
     permissions:
