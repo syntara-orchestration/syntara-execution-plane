@@ -71,16 +71,16 @@ def test_submit_cli_preserves_image_override_and_waits_for_work(monkeypatch, cap
     assert "reconciliation_required" in capsys.readouterr().out
 
 
-def test_cluster_tool_submits_binding_command_and_queries_resource(monkeypatch):
+def test_cluster_tool_submits_provision_command(monkeypatch):
     requests = []
 
     def request(method, url, token, body=None) -> tuple[int, dict]:
         requests.append((method, url, body))
-        return (200, {"desired_revision": 3}) if method == "GET" else (202, {"received": True})
+        return 202, {"received": True}
 
     monkeypatch.setattr(deploy_kind_execution_target, "ep_request", request)
     integration_id = uuid4()
-    deploy_kind_execution_target.upsert_binding(
+    deploy_kind_execution_target.provision_cluster(
         "https://ep.test",
         "token",
         integration_id,
@@ -90,12 +90,12 @@ def test_cluster_tool_submits_binding_command_and_queries_resource(monkeypatch):
         credential_ref=uuid4(),
         ca_certificate=None,
     )
-    assert requests[0][:2] == ("GET", f"https://ep.test/v1/clusters/{integration_id}")
-    method, url, body = requests[1]
+    assert len(requests) == 1
+    method, url, body = requests[0]
     assert (method, url) == ("POST", "https://ep.test/v1/commands")
     message = MessageEnvelope.model_validate(body)
     CommandCatalog().validate(message)
     assert message.command.command_type == "cluster.provision"
-    assert message.command.payload["desired_revision"] == 4
+    assert message.command.payload["desired_revision"] == 1
     assert message.command.payload["resource_key"] == str(integration_id)
     assert message.command.payload["is_default"] is True
