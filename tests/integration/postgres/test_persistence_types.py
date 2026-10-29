@@ -22,6 +22,7 @@ from execution_plane.api.main import create_app
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.execution_target import ExecutionTarget as _ExecutionTarget  # noqa: F401
+from execution_plane.models.sqlmodel_types import UUIDListJSONB
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.errors import DuplicateWorkItemError
 from execution_plane.work_item.work_item_store import WorkStore
@@ -40,7 +41,7 @@ async def test_project_scope_and_status_round_trip_through_postgresql() -> None:
         table_name,
         metadata,
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("project_ids", Cluster.__table__.c.project_ids.type),
+        sa.Column("project_ids", UUIDListJSONB()),
         sa.Column("status", WorkItem.__table__.c.status.type, nullable=False),
         schema=EP_SCHEMA,
     )
@@ -76,8 +77,8 @@ async def test_project_scope_and_status_round_trip_through_postgresql() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
-    """Read project UUIDs and a WorkItem enum back through mapped EP rows."""
+async def test_mapped_rows_reload_cluster_and_work_item_status() -> None:
+    """Read a mapped Cluster and a WorkItem enum back through mapped EP rows."""
     database_url = os.environ.get("EP_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("EP_TEST_DATABASE_URL must point to a disposable, migrated EP database")
@@ -85,7 +86,6 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
     engine = create_async_engine(database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     cluster_id = uuid.uuid4()
-    project_ids = [uuid.uuid4(), uuid.uuid4()]
     now = datetime.now(UTC)
     claim_owner_id = uuid.uuid4()
     work_item_id: uuid.UUID | None = None
@@ -99,7 +99,6 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
                     endpoint="https://cluster.invalid",
                     credential_ref=uuid4(),
                     status=ClusterStatus.ACTIVE,
-                    project_ids=project_ids,
                     created_by=uuid.uuid4(),
                     updated_by=uuid.uuid4(),
                     created_at=now,
@@ -125,7 +124,6 @@ async def test_mapped_rows_reload_project_ids_and_work_item_status() -> None:
             restored_item = await session.get(WorkItem, work_item_id)
 
         assert cluster is not None
-        assert cluster.project_ids == project_ids
         assert restored_item is not None
         assert restored_item.status is WorkItemStatus.CLAIMED
 

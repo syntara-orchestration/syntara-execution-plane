@@ -50,7 +50,6 @@ def query_column(model: type[SQLModel], field: str) -> Any:  # noqa: ANN401 - SQ
     """Resolve public aliases like BaseService._apply_standard_filters special field handlers.
 
     Origin: syntara.core.services.base.BaseService._apply_standard_filters.
-    EP maps cluster id/desired_revision to their persisted binding columns.
     """
     return getattr(model, getattr(model, "__query_field_aliases__", {}).get(field, field))
 

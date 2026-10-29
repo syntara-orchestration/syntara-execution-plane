@@ -179,7 +179,7 @@ async def test_create_preserves_database_rejection_for_a_duplicate_endpoint() ->
     store = _store(session)
 
     with pytest.raises(IntegrityError):
-        await store.create("cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
+        await store.create(uuid.uuid4(), "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
 
     assert session.rollbacks == 1
     await store.close()
@@ -510,46 +510,4 @@ async def test_get_for_client_returns_none_when_cluster_belongs_to_another_clien
     result = await store.get_for_client("owner-b", cluster.id)
 
     assert result is None
-    await store.close()
-
-
-@pytest.mark.asyncio
-async def test_update_applies_project_ids_and_source_revision() -> None:
-    cluster = _cluster()
-    project_id = uuid.uuid4()
-    session = _Session(cluster=cluster)
-    store = _store(session)
-
-    await store.update(cluster.id, updated_by=uuid.uuid4(), project_ids=[project_id], source_revision=5)
-
-    assert cluster.project_ids == [project_id]
-    assert cluster.source_revision == 5
-    await store.close()
-
-
-@pytest.mark.asyncio
-async def test_update_clears_project_ids_when_none_passed_explicitly() -> None:
-    cluster = _cluster()
-    cluster.project_ids = [uuid.uuid4()]
-    session = _Session(cluster=cluster)
-    store = _store(session)
-
-    await store.update(cluster.id, updated_by=uuid.uuid4(), project_ids=None)
-
-    assert cluster.project_ids is None
-    await store.close()
-
-
-@pytest.mark.asyncio
-async def test_reactivate_applies_project_ids_and_source_revision() -> None:
-    cluster = _cluster(status=ClusterStatus.DRAINING)
-    cluster.enabled = False
-    project_id = uuid.uuid4()
-    session = _Session(cluster=cluster)
-    store = _store(session)
-
-    await store.reactivate(cluster.id, updated_by=uuid.uuid4(), project_ids=[project_id], source_revision=7)
-
-    assert cluster.project_ids == [project_id]
-    assert cluster.source_revision == 7
     await store.close()
