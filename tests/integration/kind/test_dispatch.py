@@ -47,6 +47,13 @@ _WORKLOAD_WAIT_SECONDS = 5
 _CANCEL_WORKLOAD_WAIT_SECONDS = 15
 _JOB_WAIT_TIMEOUT_SECONDS = 30
 _DISPATCH_CLEANUP_TIMEOUT_SECONDS = 30
+# A short execution budget with a much longer script so the step reliably
+# outruns its timeout without any cancellation request. The dispatch must then
+# finish well inside the sleep window: if it took as long as the sleep, the
+# timeout never preempted the step.
+_TIMEOUT_WORKLOAD_BUDGET_SECONDS = 5
+_TIMEOUT_WORKLOAD_SLEEP_SECONDS = 120
+_TIMEOUT_MAX_ELAPSED_SECONDS = 60
 
 
 async def _read_job(batch_api: BatchV1Api, job_name: str, namespace: str) -> V1Job | None:
@@ -458,6 +465,81 @@ async def test_work_item_cancel_reaches_cancelled(
     assert final_item.result is not None
     assert final_item.result["cancelled"] is True
     assert final_item.result["execution_started"] is True
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_work_item_timeout_reaches_terminal_status(
+    ep_cluster: Cluster,
+    kubernetes_batch_api: BatchV1Api,
+    integration_credential_resolver: CredentialResolver,
+) -> None:
+    """A workload that exceeds its timeout budget reaches a terminal status.
+
+    Dispatch a script that sleeps well past a short ``timeout_seconds`` budget,
+    with no cancellation request, and assert the terminal status it settles into.
+    Also assert the dispatch finishes well inside the sleep window — otherwise the
+    timeout never actually preempted the step and the script simply ran to its end.
+    """
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_ep_settings()
+    client_id = "ep-it-timeout"
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        target = await _first_target(target_store, ep_cluster.id)
+        assert isinstance(target.placement, KubernetesPlacement)
+        namespace = target.placement.namespace
+
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+        ) as work:
+            dispatched = await _dispatch_item(
+                work,
+                work.worker_managers,
+                client_id=client_id,
+                payload=build_payload(
+                    language="bash",
+                    code=f"sleep {_TIMEOUT_WORKLOAD_SLEEP_SECONDS}",
+                    timeout_seconds=_TIMEOUT_WORKLOAD_BUDGET_SECONDS,
+                    environment={},
+                    image=_NODE_IMAGE,
+                ),
+            )
+            item = dispatched.item
+            assigned = dispatched.assigned
+            job_name = dispatched.job_name
+            core_api = CoreV1Api(kubernetes_batch_api.api_client)
+
+            started = time.monotonic()
+            await _process_item(assigned, work.store, target_store, work.worker_managers, settings)
+            elapsed = time.monotonic() - started
+
+            await _assert_job_cleaned_up(
+                kubernetes_batch_api,
+                core_api,
+                job_name,
+                namespace,
+            )
+            final_item = await work.store.get(item.id, client_id=client_id)
+
+    # The timeout must have preempted the step: the dispatch has to settle well
+    # before the script's own sleep would have ended, or it never actually fired.
+    assert elapsed < _TIMEOUT_MAX_ELAPSED_SECONDS, (
+        f"Dispatch took {elapsed:.1f}s for a {_TIMEOUT_WORKLOAD_BUDGET_SECONDS}s "
+        f"budget; the {_TIMEOUT_WORKLOAD_SLEEP_SECONDS}s script was not preempted"
+    )
+
+    assert final_item is not None
+    assert final_item.status is WorkItemStatus.FAILED, (
+        f"Expected FAILED but got {final_item.status}; result={final_item.result}"
+    )
 
 
 _PARALLEL_SLEEP_SECONDS = 4
