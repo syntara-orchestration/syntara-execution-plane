@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import threading
 import time
-from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from syntara_plugin.runtime import (
@@ -79,6 +78,15 @@ def _monitor_cancellation(
     stopped: threading.Event,
     grace: int,
 ) -> None:
+    """Cancel an in-flight invocation, force-closing the channel if it won't stop.
+
+    Polls ``cancelled`` until ``invoke`` signals ``stopped``. On a cancellation
+    request it sends a Cancel RPC, then waits up to ``grace`` for a graceful
+    terminal. If the step ignores it, closing the channel interrupts the stream
+    so ``invoke`` unwinds and ``run_job`` can delete the Job. Worst-case cancel
+    latency is therefore ~``grace`` plus the Pod's terminationGracePeriodSeconds,
+    backstopped by the Job's activeDeadlineSeconds.
+    """
     while not stopped.wait(0.05):
         if not cancelled.is_set():
             continue
@@ -87,8 +95,9 @@ def _monitor_cancellation(
         except (ContainerRemoteError, ValueError):
             accepted = False
         if not accepted or not stopped.wait(grace):
-            # Each cold-start attempt owns this channel exclusively. Closing it
-            # interrupts the SDK's iterator so transport cleanup can kill the Pod.
+            # Closing the channel only interrupts EP's own stream iterator; it
+            # does not reach into the Pod. Unblocking the iterator lets invoke
+            # unwind so run_job's cleanup can delete the Job, which kills the Pod.
             channel.close()
         return
 
@@ -139,7 +148,11 @@ def invoke(
     watcher.start()
     result: ContainerResult | None = None
     try:
-        for event in client.stream(request, timeout_seconds=data.timeout_seconds + grace):
+        # The SDK clamps the Execute deadline to the invocation's own
+        # timeout_seconds, so transport cannot outlive the step's contract
+        # budget. The cancellation grace window is enforced by the watcher
+        # (Cancel + channel close) and run_job's Job deletion, not the wire.
+        for event in client.stream(request, timeout_seconds=data.timeout_seconds):
             if result is not None:
                 message = "Workload returned events after its terminal result"
                 raise WorkloadRpcError(message)
@@ -169,5 +182,7 @@ def invoke(
     finally:
         stopped.set()
         watcher.join(timeout=6)
-        with suppress(Exception):
-            channel.close()
+        # The caller (run_job) owns the channel via its `with` block and always
+        # closes it on exit. We deliberately do not close it here; only the
+        # cancellation watcher force-closes early, and only to interrupt a stuck
+        # stream.
