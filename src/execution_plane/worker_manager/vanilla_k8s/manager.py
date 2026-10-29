@@ -288,6 +288,10 @@ class VanillaK8sWorkerManager:
         try:
             return _map_result(frame, output_config), WorkItemStatus.COMPLETED
         except NodeExecutionError as exc:
+            # CANCELLED status is reserved for an EP-requested cancellation
+            # (cancelled is set). A workload that self-cancels — e.g. its own
+            # deadline tripping the server-side cancellation callback — is an
+            # abnormal termination and is recorded as FAILED, not CANCELLED.
             if cancelled.is_set() and exc.error_type == "CancelledError":
                 result = {"cancelled": True, "execution_started": True, "reason": str(exc)}
                 status = WorkItemStatus.CANCELLED
