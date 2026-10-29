@@ -143,8 +143,8 @@ jobs:
         run: make secrets
 
       # Stand up a throwaway kind cluster. deploy_kind_execution_target.py registers
-      # it via the EP API; the EP worker reconciles the binding through the full
-      # production ClusterBindingReconciler path.
+      # it via the EP API, which provisions the Cluster and its default
+      # ExecutionTarget synchronously through the production command handler.
       - name: Create kind cluster
         uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
