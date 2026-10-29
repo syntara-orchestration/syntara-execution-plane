@@ -96,6 +96,5 @@ def test_cluster_tool_submits_provision_command(monkeypatch):
     message = MessageEnvelope.model_validate(body)
     CommandCatalog().validate(message)
     assert message.command.command_type == "cluster.provision"
-    assert message.command.payload["desired_revision"] == 1
-    assert message.command.payload["resource_key"] == str(integration_id)
+    assert message.command.payload["resource_id"] == str(integration_id)
     assert message.command.payload["is_default"] is True

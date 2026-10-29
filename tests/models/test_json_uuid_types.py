@@ -4,15 +4,13 @@ import uuid
 
 from sqlalchemy.dialects import postgresql
 
-from execution_plane.models.cluster import Cluster
 from execution_plane.models.sqlmodel_types import UUIDListJSONB
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 
 
-def test_project_scope_column_serializes_and_restores_uuid_lists() -> None:
-    model = Cluster
+def test_uuid_list_column_serializes_and_restores_uuid_lists() -> None:
     project_ids = [uuid.uuid4(), uuid.uuid4()]
-    column_type = model.__table__.c.project_ids.type
+    column_type = UUIDListJSONB()
     dialect = postgresql.dialect()
 
     stored_value = column_type.process_bind_param(project_ids, dialect)
@@ -22,8 +20,8 @@ def test_project_scope_column_serializes_and_restores_uuid_lists() -> None:
     assert restored_value == project_ids
 
 
-def test_project_scope_none_uses_sql_null_and_empty_list_remains_empty() -> None:
-    column_type = Cluster.__table__.c.project_ids.type
+def test_uuid_list_none_uses_sql_null_and_empty_list_remains_empty() -> None:
+    column_type = UUIDListJSONB()
     dialect = postgresql.dialect()
 
     assert isinstance(column_type, UUIDListJSONB)

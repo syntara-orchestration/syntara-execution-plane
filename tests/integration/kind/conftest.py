@@ -98,7 +98,8 @@ async def ep_cluster(migrated_database: str) -> Cluster:
         pytest.skip("EP_IT_K8S_ENDPOINT and EP_IT_K8S_TOKEN must be set for cluster dispatch tests")
 
     async with ClusterStore.from_database_url(migrated_database) as cluster_store:
-        cluster = await cluster_store.get_by_source(_KIND_CLIENT_ID, _KIND_SOURCE_INTEGRATION_ID)
+        # The cluster's physical id is the caller-supplied source integration UUID.
+        cluster = await cluster_store.get_for_client(_KIND_CLIENT_ID, _KIND_SOURCE_INTEGRATION_ID)
 
     if cluster is None or cluster.status is not ClusterStatus.ACTIVE:
         status = cluster.status if cluster else "not registered"

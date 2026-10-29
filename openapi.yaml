@@ -311,15 +311,6 @@ paths:
         description: 'Filter by is_default (is_default=value or is_default[operator]=value).
           Operators: eq, in, isnull. Comma-separated values use OR; different fields/operators
           use AND.'
-      - name: source_integration_id
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by source_integration_id (source_integration_id=value
-          or source_integration_id[operator]=value). Operators: eq, in, gt, gte, lt,
-          lte, isnull. Comma-separated values use OR; different fields/operators use
-          AND.'
       - name: labels[key]
         in: query
         required: false
@@ -588,12 +579,6 @@ components:
           type: string
           format: uuid
           title: Id
-        source_integration_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Source Integration Id
         name:
           type: string
           title: Name
@@ -619,14 +604,6 @@ components:
             type: string
           type: object
           title: Labels
-        project_ids:
-          anyOf:
-          - items:
-              type: string
-              format: uuid
-            type: array
-          - type: 'null'
-          title: Project Ids
         created_at:
           type: string
           format: date-time
@@ -638,7 +615,6 @@ components:
       type: object
       required:
       - id
-      - source_integration_id
       - name
       - endpoint
       - status
@@ -646,7 +622,6 @@ components:
       - enabled
       - is_default
       - labels
-      - project_ids
       - created_at
       - updated_at
       title: ClusterRead
@@ -1027,31 +1002,22 @@ components:
       description: Cancel an existing work command, whose UUID is its work-item UUID.
     ClusterDelete:
       properties:
-        resource_key:
+        resource_id:
           type: string
           format: uuid
-          title: Resource Key
-        desired_revision:
-          type: integer
-          exclusiveMinimum: 0.0
-          title: Desired Revision
+          title: Resource Id
       additionalProperties: false
       type: object
       required:
-      - resource_key
-      - desired_revision
+      - resource_id
       title: ClusterDelete
-      description: Disable an existing binding at the requested desired-state revision.
+      description: Disable and drain an existing cluster addressed by id.
     ClusterProvision:
       properties:
-        resource_key:
+        resource_id:
           type: string
           format: uuid
-          title: Resource Key
-        desired_revision:
-          type: integer
-          exclusiveMinimum: 0.0
-          title: Desired Revision
+          title: Resource Id
         name:
           type: string
           maxLength: 255
@@ -1061,12 +1027,6 @@ components:
           type: string
           maxLength: 2048
           title: Endpoint
-        namespace:
-          type: string
-          maxLength: 63
-          minLength: 1
-          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-          title: Namespace
         credential_ref:
           type: string
           format: uuid
@@ -1077,14 +1037,6 @@ components:
             maxLength: 65536
           - type: 'null'
           title: Ca Certificate
-        project_ids:
-          anyOf:
-          - items:
-              type: string
-              format: uuid
-            type: array
-          - type: 'null'
-          title: Project Ids
         labels:
           additionalProperties:
             type: string
@@ -1101,24 +1053,18 @@ components:
       additionalProperties: false
       type: object
       required:
-      - resource_key
-      - desired_revision
+      - resource_id
       - name
       - endpoint
-      - namespace
       - credential_ref
       title: ClusterProvision
-      description: Provision through the same binding and default-target reconciler.
+      description: Provision through the same cluster and default-target reconciler.
     ClusterRegister:
       properties:
-        resource_key:
+        resource_id:
           type: string
           format: uuid
-          title: Resource Key
-        desired_revision:
-          type: integer
-          exclusiveMinimum: 0.0
-          title: Desired Revision
+          title: Resource Id
         name:
           type: string
           maxLength: 255
@@ -1128,12 +1074,6 @@ components:
           type: string
           maxLength: 2048
           title: Endpoint
-        namespace:
-          type: string
-          maxLength: 63
-          minLength: 1
-          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-          title: Namespace
         credential_ref:
           type: string
           format: uuid
@@ -1144,14 +1084,6 @@ components:
             maxLength: 65536
           - type: 'null'
           title: Ca Certificate
-        project_ids:
-          anyOf:
-          - items:
-              type: string
-              format: uuid
-            type: array
-          - type: 'null'
-          title: Project Ids
         labels:
           additionalProperties:
             type: string
@@ -1168,24 +1100,19 @@ components:
       additionalProperties: false
       type: object
       required:
-      - resource_key
-      - desired_revision
+      - resource_id
       - name
       - endpoint
-      - namespace
       - credential_ref
       title: ClusterRegister
-      description: Create or replace the complete desired configuration of a binding.
+      description: Create or idempotently replace a cluster's desired configuration
+        by id.
     ClusterUpdate:
       properties:
-        resource_key:
+        resource_id:
           type: string
           format: uuid
-          title: Resource Key
-        desired_revision:
-          type: integer
-          exclusiveMinimum: 0.0
-          title: Desired Revision
+          title: Resource Id
         name:
           anyOf:
           - type: string
@@ -1196,11 +1123,6 @@ components:
           - type: string
           - type: 'null'
           title: Endpoint
-        namespace:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Namespace
         credential_ref:
           anyOf:
           - type: string
@@ -1212,14 +1134,6 @@ components:
           - type: string
           - type: 'null'
           title: Ca Certificate
-        project_ids:
-          anyOf:
-          - items:
-              type: string
-              format: uuid
-            type: array
-          - type: 'null'
-          title: Project Ids
         labels:
           anyOf:
           - additionalProperties:
@@ -1240,10 +1154,9 @@ components:
       additionalProperties: false
       type: object
       required:
-      - resource_key
-      - desired_revision
+      - resource_id
       title: ClusterUpdate
-      description: Patch a binding; only CA and project grants support explicit null.
+      description: Patch a cluster by id; only CA supports explicit null.
     Command:
       oneOf:
       - $ref: '#/components/schemas/ClusterDeleteCommandV1'

@@ -1,4 +1,4 @@
-"""Cluster commands provision and manage clusters using domain lifecycle operations."""
+"""Cluster commands provision and manage clusters, addressed by a caller-supplied id."""
 
 import hashlib
 import uuid
@@ -11,6 +11,7 @@ from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDisc
 from execution_plane.cluster.cluster_store import ClusterStore, DefaultClusterError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
+from execution_plane.config import get_ep_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.labels import user_labels
 from execution_plane.models.cluster import Cluster
@@ -36,7 +37,6 @@ class _ClusterUpdateFields(TypedDict, total=False):
     ca_certificate: str
     enabled: bool
     labels: dict[str, str]
-    project_ids: list[uuid.UUID] | None
 
 
 class ResourceNotFoundError(LookupError):
@@ -50,14 +50,14 @@ def _validated_payload[T: CommandPayload](payload: CommandPayload, expected: typ
     return payload
 
 
-async def _advisory_lock(session: AsyncSession, client_id: str, resource_key: object) -> None:
-    """Acquire a per-integration advisory lock for the duration of the transaction."""
-    digest = hashlib.sha256(f"cluster:{client_id}:{resource_key}".encode()).digest()
+async def _advisory_lock(session: AsyncSession, client_id: str, resource_id: uuid.UUID) -> None:
+    """Acquire a per-cluster advisory lock for the duration of the transaction."""
+    digest = hashlib.sha256(f"cluster:{client_id}:{resource_id}".encode()).digest()
     await session.execute(select(func.pg_advisory_xact_lock(int.from_bytes(digest[:8], signed=True))))
 
 
-def _cluster_result(cluster: Cluster, revision: int) -> HandlingResult:
-    return HandlingResult(ResourceReference(kind="cluster", resource_id=cluster.id, revision=revision))
+def _cluster_result(cluster: Cluster) -> HandlingResult:
+    return HandlingResult(ResourceReference(kind="cluster", resource_id=cluster.id))
 
 
 def _build_stores(context: EPCommandContext) -> tuple[ClusterStore, ExecutionTargetStore, ClusterRegistrar]:
@@ -92,38 +92,35 @@ class ClusterProvisionCommandHandler:
 
 
 async def _provision_cluster(command: ClusterRegister, context: EPCommandContext) -> HandlingResult:
-    """Shared provision path for register and provision commands."""
+    """Idempotently create or update the cluster at its caller-supplied id.
+
+    The id is the caller's physical Cluster UUID (shared with its AO Integration).
+    Reapplying the same id is a safe upsert; a id owned by another client is rejected.
+    """
     desired_labels = user_labels(command.labels)
     cluster_store, _, registrar = _build_stores(context)
     sessions = async_sessionmaker(context.engine, expire_on_commit=False)
 
-    # Check revision under advisory lock to serialise concurrent requests.
+    # Serialise concurrent requests for the same id and reject cross-client adoption.
     async with sessions.begin() as session:
-        await _advisory_lock(session, context.client_id, command.resource_key)
-        existing = await cluster_store.get_by_source(context.client_id, command.resource_key)
-        if existing is not None:
-            if command.desired_revision < existing.source_revision:
-                raise ProtocolConflict
-            if command.desired_revision == existing.source_revision:
-                return _cluster_result(existing, command.desired_revision)
-    # Provision (create or update) outside the advisory-lock transaction.
-    # Concurrent creates for the same integration are prevented by the unique
-    # constraint on (source_client_id, source_integration_id).
+        await _advisory_lock(session, context.client_id, command.resource_id)
+        existing = await cluster_store.get(command.resource_id)
+        if existing is not None and existing.source_client_id != context.client_id:
+            raise ProtocolConflict
+
     cluster = await registrar.provision(
+        command.resource_id,
         command.name,
         command.endpoint,
         command.credential_ref,
-        KubernetesPlacement(namespace=command.namespace),
+        KubernetesPlacement(namespace=get_ep_settings().default_workload_namespace),
         SYSTEM_ACTOR_ID,
         desired_labels,
         source_client_id=context.client_id,
-        source_integration_id=command.resource_key,
-        source_revision=command.desired_revision,
-        project_ids=command.project_ids,
         is_default=command.is_default,
         ca_certificate=command.ca_certificate,
     )
-    return _cluster_result(cluster, command.desired_revision)
+    return _cluster_result(cluster)
 
 
 def _cluster_update_fields(command: ClusterUpdate) -> _ClusterUpdateFields:
@@ -141,13 +138,11 @@ def _cluster_update_fields(command: ClusterUpdate) -> _ClusterUpdateFields:
         kwargs["enabled"] = command.enabled
     if command.labels is not None:
         kwargs["labels"] = user_labels(command.labels)
-    if "project_ids" in command.model_fields_set:
-        kwargs["project_ids"] = command.project_ids
     return kwargs
 
 
 class ClusterUpdateCommandHandler:
-    """Apply a partial update to an existing Cluster."""
+    """Apply a partial update to an existing Cluster addressed by id."""
 
     async def handle(
         self, message: MessageEnvelope, payload: CommandPayload, context: EPCommandContext
@@ -156,24 +151,16 @@ class ClusterUpdateCommandHandler:
         del message
         command = _validated_payload(payload, ClusterUpdate)
         cluster_store, _, _ = _build_stores(context)
-        sessions = async_sessionmaker(context.engine, expire_on_commit=False)
 
-        async with sessions.begin() as session:
-            await _advisory_lock(session, context.client_id, command.resource_key)
-            existing = await cluster_store.get_by_source(context.client_id, command.resource_key)
-            if existing is None:
-                raise ResourceNotFoundError
-            if command.desired_revision <= existing.source_revision:
-                if command.desired_revision == existing.source_revision:
-                    return _cluster_result(existing, command.desired_revision)
-                raise ProtocolConflict
-            if (command.enabled is False or command.is_default is False) and existing.is_default:
-                raise DefaultClusterError
+        existing = await cluster_store.get_for_client(context.client_id, command.resource_id)
+        if existing is None:
+            raise ResourceNotFoundError
+        if (command.enabled is False or command.is_default is False) and existing.is_default:
+            raise DefaultClusterError
 
         cluster = await cluster_store.update(
             existing.id,
             updated_by=SYSTEM_ACTOR_ID,
-            source_revision=command.desired_revision,
             **_cluster_update_fields(command),
         )
 
@@ -182,11 +169,11 @@ class ClusterUpdateCommandHandler:
         elif command.is_default is None:
             cluster = await cluster_store.ensure_default(existing.id, SYSTEM_ACTOR_ID)
 
-        return _cluster_result(cluster, command.desired_revision)
+        return _cluster_result(cluster)
 
 
 class ClusterDeleteCommandHandler:
-    """Disable and drain an existing Cluster."""
+    """Disable and drain an existing Cluster addressed by id."""
 
     async def handle(
         self, message: MessageEnvelope, payload: CommandPayload, context: EPCommandContext
@@ -195,19 +182,10 @@ class ClusterDeleteCommandHandler:
         del message
         command = _validated_payload(payload, ClusterDelete)
         cluster_store, _, _ = _build_stores(context)
-        sessions = async_sessionmaker(context.engine, expire_on_commit=False)
 
-        async with sessions.begin() as session:
-            await _advisory_lock(session, context.client_id, command.resource_key)
-            existing = await cluster_store.get_by_source(context.client_id, command.resource_key)
-            if existing is None:
-                raise ResourceNotFoundError
-            if command.desired_revision < existing.source_revision:
-                raise ProtocolConflict
-            if command.desired_revision == existing.source_revision:
-                # Idempotent: already at this revision, just return current state.
-                return _cluster_result(existing, command.desired_revision)
+        existing = await cluster_store.get_for_client(context.client_id, command.resource_id)
+        if existing is None:
+            raise ResourceNotFoundError
 
         cluster = await cluster_store.request_delete(existing.id, SYSTEM_ACTOR_ID)
-        await cluster_store.update(existing.id, updated_by=SYSTEM_ACTOR_ID, source_revision=command.desired_revision)
-        return _cluster_result(cluster, command.desired_revision)
+        return _cluster_result(cluster)

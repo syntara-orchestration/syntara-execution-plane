@@ -383,16 +383,14 @@ desired = payload["desired"]
 base = "https://127.0.0.1:8443"
 headers = {"Authorization": f"Bearer {token}"}
 with httpx.Client(verify=False, timeout=30.0) as client:
-    # Clusters are keyed by cluster.id now and looked up by the stable
-    # source_integration_id via filter. Provisioning is synchronous and
-    # idempotent at the same revision; the Kind DB is fresh, so revision 1.
-    revision = 1
+    # The cluster's physical id is this caller-supplied UUID (shared with the AO
+    # Integration); provisioning upserts that row and is synchronous and
+    # idempotent. Namespace left the cluster command (it belongs on the
+    # ExecutionTarget placement / EP_DEFAULT_WORKLOAD_NAMESPACE).
     envelope = ClusterProvision(
-        resource_key=sid,
-        desired_revision=revision,
+        resource_id=sid,
         name=desired["name"],
         endpoint=desired["endpoint"],
-        namespace=desired["namespace"],
         credential_ref=uuid.UUID(desired["credential_ref"]),
         ca_certificate=desired["ca_certificate"],
         enabled=True,
@@ -409,26 +407,24 @@ with httpx.Client(verify=False, timeout=30.0) as client:
     )
     if posted.status_code >= 400:
         raise SystemExit(f"cluster.provision failed ({posted.status_code}): {posted.text}")
-    print(f"upserted cluster {sid} revision {revision} status={posted.status_code}")
+    print(f"upserted cluster {sid} status={posted.status_code}")
     deadline = time.time() + 90
     while time.time() < deadline:
-        status, message = "unknown", ""
+        # The cluster's physical id is this caller-supplied UUID, so address it
+        # by id; the source_integration_id filter was removed.
         got = client.get(
-            f"{base}/v1/clusters",
-            params={"source_integration_id": str(sid)},
+            f"{base}/v1/clusters/{sid}",
             headers=headers,
         )
         if got.status_code == 200:
-            resources = got.json().get("resources", [])
-            if resources:
-                doc = resources[0]
-                status = doc.get("status") or "unknown"
-                message = doc.get("status_message") or ""
-                print(f"cluster status: {status}")
-                if status == "active":
-                    break
-                if status == "error":
-                    raise SystemExit(message or "cluster provisioning failed")
+            doc = got.json()
+            status = doc.get("status") or "unknown"
+            message = doc.get("status_message") or ""
+            print(f"cluster status: {status}")
+            if status == "active":
+                break
+            if status == "error":
+                raise SystemExit(message or "cluster provisioning failed")
         time.sleep(3)
     else:
         raise SystemExit(f"timed out waiting for cluster {sid} to become active")
@@ -519,6 +515,16 @@ echo "AO JWT issuer: ${AO_JWT_ISSUER}"
 
 _allow_ep_callback_identity
 _configure_ep_callback_url
+
+# Namespace left the cluster command, so the auto-provisioned default target now
+# takes its namespace from EP_DEFAULT_WORKLOAD_NAMESPACE (default "default"). The
+# provision handler runs synchronously in the API pod, so set it there before
+# registering, otherwise the default target lands in "default" where the
+# dispatcher RBAC is absent and Job creation 403s.
+echo "=== Set default workload namespace on ${EP_API_DEPLOY} ==="
+kubectl set env "deploy/${EP_API_DEPLOY}" -n "${AO_NAMESPACE}" "EP_DEFAULT_WORKLOAD_NAMESPACE=${NAMESPACE}"
+kubectl rollout status "deploy/${EP_API_DEPLOY}" -n "${AO_NAMESPACE}" --timeout=180s
+
 _register_cluster_binding "${AO_JWT_ISSUER}" "${CREDENTIAL_REF}"
 _prepull_node_image "${NODE_IMAGE}"
 _enable_script_dispatch "${NODE_IMAGE}"

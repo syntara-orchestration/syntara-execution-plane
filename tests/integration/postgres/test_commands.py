@@ -49,45 +49,40 @@ async def test_cluster_commands_provision_and_manage_clusters_directly(command_c
     client, sessions = command_client
     key = uuid4()
     payload = {
-        "resource_key": str(key),
-        "desired_revision": 1,
+        "resource_id": str(key),
         "name": "test",
         "endpoint": "https://cluster.test",
-        "namespace": "ep",
         "credential_ref": str(uuid4()),
     }
     created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert created.status_code == 202, created.text
     cluster_id = UUID(created.json()["resource"]["resource_id"])
+    assert cluster_id == key
     async with sessions() as session:
         cluster = await session.get(Cluster, cluster_id)
         assert cluster.status.value == "active"
-        assert cluster.source_revision == 1
         assert "private-secret" not in repr(cluster)
 
-    # Idempotent repeat at same revision.
+    # Idempotent repeat on the same resource_id upserts the same cluster.
     repeated = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert repeated.status_code == 202
     assert UUID(repeated.json()["resource"]["resource_id"]) == cluster_id
 
     update = await client.post(
         "/v1/commands",
-        json=command_message("cluster.update", {"resource_key": str(key), "desired_revision": 2, "name": "updated"}),
+        json=command_message("cluster.update", {"resource_id": str(key), "name": "updated"}),
     )
     assert update.status_code == 202
 
-    # Stale register after update → conflict.
-    stale = await client.post("/v1/commands", json=command_message("cluster.register", payload))
-    assert stale.status_code == 409
+    # Re-registering the same resource_id (owned by the same client) remains an idempotent upsert.
+    reapplied = await client.post("/v1/commands", json=command_message("cluster.register", payload))
+    assert reapplied.status_code == 202
 
     async with sessions() as session:
         cluster = await session.get(Cluster, cluster_id)
-        assert cluster.name == "updated"
-        assert cluster.source_revision == 2
+        assert cluster.name == "test"
 
-    deleted = await client.post(
-        "/v1/commands", json=command_message("cluster.delete", {"resource_key": str(key), "desired_revision": 3})
-    )
+    deleted = await client.post("/v1/commands", json=command_message("cluster.delete", {"resource_id": str(key)}))
     assert deleted.status_code == 202
     read = await client.get(f"/v1/clusters/{cluster_id}")
     assert read.status_code == 200
@@ -165,11 +160,9 @@ async def test_concurrent_cluster_creates_result_in_exactly_one_cluster(command_
     client, sessions = command_client
     key = uuid4()
     payload = {
-        "resource_key": str(key),
-        "desired_revision": 1,
+        "resource_id": str(key),
         "name": "concurrent",
         "endpoint": "https://cluster.test",
-        "namespace": "ep",
         "credential_ref": str(uuid4()),
     }
     responses = await asyncio.gather(
@@ -179,9 +172,7 @@ async def test_concurrent_cluster_creates_result_in_exactly_one_cluster(command_
     assert statuses in ([202, 202], [202, 409])
     async with sessions() as session:
         result = await session.execute(
-            select(Cluster)
-            .where(col(Cluster.source_client_id) == "ao")
-            .where(col(Cluster.source_integration_id) == key)
+            select(Cluster).where(col(Cluster.source_client_id) == "ao").where(col(Cluster.id) == key)
         )
         clusters = list(result.scalars().all())
     assert len(clusters) == 1
@@ -190,45 +181,40 @@ async def test_concurrent_cluster_creates_result_in_exactly_one_cluster(command_
 async def test_cluster_update_preserves_omitted_fields_and_rejects_null_required_fields(command_client):
     client, sessions = command_client
     key = uuid4()
-    project = uuid4()
     payload = {
-        "resource_key": str(key),
-        "desired_revision": 1,
+        "resource_id": str(key),
         "name": "test",
         "endpoint": "https://cluster.test",
-        "namespace": "ep",
         "credential_ref": str(uuid4()),
-        "project_ids": [str(project)],
     }
     created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
     assert created.status_code == 202
     cluster_id = UUID(created.json()["resource"]["resource_id"])
 
-    patch = {"resource_key": str(key), "desired_revision": 2, "project_ids": None}
+    # ca_certificate is the only field that may be nulled explicitly; omitted fields are preserved.
+    patch = {"resource_id": str(key), "ca_certificate": None}
     assert (await client.post("/v1/commands", json=command_message("cluster.update", patch))).status_code == 202
     async with sessions() as session:
         cluster = await session.get(Cluster, cluster_id)
-        assert cluster.project_ids is None
-        assert cluster.source_revision == 2
+        assert cluster.name == "test"
+        assert cluster.endpoint == "https://cluster.test"
 
     invalid = await client.post(
-        "/v1/commands", json=command_message("cluster.update", {**patch, "desired_revision": 3, "namespace": None})
+        "/v1/commands", json=command_message("cluster.update", {"resource_id": str(key), "name": None})
     )
     assert invalid.status_code == 422
     async with sessions() as session:
         cluster = await session.get(Cluster, cluster_id)
-        assert cluster.source_revision == 2
+        assert cluster.name == "test"
 
 
 async def test_cluster_commands_cleanse_internal_labels(command_client):
     client, sessions = command_client
     key = uuid4()
     payload = {
-        "resource_key": str(key),
-        "desired_revision": 1,
+        "resource_id": str(key),
         "name": "test",
         "endpoint": "https://cluster.test",
-        "namespace": "ep",
         "credential_ref": str(uuid4()),
         "labels": {"team": "platform", "_cluster_id": "spoofed", "_internal": "spoofed"},
     }
@@ -243,8 +229,7 @@ async def test_cluster_commands_cleanse_internal_labels(command_client):
         assert cluster.labels["team"] == "platform"
 
     patch = {
-        "resource_key": str(key),
-        "desired_revision": 2,
+        "resource_id": str(key),
         "labels": {"team": "runtime", "_cluster_id": "spoofed", "_internal": "spoofed"},
     }
     assert (await client.post("/v1/commands", json=command_message("cluster.update", patch))).status_code == 202
@@ -479,16 +464,14 @@ async def test_failed_target_creation_rolls_back(command_client, monkeypatch):
 
 def _cluster_register_payload(key) -> dict[str, object]:
     return {
-        "resource_key": str(key),
-        "desired_revision": 1,
+        "resource_id": str(key),
         "name": "test",
         "endpoint": "https://cluster.test",
-        "namespace": "ep",
         "credential_ref": str(uuid4()),
     }
 
 
-@pytest.mark.parametrize("omitted", ["name", "endpoint", "namespace"])
+@pytest.mark.parametrize("omitted", ["name", "endpoint", "credential_ref"])
 async def test_cluster_register_requires_each_shared_config_field(command_client, omitted):
     """Every required field in the shared ClusterConfigBase shape is enforced end to end."""
     from sqlalchemy import select
@@ -503,9 +486,7 @@ async def test_cluster_register_requires_each_shared_config_field(command_client
     assert "private-secret" not in response.text
     async with sessions() as session:
         result = await session.execute(
-            select(Cluster)
-            .where(col(Cluster.source_client_id) == "ao")
-            .where(col(Cluster.source_integration_id) == key)
+            select(Cluster).where(col(Cluster.source_client_id) == "ao").where(col(Cluster.id) == key)
         )
         assert result.scalar_one_or_none() is None
 
@@ -513,10 +494,9 @@ async def test_cluster_register_requires_each_shared_config_field(command_client
 async def test_cluster_register_persists_the_full_shared_shape(command_client):
     """A valid command provisions a cluster with the expected fields."""
     client, sessions = command_client
-    key, project = uuid4(), uuid4()
+    key = uuid4()
     payload = {
         **_cluster_register_payload(key),
-        "project_ids": [str(project)],
         "labels": {"team": "platform"},
     }
     created = await client.post("/v1/commands", json=command_message("cluster.register", payload))
@@ -526,8 +506,7 @@ async def test_cluster_register_persists_the_full_shared_shape(command_client):
         cluster = await session.get(Cluster, cluster_id)
     assert cluster.name == "test"
     assert cluster.endpoint == "https://cluster.test"
-    assert cluster.source_integration_id == key
-    assert cluster.project_ids == [project]
+    assert cluster.id == key
     assert cluster.enabled is True
 
 
@@ -552,9 +531,7 @@ async def test_cluster_register_rejects_invalid_field_values(command_client, fie
     assert "private-secret" not in response.text
     async with sessions() as session:
         result = await session.execute(
-            select(Cluster)
-            .where(col(Cluster.source_client_id) == "ao")
-            .where(col(Cluster.source_integration_id) == key)
+            select(Cluster).where(col(Cluster.source_client_id) == "ao").where(col(Cluster.id) == key)
         )
         assert result.scalar_one_or_none() is None
 
@@ -572,8 +549,6 @@ async def test_enabled_cluster_binding_requires_a_credential(command_client):
     assert response.status_code == 422, response.text
     async with sessions() as session:
         result = await session.execute(
-            select(Cluster)
-            .where(col(Cluster.source_client_id) == "ao")
-            .where(col(Cluster.source_integration_id) == key)
+            select(Cluster).where(col(Cluster.source_client_id) == "ao").where(col(Cluster.id) == key)
         )
         assert result.scalar_one_or_none() is None
