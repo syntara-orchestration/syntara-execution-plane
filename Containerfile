@@ -13,7 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Konflux hermetic builds override BUILDER_IMAGE to uv-builder-rhel9, which
 # already ships uv and has no pip3.12. The default UBI Python image still
 # needs the pip install. Do not reach PyPI when uv is already on PATH.
-RUN (command -v uv >/dev/null 2>&1 || pip3.12 install --no-cache-dir uv==0.12.3) \
+RUN (command -v uv >/dev/null 2>&1 || pip3.12 install --no-cache-dir uv==0.13.6) \
     && [ -f /usr/local/bin/uv ] || ln -s "$(command -v uv)" /usr/local/bin/uv
 
 COPY pyproject.toml requirements.txt uv.lock README.md alembic.ini ./
