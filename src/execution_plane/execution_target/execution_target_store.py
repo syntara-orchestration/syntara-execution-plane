@@ -303,6 +303,7 @@ class ExecutionTargetStore(StoreBase):
         labels: dict[str, str] | None = None,
         status_message: str | None = None,
         credential_ref: uuid.UUID | None = None,
+        enabled: bool | None = None,
     ) -> ExecutionTarget:
         """Update mutable target metadata without changing ownership or default status."""
         async with self._session_context() as session:
@@ -322,6 +323,8 @@ class ExecutionTargetStore(StoreBase):
                     target.status_message = status_message
                 if credential_ref is not None:
                     target.credential_ref = credential_ref
+                if enabled is not None:
+                    target.enabled = enabled
                 target.updated_by = updated_by
                 target.updated_at = datetime.now(UTC)
                 await self._commit(session)

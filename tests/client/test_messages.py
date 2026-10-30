@@ -192,6 +192,19 @@ def test_target_patch_can_reassign_the_cluster_default() -> None:
     assert parsed.is_default is True
 
 
+def test_target_patch_can_change_enabled_state() -> None:
+    message = targets.TargetUpdate(resource_id=UUID(RESOURCE_ID), enabled=False).to_message(
+        source_id="ao",
+        destination_id="ep",
+        client_id="ao",
+    )
+
+    assert message.command.payload == {"resource_id": RESOURCE_ID, "enabled": False}
+    parsed = CommandCatalog().validate(message)
+    assert isinstance(parsed, targets.TargetUpdate)
+    assert parsed.enabled is False
+
+
 def test_message_can_have_an_explicit_transport_identity():
     message_id, command_id = uuid4(), uuid4()
     message = control.CancelCommand(target_command_id=uuid4()).to_message(

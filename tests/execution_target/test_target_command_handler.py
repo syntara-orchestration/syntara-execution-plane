@@ -249,6 +249,22 @@ async def test_target_update_allows_metadata_changes_to_the_current_default(
 
 
 @pytest.mark.asyncio
+async def test_target_update_passes_enabled_changes_to_the_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    cluster = _cluster()
+    target = _target(cluster_id=cluster.id)
+    session = _Session(cluster=cluster, target=target)
+    store = _FakeStore(target=target)
+
+    await TargetUpdateCommandHandler().handle(
+        Mock(spec=MessageEnvelope),
+        TargetUpdate(resource_id=target.id, enabled=False),
+        _context(monkeypatch, session, store),
+    )
+
+    assert store.updated[0]["enabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_target_update_rejects_demoting_the_current_default(monkeypatch: pytest.MonkeyPatch) -> None:
     cluster = _cluster()
     target = _target(cluster_id=cluster.id, is_default=True)

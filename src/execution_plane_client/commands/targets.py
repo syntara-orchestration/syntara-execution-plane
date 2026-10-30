@@ -135,6 +135,7 @@ class TargetUpdate(ResourceIdentity, CommandPayload):
     credential_ref: UUID | None = None
     labels: dict[str, str] | None = None
     is_default: StrictBool | None = None
+    enabled: StrictBool | None = None
 
     def _message_payload(self) -> dict[str, object]:
         payload = self.model_dump(mode="json", exclude_unset=True)

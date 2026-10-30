@@ -109,6 +109,7 @@ class TargetUpdateCommandHandler:
                 endpoint=command.endpoint,
                 credential_ref=command.credential_ref,
                 labels=command.labels,
+                enabled=command.enabled,
                 placement=None
                 if command.placement is None
                 else TypeAdapter(ExecutionTargetPlacement).validate_python(

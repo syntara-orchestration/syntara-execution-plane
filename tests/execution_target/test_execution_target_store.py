@@ -417,6 +417,18 @@ async def test_update_can_replace_credential_ref_and_rejects_missing_target() ->
 
 
 @pytest.mark.asyncio
+async def test_update_can_change_enabled_state() -> None:
+    target = _target()
+    store = _store(_Session(result=_Result(target)))
+
+    result = await store.update(target.id, updated_by=uuid.uuid4(), enabled=False)
+
+    assert result.enabled is False
+    assert target.enabled is False
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_set_default_demotes_the_previous_default_atomically() -> None:
     cluster = _cluster(status=ClusterStatus.ACTIVE)
     target = _target()
