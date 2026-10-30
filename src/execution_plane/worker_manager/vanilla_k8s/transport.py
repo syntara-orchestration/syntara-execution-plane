@@ -299,6 +299,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
     progress: Callable[[dict[str, Any]], None],
     on_result: Callable[[dict[str, Any]], None],
     on_resource: Callable[[str, str | None, str, str | None], None],
+    on_execute_submitted: Callable[[], None] | None = None,
     node_selectors: list[str] | None = None,
     tolerations: list[str] | None = None,
     allowed_egress_cidrs: list[str] | None = None,
@@ -492,6 +493,14 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                             def mark_submitted() -> None:
                                 nonlocal submitted
                                 submitted = True
+                                if on_execute_submitted is None:
+                                    return
+                                try:
+                                    on_execute_submitted()
+                                except TransportError as exc:
+                                    if exc.cancellation_requested:
+                                        submitted = False
+                                    raise
 
                             frame = invoke(
                                 channel,
