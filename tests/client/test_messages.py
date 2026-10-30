@@ -13,11 +13,9 @@ from execution_plane_client.protocol import MessageEnvelope
 
 RESOURCE_ID = "00000000-0000-0000-0000-000000000001"
 CLUSTER = {
-    "resource_key": RESOURCE_ID,
-    "desired_revision": 1,
+    "resource_id": RESOURCE_ID,
     "name": "workers",
     "endpoint": "https://cluster.test",
-    "namespace": "ep",
     "credential_ref": str(uuid4()),
 }
 
@@ -47,9 +45,9 @@ CLUSTER = {
             clusters,
             "ClusterUpdate",
             "cluster.update",
-            {"resource_key": RESOURCE_ID, "desired_revision": 2, "name": "new"},
+            {"resource_id": RESOURCE_ID, "name": "new"},
         ),
-        (clusters, "ClusterDelete", "cluster.delete", {"resource_key": RESOURCE_ID, "desired_revision": 3}),
+        (clusters, "ClusterDelete", "cluster.delete", {"resource_id": RESOURCE_ID}),
         (
             targets,
             "TargetRegister",
@@ -121,28 +119,24 @@ def test_completion_requires_parent_before_it_can_be_sent():
 
 
 def test_cluster_patch_keeps_explicit_null_and_omits_unchanged_fields():
-    message = clusters.ClusterUpdate(
-        resource_key=UUID(RESOURCE_ID), desired_revision=2, ca_certificate=None
-    ).to_message(
+    message = clusters.ClusterUpdate(resource_id=UUID(RESOURCE_ID), ca_certificate=None).to_message(
         source_id="ao",
         destination_id="ep",
         client_id="ao",
     )
-    assert message.command.payload == {"resource_key": RESOURCE_ID, "desired_revision": 2, "ca_certificate": None}
+    assert message.command.payload == {"resource_id": RESOURCE_ID, "ca_certificate": None}
     parsed = CommandCatalog().validate(message)
     assert isinstance(parsed, clusters.ClusterUpdate)
-    assert parsed.resource_key == UUID(RESOURCE_ID)
-    assert parsed.model_fields_set == {"resource_key", "desired_revision", "ca_certificate"}
+    assert parsed.resource_id == UUID(RESOURCE_ID)
+    assert parsed.model_fields_set == {"resource_id", "ca_certificate"}
 
 
 @pytest.mark.parametrize("payload_class", [clusters.ClusterRegister, clusters.ClusterProvision])
 def test_cluster_creation_commands_can_set_the_global_default(payload_class):
     message = payload_class(
-        resource_key=UUID(RESOURCE_ID),
-        desired_revision=1,
+        resource_id=UUID(RESOURCE_ID),
         name="workers",
         endpoint="https://cluster.test",
-        namespace="ep",
         credential_ref=uuid4(),
         is_default=True,
     ).to_message(source_id="ao", destination_id="ep", client_id="ao")
@@ -154,12 +148,11 @@ def test_cluster_creation_commands_can_set_the_global_default(payload_class):
 
 def test_cluster_patch_can_reassign_the_global_default() -> None:
     message = clusters.ClusterUpdate(
-        resource_key=UUID(RESOURCE_ID),
-        desired_revision=2,
+        resource_id=UUID(RESOURCE_ID),
         is_default=True,
     ).to_message(source_id="ao", destination_id="ep", client_id="ao")
 
-    assert message.command.payload == {"resource_key": RESOURCE_ID, "desired_revision": 2, "is_default": True}
+    assert message.command.payload == {"resource_id": RESOURCE_ID, "is_default": True}
     parsed = CommandCatalog().validate(message)
     assert parsed.is_default is True
 

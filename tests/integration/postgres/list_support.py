@@ -43,7 +43,6 @@ async def seed_list_dataset(session, path: str, db_url: str):
             cluster = Cluster(
                 id=uuid.uuid4(),
                 source_client_id=owner,
-                source_integration_id=uuid.uuid4(),
                 name=owner,
                 endpoint="https://cluster.test",
                 credential_ref=uuid.uuid4(),
@@ -92,7 +91,6 @@ async def seed_list_dataset(session, path: str, db_url: str):
                 row = Cluster(
                     id=resource_id,
                     source_client_id=owner,
-                    source_integration_id=resource_id,
                     name=NAMES[index],
                     endpoint=values["endpoint"],
                     credential_ref=uuid.uuid4(),

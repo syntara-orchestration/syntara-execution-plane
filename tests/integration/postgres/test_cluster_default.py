@@ -15,7 +15,7 @@ pytestmark = pytest.mark.integration
 
 
 async def _active_cluster(store: ClusterStore, actor_id: UUID, name: str) -> Cluster:
-    cluster = await store.create(name, f"https://{name}.example", uuid4(), actor_id)
+    cluster = await store.create(uuid4(), name, f"https://{name}.example", uuid4(), actor_id)
     return await store.record_discovery_state(cluster.id, ClusterStatus.ACTIVE, None, actor_id)
 
 

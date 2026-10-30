@@ -25,11 +25,9 @@ def _validator(document, name="MessageEnvelope") -> Draft202012Validator:
 @pytest.mark.parametrize("kind", ["cluster.register", "cluster.provision"])
 def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(kind) -> None:
     payload = {
-        "resource_key": str(uuid4()),
-        "desired_revision": 1,
+        "resource_id": str(uuid4()),
         "name": "workers",
         "endpoint": "https://cluster.test",
-        "namespace": "ep",
         "credential_ref": str(uuid4()),
     }
     message = command_message(kind, payload)
@@ -42,7 +40,7 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
     invalid["command"]["command_revision"] = 2
     assert not validator.is_valid(invalid)
     invalid = deepcopy(message)
-    del invalid["command"]["payload"]["namespace"]
+    del invalid["command"]["payload"]["name"]
     assert not validator.is_valid(invalid)
 
 
@@ -62,8 +60,8 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
             },
         ),
         ("command.cancel", {"target_command_id": str(uuid4())}),
-        ("cluster.update", {"resource_key": str(uuid4()), "desired_revision": 2, "project_ids": None}),
-        ("cluster.delete", {"resource_key": str(uuid4()), "desired_revision": 3}),
+        ("cluster.update", {"resource_id": str(uuid4()), "name": "renamed"}),
+        ("cluster.delete", {"resource_id": str(uuid4())}),
         (
             "execution_target.register",
             {
@@ -193,8 +191,10 @@ def test_execution_target_response_uses_discriminated_placement() -> None:
     assert target_schema["properties"]["placement"]["discriminator"]["propertyName"] == "type"
 
 
-def test_cluster_binding_request_remains_namespace_based() -> None:
-    assert "namespace" in ClusterRegister.model_fields
+def test_cluster_register_is_addressed_by_resource_id_without_namespace() -> None:
+    assert "resource_id" in ClusterRegister.model_fields
+    assert "namespace" not in ClusterRegister.model_fields
+    assert "project_ids" not in ClusterRegister.model_fields
     assert "placement" not in ClusterRegister.model_fields
 
 

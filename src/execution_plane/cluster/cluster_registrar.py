@@ -99,6 +99,7 @@ class ClusterRegistrar:
 
     async def register(
         self,
+        cluster_id: uuid.UUID,
         name: str,
         endpoint: str,
         credential_ref: uuid.UUID,
@@ -111,7 +112,7 @@ class ClusterRegistrar:
         """Persist first, discover second, and persist the resulting state."""
         registration = ClusterRegistration(name, endpoint, credential_ref, labels or {})
         cluster = await self._store.create(
-            name, endpoint, credential_ref, created_by, labels, cluster_type=cluster_type
+            cluster_id, name, endpoint, credential_ref, created_by, labels, cluster_type=cluster_type
         )
         try:
             result = self._discovery.discover(registration)
@@ -161,6 +162,7 @@ class ClusterRegistrar:
 
     async def provision(
         self,
+        cluster_id: uuid.UUID,
         name: str,
         endpoint: str,
         credential_ref: uuid.UUID,
@@ -170,18 +172,11 @@ class ClusterRegistrar:
         *,
         cluster_type: ClusterType = ClusterType.OPENSHIFT,
         source_client_id: str | None = None,
-        source_integration_id: uuid.UUID | None = None,
-        source_revision: int = 0,
-        project_ids: list[uuid.UUID] | None = None,
         is_default: bool = False,
         ca_certificate: str | None = None,
     ) -> Cluster:
-        """Create or update a cluster and its sole default execution target from known values."""
-        existing = (
-            await self._store.get_by_source(source_client_id, source_integration_id)
-            if source_client_id is not None and source_integration_id is not None
-            else await self._store.get_by_name(name)
-        )
+        """Create or update the cluster at the caller-supplied id and its default target."""
+        existing = await self._store.get(cluster_id)
         if existing is not None:
             if existing.status is ClusterStatus.DRAINING or not existing.enabled:
                 return await self._reactivate(
@@ -192,8 +187,6 @@ class ClusterRegistrar:
                     labels,
                     is_default=is_default,
                     ca_certificate=ca_certificate,
-                    source_revision=source_revision,
-                    project_ids=project_ids,
                 )
             # Existing active cluster: update without re-provisioning its targets.
             await self._store.update(
@@ -204,14 +197,13 @@ class ClusterRegistrar:
                 credential_ref=credential_ref,
                 ca_certificate=ca_certificate,
                 labels=labels,
-                project_ids=project_ids,
-                source_revision=source_revision,
             )
             if is_default:
                 return await self._store.set_default(existing.id, created_by)
             return await self._store.ensure_default(existing.id, created_by)
 
         cluster = await self._store.create(
+            cluster_id,
             name,
             endpoint,
             credential_ref,
@@ -219,9 +211,6 @@ class ClusterRegistrar:
             labels,
             cluster_type=cluster_type,
             source_client_id=source_client_id,
-            source_integration_id=source_integration_id,
-            source_revision=source_revision,
-            project_ids=project_ids,
             ca_certificate=ca_certificate,
         )
         try:
@@ -285,8 +274,6 @@ class ClusterRegistrar:
         *,
         is_default: bool = False,
         ca_certificate: str | None = None,
-        source_revision: int | None = None,
-        project_ids: list[uuid.UUID] | None = None,
     ) -> Cluster:
         """Reactivate a DRAINING cluster and its default target."""
         await self._store.reactivate(
@@ -296,8 +283,6 @@ class ClusterRegistrar:
             credential_ref=credential_ref,
             ca_certificate=ca_certificate,
             labels=labels,
-            project_ids=project_ids,
-            source_revision=source_revision,
         )
         default_target = await self._default_target(cluster.id)
         if default_target is not None:

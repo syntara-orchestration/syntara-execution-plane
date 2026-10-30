@@ -55,7 +55,6 @@ async def _insert_cluster_and_targets(sessions, client_id: str, count: int) -> t
     cluster = Cluster(
         id=uuid.uuid4(),
         source_client_id=client_id,
-        source_integration_id=uuid.uuid4(),
         name="test-cluster",
         endpoint="https://cluster.test",
         credential_ref=uuid.uuid4(),

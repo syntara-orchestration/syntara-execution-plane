@@ -27,11 +27,6 @@ def test_cluster_table_exposes_required_lifecycle_and_audit_contract() -> None:
         ClusterStatus.ERROR,
     }
     assert set(ClusterType) == {ClusterType.OPENSHIFT, ClusterType.RHEL}
-    assert any(
-        constraint.name == "uq_clusters_source_integration"
-        and {column.name for column in constraint.columns} == {"source_client_id", "source_integration_id"}
-        for constraint in table.constraints
-    )
     assert table.c.credential_ref.nullable is False
     assert table.c.labels.type.__class__.__name__ == "JSONB"
     assert isinstance(table.c.credential_ref.type, Uuid)
