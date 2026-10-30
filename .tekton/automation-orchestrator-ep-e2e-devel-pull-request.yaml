@@ -37,7 +37,7 @@ spec:
     finally: "1h"
   params:
     - name: git-url
-      value: "{{source_url}}"
+      value: https://github.com/syntara-orchestration/syntara-execution-plane
     - name: pipeline-github-org
       value: "{{repo_owner}}"
     - name: pipeline-github-repo
@@ -55,7 +55,7 @@ spec:
     - name: ao-git-url
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
-      value: feat/ANSTRAT-1803-AAP-97911
+      value: feat/ANSTRAT-1803
   pipelineRef:
     resolver: bundles
     params:
