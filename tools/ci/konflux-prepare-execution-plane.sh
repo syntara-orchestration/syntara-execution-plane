@@ -14,12 +14,12 @@
 #   4. Sets EP_COMPLETION_CALLBACK_URL and
 #      EP_CREDENTIAL_RESOLUTION_CALLBACK_URL to AO's
 #      /api/execution_plane/v1/commands ingress.
-#   5. Registers the Kind cluster as an EP cluster-binding via the EP API.
 #
-# aap-dev builds the script-node image and points myao-worker at the operator
-# EP (APP_SCRIPT_NODES_ENABLED / APP_NODE_CONTAINER_IMAGES / APP_EP_API_URL)
-# during deploy when AO_EXECUTION_PLANE=true (ansible/aap-dev#1138), so this
-# script no longer does it.
+# The AO<->EP callback wiring (backend callback CN + APP_EP_API_URL, and the EP
+# worker's EP_COMPLETION_CALLBACK_URL / EP_CREDENTIAL_RESOLUTION_CALLBACK_URL and
+# their mTLS cert paths) is now set by the operator reconcile when the Execution
+# Plane is enabled (automation-orchestrator-operator, AAP-90779-ep-from-source),
+# so this script no longer does it.
 #
 # CREDENTIAL_REF may name an existing AO credential that can access the Kind
 # cluster's dispatcher service account. When omitted, one is created or
@@ -109,10 +109,6 @@ _create_ao_credential() {
       --insecure
 }
 
-_ao_command_ingress_url() {
-  printf '%s' "https://${AO_NAME}-backend.${AO_NAMESPACE}.svc.cluster.local:8000/api/execution_plane/v1/commands"
-}
-
 _ep_api_url() {
   printf '%s' "https://${EP_API_DEPLOY}.${AO_NAMESPACE}.svc.cluster.local:8443"
 }
@@ -180,6 +176,7 @@ _wait_for_operator_ep() {
   kubectl get pods -n "${AO_NAMESPACE}" -l "app.kubernetes.io/component in (execution-plane-api,execution-plane-worker)" -o wide
 }
 
+<<<<<<< HEAD
 _configure_ep_callback_url() {
   local completion_url resolution_url ca_path cert_path key_path
   local -a env_args
@@ -235,6 +232,232 @@ print(json.dumps(cns))
     "APP_S2S_TLS_CN_ALLOWLIST=${allowlist}" \
     "APP_EP_API_URL=${ep_url}"
   kubectl rollout status "deploy/${AO_NAME}-backend" -n "${AO_NAMESPACE}" --timeout=180s
+||||||| parent of 9aeb599 (chore(ci): drop EP callback wiring now set by the operator)
+_configure_ep_callback_url() {
+  local completion_url resolution_url ca_path cert_path key_path
+  local -a env_args
+  completion_url=$(_ao_command_ingress_url)
+  resolution_url=$(_ao_command_ingress_url)
+  ca_path=$(kubectl get deploy "${EP_WORKER_DEPLOY}" -n "${AO_NAMESPACE}" \
+    -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='EP_CALLBACK_CA_CERT_PATH')].value}" \
+    2>/dev/null || true)
+  cert_path=$(kubectl get deploy "${EP_WORKER_DEPLOY}" -n "${AO_NAMESPACE}" \
+    -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='EP_CALLBACK_CERT_PATH')].value}" \
+    2>/dev/null || true)
+  key_path=$(kubectl get deploy "${EP_WORKER_DEPLOY}" -n "${AO_NAMESPACE}" \
+    -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='EP_CALLBACK_KEY_PATH')].value}" \
+    2>/dev/null || true)
+  env_args=(
+    "EP_COMPLETION_CALLBACK_URL=${completion_url}"
+    "EP_CREDENTIAL_RESOLUTION_CALLBACK_URL=${resolution_url}"
+  )
+  if [[ -n "${ca_path}" ]]; then
+    env_args+=("EP_CREDENTIAL_RESOLUTION_CALLBACK_CA_CERT_PATH=${ca_path}")
+  fi
+  if [[ -n "${cert_path}" && -n "${key_path}" ]]; then
+    env_args+=(
+      "EP_CREDENTIAL_RESOLUTION_CALLBACK_CERT_PATH=${cert_path}"
+      "EP_CREDENTIAL_RESOLUTION_CALLBACK_KEY_PATH=${key_path}"
+    )
+  fi
+  echo "=== Set EP callback URLs on ${EP_WORKER_DEPLOY} ==="
+  echo "EP_COMPLETION_CALLBACK_URL=${completion_url}"
+  echo "EP_CREDENTIAL_RESOLUTION_CALLBACK_URL=${resolution_url}"
+  kubectl set env "deploy/${EP_WORKER_DEPLOY}" -n "${AO_NAMESPACE}" "${env_args[@]}"
+  kubectl rollout status "deploy/${EP_WORKER_DEPLOY}" -n "${AO_NAMESPACE}" --timeout=180s
+}
+
+_kind_node_container() {
+  printf '%s' "${CLUSTER_NAME}-control-plane"
+}
+
+_node_exec() {
+  local node
+  node=$(_kind_node_container)
+  if command -v podman >/dev/null 2>&1 && podman inspect "${node}" >/dev/null 2>&1; then
+    podman exec "${node}" "$@"
+    return
+  fi
+  if command -v docker >/dev/null 2>&1 && docker inspect "${node}" >/dev/null 2>&1; then
+    docker exec "${node}" "$@"
+    return
+  fi
+  echo "ERROR: Kind node container ${node} not found" >&2
+  return 1
+}
+
+_container_runtime() {
+  if command -v podman >/dev/null 2>&1; then
+    printf '%s' podman
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    printf '%s' docker
+    return 0
+  fi
+  echo "ERROR: podman or docker is required to load node images" >&2
+  return 1
+}
+
+_node_has_image() {
+  local image=$1
+  _node_exec crictl inspecti -q "${image}" >/dev/null
+}
+
+_build_and_load_node_image() {
+  local image=$1
+  local runtime archive
+  runtime=$(_container_runtime)
+  archive="${WORK_DIR}/node-image.tar"
+
+  echo "=== Building local script image ${image} ==="
+  "${runtime}" build -f "${REPO_ROOT}/tests/fixtures/sdk_script/Containerfile" \
+    -t "${image}" "${REPO_ROOT}/tests/fixtures/sdk_script"
+  echo "=== Loading ${image} into Kind cluster ${CLUSTER_NAME} ==="
+  "${runtime}" save --output "${archive}" "${image}"
+  kind load image-archive "${archive}" --name "${CLUSTER_NAME}"
+}
+
+_prepull_node_image() {
+  local image=$1
+  local node
+  node=$(_kind_node_container)
+  echo "=== Pre-pull ${image} on Kind node ${node} ==="
+  if ! _node_has_image "${image}"; then
+    if [[ "${image}" == "localhost/syntara-sdk-script:dev" ]]; then
+      _build_and_load_node_image "${image}"
+    else
+      _node_exec crictl pull "${image}"
+    fi
+  fi
+  if ! _node_has_image "${image}"; then
+    echo "ERROR: ${image} is not present on Kind node ${node}" >&2
+    exit 1
+  fi
+  _node_exec crictl images
+  echo "prepared ${image} on ${node}"
+}
+
+_allow_ep_callback_identity() {
+  local callback_cn allowlist ep_url
+  callback_cn="execution-plane-callback.ao.svc"
+  ep_url=$(_ep_api_url)
+  allowlist=$(kubectl get deploy "${AO_NAME}-backend" -n "${AO_NAMESPACE}" -o json | python3 -c '
+import json, sys
+deploy = json.load(sys.stdin)
+env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
+raw = next((e.get("value") or "[]" for e in env if e.get("name") == "APP_S2S_TLS_CN_ALLOWLIST"), "[]")
+cns = json.loads(raw)
+need = "execution-plane-callback.ao.svc"
+if need not in cns:
+    cns.append(need)
+print(json.dumps(cns))
+')
+  echo "=== Allow EP callback CN ${callback_cn} on ${AO_NAME}-backend ==="
+  kubectl set env "deploy/${AO_NAME}-backend" -n "${AO_NAMESPACE}" \
+    "APP_EP_CALLBACK_SERVICE_CN=${callback_cn}" \
+    "APP_S2S_TLS_CN_ALLOWLIST=${allowlist}" \
+    "APP_EP_API_URL=${ep_url}"
+  kubectl rollout status "deploy/${AO_NAME}-backend" -n "${AO_NAMESPACE}" --timeout=180s
+}
+
+_enable_script_dispatch() {
+  local image=$1
+  local images_json ep_url
+  images_json=$(python3 -c 'import json, sys; print(json.dumps({"script": sys.argv[1]}))' "${image}")
+  ep_url=$(_ep_api_url)
+  echo "=== Point ${AO_NAME}-worker at operator EP ${ep_url} ==="
+  kubectl set env "deploy/${AO_NAME}-worker" -n "${AO_NAMESPACE}" \
+    APP_SCRIPT_NODES_ENABLED=true \
+    "APP_NODE_CONTAINER_IMAGES=${images_json}" \
+    "APP_EP_API_URL=${ep_url}"
+  kubectl rollout status "deploy/${AO_NAME}-worker" -n "${AO_NAMESPACE}" --timeout=180s
+}
+
+=======
+_kind_node_container() {
+  printf '%s' "${CLUSTER_NAME}-control-plane"
+}
+
+_node_exec() {
+  local node
+  node=$(_kind_node_container)
+  if command -v podman >/dev/null 2>&1 && podman inspect "${node}" >/dev/null 2>&1; then
+    podman exec "${node}" "$@"
+    return
+  fi
+  if command -v docker >/dev/null 2>&1 && docker inspect "${node}" >/dev/null 2>&1; then
+    docker exec "${node}" "$@"
+    return
+  fi
+  echo "ERROR: Kind node container ${node} not found" >&2
+  return 1
+}
+
+_container_runtime() {
+  if command -v podman >/dev/null 2>&1; then
+    printf '%s' podman
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    printf '%s' docker
+    return 0
+  fi
+  echo "ERROR: podman or docker is required to load node images" >&2
+  return 1
+}
+
+_node_has_image() {
+  local image=$1
+  _node_exec crictl inspecti -q "${image}" >/dev/null
+}
+
+_build_and_load_node_image() {
+  local image=$1
+  local runtime archive
+  runtime=$(_container_runtime)
+  archive="${WORK_DIR}/node-image.tar"
+
+  echo "=== Building local script image ${image} ==="
+  "${runtime}" build -f "${REPO_ROOT}/tests/fixtures/sdk_script/Containerfile" \
+    -t "${image}" "${REPO_ROOT}/tests/fixtures/sdk_script"
+  echo "=== Loading ${image} into Kind cluster ${CLUSTER_NAME} ==="
+  "${runtime}" save --output "${archive}" "${image}"
+  kind load image-archive "${archive}" --name "${CLUSTER_NAME}"
+}
+
+_prepull_node_image() {
+  local image=$1
+  local node
+  node=$(_kind_node_container)
+  echo "=== Pre-pull ${image} on Kind node ${node} ==="
+  if ! _node_has_image "${image}"; then
+    if [[ "${image}" == "localhost/syntara-sdk-script:dev" ]]; then
+      _build_and_load_node_image "${image}"
+    else
+      _node_exec crictl pull "${image}"
+    fi
+  fi
+  if ! _node_has_image "${image}"; then
+    echo "ERROR: ${image} is not present on Kind node ${node}" >&2
+    exit 1
+  fi
+  _node_exec crictl images
+  echo "prepared ${image} on ${node}"
+}
+
+_enable_script_dispatch() {
+  local image=$1
+  local images_json ep_url
+  images_json=$(python3 -c 'import json, sys; print(json.dumps({"script": sys.argv[1]}))' "${image}")
+  ep_url=$(_ep_api_url)
+  echo "=== Point ${AO_NAME}-worker at operator EP ${ep_url} ==="
+  kubectl set env "deploy/${AO_NAME}-worker" -n "${AO_NAMESPACE}" \
+    APP_SCRIPT_NODES_ENABLED=true \
+    "APP_NODE_CONTAINER_IMAGES=${images_json}" \
+    "APP_EP_API_URL=${ep_url}"
+  kubectl rollout status "deploy/${AO_NAME}-worker" -n "${AO_NAMESPACE}" --timeout=180s
+>>>>>>> 9aeb599 (chore(ci): drop EP callback wiring now set by the operator)
 }
 
 _register_cluster_binding() {
@@ -435,8 +658,6 @@ chmod 600 "${WORK_DIR}/jwt-primary.pem"
 AO_JWT_ISSUER=$(_ao_jwt_issuer)
 echo "AO JWT issuer: ${AO_JWT_ISSUER}"
 
-_allow_ep_callback_identity
-_configure_ep_callback_url
 _register_cluster_binding "${AO_JWT_ISSUER}" "${CREDENTIAL_REF}"
 
 echo "operator Execution Plane is up; aap-dev wired myao-worker for script-node dispatch"
