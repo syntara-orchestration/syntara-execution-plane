@@ -150,3 +150,9 @@ class TargetUpdate(ResourceIdentity, CommandPayload):
     def check_endpoint(cls, value: str | None) -> str | None:
         """Validate explicit endpoint updates before applying them."""
         return None if value is None else validate_endpoint(value)
+
+
+class TargetHealth(ResourceIdentity, CommandPayload):
+    """Query the current health of one ExecutionTarget."""
+
+    command_type: ClassVar[str] = "execution_target.health"

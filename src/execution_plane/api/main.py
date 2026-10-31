@@ -46,8 +46,9 @@ from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.models.work_item import WorkItem
 from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNotFoundError
 from execution_plane_client.catalog import CommandCatalog
+from execution_plane_client.commands.results import TransportReceipt
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
-from execution_plane_client.protocol import CapabilitiesRead, MessageEnvelope, TransportReceipt
+from execution_plane_client.protocol import CapabilitiesRead, MessageEnvelope
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -169,7 +170,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             raise HTTPException(status_code=409, detail="Resource state conflicts with the request") from None
         except WorkItemNotFoundError:
             raise HTTPException(status_code=404, detail="Resource not found") from None
-        return TransportReceipt(message_id=message.message_id, resource=result.resource)
+        return TransportReceipt(message_id=message.message_id, resource=result.resource, result=result.result)
 
     @app.get(
         "/v1/work-items",

@@ -10,6 +10,7 @@ from execution_plane.commands.context import EPCommandContext
 from execution_plane.commands.control import CancelCommandHandler
 from execution_plane.commands.targets import (
     TargetDeleteCommandHandler,
+    TargetHealthCommandHandler,
     TargetRegisterCommandHandler,
     TargetUpdateCommandHandler,
 )
@@ -31,4 +32,5 @@ def build_ep_registry() -> CommandRegistry[EPCommandContext]:
     registry.register(catalog.definition("execution_target.register", 1), TargetRegisterCommandHandler())
     registry.register(catalog.definition("execution_target.update", 1), TargetUpdateCommandHandler())
     registry.register(catalog.definition("execution_target.delete", 1), TargetDeleteCommandHandler())
+    registry.register(catalog.definition("execution_target.health", 1), TargetHealthCommandHandler())
     return registry

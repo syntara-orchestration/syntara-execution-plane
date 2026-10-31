@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
 
 from execution_plane.callback_client import CallbackHTTPClient
-from execution_plane_client.commands.credentials import CredentialResolution, CredentialResolve
+from execution_plane_client.commands.credentials import CredentialResolve
+from execution_plane_client.commands.results import CredentialResolveCommandResult, TransportReceipt
 
 if TYPE_CHECKING:
     from execution_plane.config import EPSettings
@@ -65,13 +66,23 @@ class CredentialResolver:
         try:
             response = await self._client.post_json(message.model_dump(mode="json"))
             response.raise_for_status()
-            resolution = CredentialResolution.model_validate(response.json())
+            receipt = TransportReceipt.model_validate(response.json())
         except (httpx.HTTPError, ValidationError, ValueError) as exc:
             raise CredentialResolutionUnavailableError(CREDENTIAL_RESOLUTION_FAILED) from exc
-        if resolution.message_id != message.message_id:
+
+        result = receipt.result
+        if receipt.message_id != message.message_id or not isinstance(result, CredentialResolveCommandResult):
             raise CredentialResolutionMismatchError(CREDENTIAL_RESOLUTION_MISMATCH)
-        return resolution.credential
+        return result.credential
 
     async def close(self) -> None:
         """Close the underlying callback client."""
         await self._client.close()
+
+    async def __aenter__(self) -> Self:
+        """Return the resolver for an explicit ownership scope."""
+        return self
+
+    async def __aexit__(self, *_exc_info: object) -> None:
+        """Close the callback client when its ownership scope exits."""
+        await self.close()

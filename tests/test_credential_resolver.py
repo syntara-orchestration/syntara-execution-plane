@@ -46,6 +46,28 @@ def test_credential_resolver_uses_dedicated_callback_settings(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
+async def test_credential_resolver_context_manager_closes_callback_client() -> None:
+    class ClosingCallbackClient(CallbackHTTPClient):
+        def __init__(self) -> None:
+            super().__init__(url=None)
+            self.close_count = 0
+
+        async def close(self) -> None:
+            self.close_count += 1
+
+    callback_client = ClosingCallbackClient()
+    resolver = CredentialResolver(
+        EPSettings(EP_DATABASE_URL="postgresql+asyncpg://localhost/ep"),
+        client=callback_client,
+    )
+
+    async with resolver as entered:
+        assert entered is resolver
+
+    assert callback_client.close_count == 1
+
+
+@pytest.mark.asyncio
 async def test_credential_resolver_posts_command_and_returns_correlated_value():
     credential_ref = uuid4()
     requests: list[httpx.Request] = []
@@ -55,7 +77,19 @@ async def test_credential_resolver_posts_command_and_returns_correlated_value():
         body = json.loads(request.content)
         assert isinstance(body, dict)
         message_id = body["message_id"]
-        return httpx.Response(200, json={"message_id": message_id, "credential": "resolved-token"})
+        return httpx.Response(
+            200,
+            json={
+                "received": True,
+                "message_id": message_id,
+                "resource": None,
+                "result": {
+                    "command_type": "credential.resolve",
+                    "command_revision": 1,
+                    "credential": "resolved-token",
+                },
+            },
+        )
 
     settings = EPSettings(
         EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands"
@@ -90,7 +124,19 @@ async def test_credential_resolver_rejects_an_unrelated_response():
     await callback_client.close()
     callback_client._client = httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, json={"message_id": str(uuid4()), "credential": "x"})
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "received": True,
+                    "message_id": str(uuid4()),
+                    "resource": None,
+                    "result": {
+                        "command_type": "credential.resolve",
+                        "command_revision": 1,
+                        "credential": "x",
+                    },
+                },
+            )
         )
     )
     resolver = CredentialResolver(settings, client=callback_client)

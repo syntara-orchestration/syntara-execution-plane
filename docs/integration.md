@@ -90,6 +90,7 @@ The outbound `work.execute.completed` command is documented separately under
 | `execution_target.register` | `resource_id`, owned physical `cluster_id`, name, backend, placement, endpoint, `credential_ref`, labels and optional `is_default`; create an independent target and optionally promote it as the Cluster default |
 | `execution_target.update` | `resource_id`, mutable target fields and optional `is_default`; `true` atomically promotes the target and demotes the previous default |
 | `execution_target.delete` | `resource_id`; request draining of a non-default target |
+| `execution_target.health` | `resource_id`; resolve the owning Cluster credential and return one on-demand probe result |
 
 Cluster commands preserve the existing binding revision rules: older revisions
 conflict, identical desired state at the same revision is accepted, and different
@@ -142,10 +143,12 @@ EP stores only the AO-owned `credential_ref` UUID. When the worker must contact 
 cluster, it constructs a `CredentialResolve` command for that reference, routes it
 with the Cluster's source client identity, and posts it to
 `EP_CREDENTIAL_RESOLUTION_CALLBACK_URL`. AO returns a correlated
-`CredentialResolution`; its credential value is bounded, excluded from `repr`, held
-only in memory for the current operation, and never persisted or logged by EP. The
-resolution callback has a dedicated URL, CA, client certificate/key and timeout
-settings, all pointing at the caller's command ingress. Resolution failures before Execute are mapped
+`TransportReceipt` containing a `CredentialResolveCommandResult`; its credential
+value is bounded, excluded from `repr`, held only in memory for the current
+operation, and never persisted or logged by EP. The
+receipt is correlated by `message_id`, and the resolution callback has a dedicated
+URL, CA, client certificate/key and timeout settings, all pointing at the caller's
+command ingress. Resolution failures before Execute are mapped
 to retryable dispatch failures rather than unknown workload outcomes.
 
 ## Work completion is a command

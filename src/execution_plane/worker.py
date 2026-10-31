@@ -289,9 +289,9 @@ async def run_worker(database_url: str) -> None:
         WorkStore.from_database_url(database_url) as work_item_store,
         ClusterStore.from_database_url(database_url) as cluster_store,
         ExecutionTargetStore.from_database_url(database_url) as target_store,
+        CredentialResolver(settings) as credential_resolver,
     ):
         event_delivery = CompletionNotifier(settings)
-        credential_resolver = CredentialResolver(settings)
         worker_managers = WorkerManagerRegistry()
         placement_resolver = build_placement_resolver(cluster_store, target_store, worker_managers)
         work_scheduler = WorkScheduler(work_item_store, placement_resolver)
@@ -348,7 +348,6 @@ async def run_worker(database_url: str) -> None:
             await resource_monitor.stop()
             await drain_monitor.stop()
             await event_delivery.close()
-            await credential_resolver.close()
 
 
 async def _run() -> None:
