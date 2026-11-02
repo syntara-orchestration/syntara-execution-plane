@@ -14,7 +14,10 @@
 #   4. Sets EP_COMPLETION_CALLBACK_URL and
 #      EP_CREDENTIAL_RESOLUTION_CALLBACK_URL to AO's
 #      /api/execution_plane/v1/commands ingress.
-#   5. Registers the Kind cluster as an EP cluster-binding via the EP API.
+#   5. Registers the Kind cluster as an EP cluster-binding through the AO API
+#      (POST /api/execution_plane/v1/clusters, AAP-100760): no JWT minting, no
+#      kubectl exec into the EP pod, no direct EP ClusterProvision. Requires
+#      an AO build with the cluster-registration endpoint (syntara#1127).
 #
 # aap-dev builds the script-node image and points myao-worker at the operator
 # EP (APP_SCRIPT_NODES_ENABLED / APP_NODE_CONTAINER_IMAGES / APP_EP_API_URL)
@@ -69,33 +72,6 @@ import base64, json, sys
 key = sys.argv[1]
 print(base64.b64decode(json.load(sys.stdin)['data'][key]).decode(), end='')
 " "${key}"
-}
-
-_ao_jwt_issuer() {
-  local issuer
-  issuer=$(kubectl get deploy "${EP_API_DEPLOY}" -n "${AO_NAMESPACE}" \
-    -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='EP_AO_JWT_ISSUER')].value}" \
-    2>/dev/null || true)
-  if [[ -n "${issuer}" ]]; then
-    printf '%s' "${issuer%/}"
-    return 0
-  fi
-  issuer=$(kubectl exec -n "${AO_NAMESPACE}" "deploy/${AO_NAME}-backend" -- \
-    /opt/app-root/src/.venv/bin/python -c \
-    'from syntara.core.config.base import get_settings; print(get_settings().jwt_issuer, end="")' \
-    2>/dev/null || true)
-  if [[ -n "${issuer}" ]]; then
-    printf '%s' "${issuer}"
-    return 0
-  fi
-  issuer=$(kubectl get deploy "${AO_NAME}-backend" -n "${AO_NAMESPACE}" \
-    -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='APP_SERVER_PUBLIC_URL')].value}" \
-    2>/dev/null || true)
-  if [[ -n "${issuer}" ]]; then
-    printf '%s' "${issuer%/}"
-    return 0
-  fi
-  printf '%s' "https://0.0.0.0:8000"
 }
 
 _create_ao_credential() {
@@ -214,126 +190,21 @@ _configure_ep_callback_url() {
   kubectl rollout status "deploy/${EP_WORKER_DEPLOY}" -n "${AO_NAMESPACE}" --timeout=180s
 }
 
-_register_cluster_binding() {
-  local issuer=$1 credential_ref=$2
+_register_cluster() {
+  local credential_ref="$1" admin_password ca_pem
+  admin_password=$(_secret_data myao-initial-admin-password "${AO_NAMESPACE}" password)
+  ca_pem="${WORK_DIR}/cluster-ca.pem"
   kubectl get configmap kube-root-ca.crt -n "${AO_NAMESPACE}" \
-    -o jsonpath='{.data.ca\.crt}' > "${WORK_DIR}/cluster-ca.pem"
-  python3 -c "
-import json, sys, uuid
-from pathlib import Path
-cluster, endpoint, namespace, issuer, credential_ref, ca_path = sys.argv[1:]
-payload = {
-    'source_integration_id': str(uuid.uuid5(uuid.NAMESPACE_URL, f'https://execution-plane.local/kind/{cluster}')),
-    'issuer': issuer,
-    'desired': {
-        'name': cluster,
-        'endpoint': endpoint,
-        'namespace': namespace,
-        'credential_ref': credential_ref,
-        'ca_certificate': Path(ca_path).read_text(),
-        'enabled': True,
-        'labels': {'execution-plane.syntara.io/local': 'kind'},
-    },
-}
-json.dump(payload, sys.stdout)
-" "${CLUSTER_NAME}" "${ENDPOINT}" "${NAMESPACE}" "${issuer}" "${credential_ref}" "${WORK_DIR}/cluster-ca.pem" \
-    > "${WORK_DIR}/binding.json"
-
-  kubectl exec -i -n "${AO_NAMESPACE}" "deploy/${EP_API_DEPLOY}" -- \
-    /bin/sh -c 'cat > /tmp/jwt-primary.pem' < "${WORK_DIR}/jwt-primary.pem"
-  kubectl exec -i -n "${AO_NAMESPACE}" "deploy/${EP_API_DEPLOY}" -- \
-    /bin/sh -c 'cat > /tmp/binding.json' < "${WORK_DIR}/binding.json"
-
-  echo "=== Register cluster binding via operator EP API ==="
-  kubectl exec -i -n "${AO_NAMESPACE}" "deploy/${EP_API_DEPLOY}" -- \
-    /opt/app-root/src/.venv/bin/python - <<'PY'
-import json
-import time
-import uuid
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
-
-import httpx
-import jwt
-
-from execution_plane_client.commands.clusters import ClusterProvision
-
-payload = json.loads(Path("/tmp/binding.json").read_text())
-key = Path("/tmp/jwt-primary.pem").read_text()
-now = datetime.now(UTC)
-token = jwt.encode(
-    {
-        "iss": payload["issuer"],
-        "aud": "execution-plane",
-        "client_id": "syntara-orchestration",
-        "scope": "cluster.provision clusters:read execution-targets:read",
-        "iat": now,
-        "exp": now + timedelta(hours=1),
-    },
-    key,
-    algorithm="ES256",
-)
-sid = uuid.UUID(payload["source_integration_id"])
-desired = payload["desired"]
-base = "https://127.0.0.1:8443"
-headers = {"Authorization": f"Bearer {token}"}
-with httpx.Client(verify=False, timeout=30.0) as client:
-    # Clusters are keyed by cluster.id now and looked up by the stable
-    # source_integration_id via filter. Provisioning is synchronous and
-    # idempotent at the same revision; the Kind DB is fresh, so revision 1.
-    revision = 1
-    envelope = ClusterProvision(
-        resource_key=sid,
-        desired_revision=revision,
-        name=desired["name"],
-        endpoint=desired["endpoint"],
-        namespace=desired["namespace"],
-        credential_ref=uuid.UUID(desired["credential_ref"]),
-        ca_certificate=desired["ca_certificate"],
-        enabled=True,
-        labels=desired["labels"],
-    ).to_message(
-        source_id="syntara-orchestration",
-        destination_id="execution-plane",
-        client_id="syntara-orchestration",
-    )
-    posted = client.post(
-        f"{base}/v1/commands",
-        headers=headers,
-        json=envelope.model_dump(mode="json"),
-    )
-    if posted.status_code >= 400:
-        raise SystemExit(f"cluster.provision failed ({posted.status_code}): {posted.text}")
-    print(f"upserted cluster {sid} revision {revision} status={posted.status_code}")
-    deadline = time.time() + 90
-    while time.time() < deadline:
-        status, message = "unknown", ""
-        got = client.get(
-            f"{base}/v1/clusters",
-            params={"source_integration_id": str(sid)},
-            headers=headers,
-        )
-        if got.status_code == 200:
-            resources = got.json().get("resources", [])
-            if resources:
-                doc = resources[0]
-                status = doc.get("status") or "unknown"
-                message = doc.get("status_message") or ""
-                print(f"cluster status: {status}")
-                if status == "active":
-                    break
-                if status == "error":
-                    raise SystemExit(message or "cluster provisioning failed")
-        time.sleep(3)
-    else:
-        raise SystemExit(f"timed out waiting for cluster {sid} to become active")
-    targets = client.get(f"{base}/v1/execution-targets", headers=headers)
-    if targets.status_code >= 400:
-        raise SystemExit(f"listing execution targets failed ({targets.status_code}): {targets.text}")
-    print(f"execution targets: {len(targets.json().get('resources', []))}")
-PY
-  kubectl exec -n "${AO_NAMESPACE}" "deploy/${EP_API_DEPLOY}" -- \
-    rm -f /tmp/jwt-primary.pem /tmp/binding.json >/dev/null 2>&1 || true
+    -o jsonpath='{.data.ca\.crt}' > "${ca_pem}"
+  echo "=== Register the ${CLUSTER_NAME} cluster through the AO API ==="
+  AO_ADMIN_PASSWORD="${admin_password}" python3 "${REPO_ROOT}/tools/register_ao_cluster.py" \
+    --api-url "${AO_API_BASE}" \
+    --cluster-name "${CLUSTER_NAME}" \
+    --endpoint "${ENDPOINT}" \
+    --namespace "${NAMESPACE}" \
+    --credential-ref "${credential_ref}" \
+    --ca-file "${ca_pem}" \
+    --insecure
 }
 
 echo "=== Cluster ==="
@@ -404,16 +275,9 @@ fi
 
 _wait_for_operator_ep
 
-echo "=== Extract AO JWT from ${AO_NAME}-jwt-primary ==="
-_secret_data "${AO_NAME}-jwt-primary" "${AO_NAMESPACE}" jwt-primary.pem \
-  > "${WORK_DIR}/jwt-primary.pem"
-chmod 600 "${WORK_DIR}/jwt-primary.pem"
-
-AO_JWT_ISSUER=$(_ao_jwt_issuer)
-echo "AO JWT issuer: ${AO_JWT_ISSUER}"
-
 _configure_ep_callback_url
-_register_cluster_binding "${AO_JWT_ISSUER}" "${CREDENTIAL_REF}"
+
+_register_cluster "${CREDENTIAL_REF}"
 
 echo "operator Execution Plane is up; aap-dev wired myao-worker for script-node dispatch"
 echo "EP API: $(_ep_api_url)"
