@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Event, Thread
 from typing import Any
+from unittest.mock import Mock, patch
 
 import grpc
 import pytest
@@ -319,3 +320,93 @@ def test_cancellation_closes_the_channel_when_the_workload_ignores_cancel():
         watcher.join(timeout=3)
     assert error.value.cancelled
     assert not error.value.retryable
+
+
+def test_stream_timeout_should_match_contract_timeout_not_contract_plus_grace():
+    """Verify that client.stream receives timeout_seconds from contract, not contract + grace.
+
+    The SDK's _execution_deadline clamps the stream timeout to invocation.timeout_seconds:
+        return min(invocation.timeout_seconds, float(timeout_seconds))
+
+    So passing (contract_timeout + grace) gets silently clamped back to contract_timeout.
+    This test verifies we pass the correct value directly, not relying on SDK clamping.
+
+    EXPECTED BEHAVIOR:
+        - Contract timeout: 10 seconds
+        - Grace period: 5 seconds
+        - Stream should receive: 10 seconds (NOT 15)
+
+    This test FAILS on devel (which passes 15, then SDK clamps to 10).
+    This test PASSES on refactor/sdk-workload-protocol (which passes 10 directly).
+    """
+    channel = Mock()
+
+    # Track what timeout_seconds is actually passed to client.stream()
+    actual_timeout = None
+
+    def mock_stream(request, *, timeout_seconds=None) -> Iterator[ContainerResult]:
+        nonlocal actual_timeout
+        actual_timeout = timeout_seconds
+        # Return a valid result
+        yield ContainerResult("sha256:" + "a" * 64, output={"result": "done"})
+
+    mock_client = Mock()
+    mock_client.stream = mock_stream
+    mock_client.health = Mock(return_value=["script.v1"])
+
+    with patch("execution_plane.worker_manager.vanilla_k8s.sdk_adaptor.ContainerClient", return_value=mock_client):
+        _invoke(
+            channel,
+            identity="work-1",
+            progress=lambda _: None,
+            cancelled=Event(),
+            startup=0.1,
+            grace=5,  # Grace period
+        )
+
+    # The SDK should receive the contract timeout (10), not contract + grace (15)
+    assert actual_timeout == 2, (
+        f"client.stream should receive timeout_seconds=2 (contract timeout), "
+        f"but received timeout_seconds={actual_timeout}. "
+        f"Passing contract+grace is wrong even though SDK clamps it."
+    )
+
+
+def test_channel_should_not_be_closed_in_invoke_finally_block():
+    """Verify that invoke's finally block doesn't close the channel.
+
+    Channel ownership:
+        - run_job's `with` block owns the channel and always closes it on exit
+        - Only the cancellation watcher force-closes early (to interrupt stuck streams)
+        - invoke itself should NOT close the channel in its finally block
+
+    The old code did `with suppress(Exception): channel.close()` which:
+        1. Causes potential double-close (watcher + finally + run_job)
+        2. Hides errors that should be visible
+        3. Makes ownership unclear
+
+    This test FAILS on devel (which closes the channel in finally).
+    This test PASSES on refactor/sdk-workload-protocol (which doesn't).
+    """
+    channel = Mock()
+
+    mock_client = Mock()
+    mock_client.stream = Mock(return_value=iter([ContainerResult("sha256:" + "a" * 64, output={"done": True})]))
+    mock_client.health = Mock(return_value=["script.v1"])
+
+    with patch("execution_plane.worker_manager.vanilla_k8s.sdk_adaptor.ContainerClient", return_value=mock_client):
+        _invoke(
+            channel,
+            identity="work-1",
+            progress=lambda _: None,
+            cancelled=Event(),
+            startup=0.1,
+            grace=1,
+        )
+
+    # invoke should NOT close the channel - that's run_job's responsibility
+    assert not channel.close.called, (
+        "invoke's finally block should NOT close the channel. "
+        "The channel is owned by run_job's `with` block, which always closes it. "
+        "Only the cancellation watcher force-closes early (to interrupt stuck streams)."
+    )
