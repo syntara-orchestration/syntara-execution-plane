@@ -26,6 +26,7 @@ async def test_concurrent_default_promotions_leave_exactly_one_default(migrated_
             ExecutionTargetStore.from_engine(engine) as target_store,
         ):
             cluster = await cluster_store.create(
+                uuid4(),
                 f"cluster-{uuid4()}",
                 f"https://{uuid4()}.example",
                 uuid4(),

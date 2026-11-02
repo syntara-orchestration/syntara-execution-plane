@@ -306,24 +306,23 @@ def provision_cluster(
 ) -> dict[str, Any]:
     """Provision the kind cluster synchronously through the EP command API.
 
-    Provisioning is synchronous and idempotent at the same revision. Re-runs
-    against an existing cluster return idempotently at revision 1; recreate the
-    cluster (``--recreate``) or a fresh database to apply changed configuration.
+    Provisioning is synchronous and idempotent on the physical cluster id. The
+    cluster's id is this caller-supplied UUID (shared with the AO Integration);
+    re-runs upsert the same row. The default target's namespace comes from the EP
+    service's EP_DEFAULT_WORKLOAD_NAMESPACE (set to match ``namespace`` for kind).
     """
-    revision = 1
+    del namespace  # No longer part of the cluster command; set via EP config / target placement.
     body = {
-        "resource_key": str(source_integration_id),
-        "desired_revision": revision,
+        "resource_id": str(source_integration_id),
         "name": name,
         "endpoint": endpoint,
-        "namespace": namespace,
         "credential_ref": str(credential_ref),
         "ca_certificate": ca_certificate,
         "enabled": True,
         "is_default": True,
         "labels": {"execution-plane.syntara.io/local": "kind"},
     }
-    print(f"[INFO] Provisioning cluster {source_integration_id} revision {revision}")
+    print(f"[INFO] Provisioning cluster {source_integration_id}")
     command_id = uuid.uuid4()
     client_id = os.environ.get("EP_AO_CLIENT_ID", "syntara-orchestration")
     envelope = MessageEnvelope(
@@ -351,22 +350,22 @@ def provision_cluster(
 
 
 def wait_for_cluster(api_url: str, token: str, source_integration_id: uuid.UUID, timeout: int) -> dict[str, Any]:
-    """Poll until the synchronously-provisioned cluster reports active."""
+    """Poll until the synchronously-provisioned cluster reports active.
+
+    The cluster's physical id is this caller-supplied UUID, so address it by id.
+    """
     deadline = time.time() + timeout
-    url = f"{api_url}/v1/clusters?source_integration_id={source_integration_id}"
+    url = f"{api_url}/v1/clusters/{source_integration_id}"
     while time.time() < deadline:
         status, payload = ep_request("GET", url, token)
-        if status == HTTPStatus.OK:
-            resources = payload.get("resources") if isinstance(payload, dict) else None
-            if resources:
-                cluster = resources[0]
-                cluster_status = cluster.get("status")
-                print(f"[INFO] Cluster status: {cluster_status}")
-                if cluster_status == "active":
-                    return cluster
-                if cluster_status == "error":
-                    msg = cluster.get("status_message") or "Cluster provisioning failed"
-                    raise RuntimeError(msg)
+        if status == HTTPStatus.OK and isinstance(payload, dict):
+            cluster_status = payload.get("status")
+            print(f"[INFO] Cluster status: {cluster_status}")
+            if cluster_status == "active":
+                return payload
+            if cluster_status == "error":
+                msg = payload.get("status_message") or "Cluster provisioning failed"
+                raise RuntimeError(msg)
         time.sleep(3)
     msg = f"Timed out waiting for cluster {source_integration_id} to become active"
     raise TimeoutError(msg)

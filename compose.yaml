@@ -108,6 +108,7 @@ services:
       EP_AO_JWT_PUBLIC_KEY_PATH: /run/secrets/ao-jwt-public.pem
       EP_AO_JWT_ISSUER: ${EP_AO_JWT_ISSUER:-http://localhost:8000}
       EP_AO_CLIENT_ID: ${EP_AO_CLIENT_ID:-syntara-orchestration}
+      EP_DEFAULT_WORKLOAD_NAMESPACE: ${EP_DEFAULT_WORKLOAD_NAMESPACE:-execution-plane}
       WAIT_FOR_ALEMBIC_HEAD: "1"
     volumes:
       - ./tools/wait_for_ep_database.py:/scripts/wait_for_ep_database.py:ro,z

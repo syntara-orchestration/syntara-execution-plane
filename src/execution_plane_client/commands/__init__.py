@@ -3,20 +3,13 @@
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from execution_plane_client.protocol import PositiveInt, WireModel
+from execution_plane_client.protocol import WireModel
 
 
 class ResourceIdentity(WireModel):
     """Caller-supplied physical resource identity."""
 
     resource_id: UUID
-
-
-class ResourceRevision(WireModel):
-    """Stable cluster integration identity and desired-state revision."""
-
-    resource_key: UUID
-    desired_revision: PositiveInt
 
 
 def validate_endpoint(value: str) -> str:

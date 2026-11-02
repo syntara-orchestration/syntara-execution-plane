@@ -22,13 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-class _UnsetType:
-    """Sentinel distinguishing 'not provided' from None in optional store parameters."""
-
-
-_UNSET = _UnsetType()
-
-
 class ClusterNotFoundError(LookupError):
     """Raised when a lifecycle operation targets an unknown Cluster."""
 
@@ -64,6 +57,7 @@ class ClusterStore(StoreBase):
 
     async def create(
         self,
+        cluster_id: uuid.UUID,
         name: str,
         endpoint: str,
         credential_ref: uuid.UUID,
@@ -72,23 +66,18 @@ class ClusterStore(StoreBase):
         *,
         cluster_type: ClusterType = ClusterType.OPENSHIFT,
         source_client_id: str | None = None,
-        source_integration_id: uuid.UUID | None = None,
-        source_revision: int = 0,
-        project_ids: builtins.list[uuid.UUID] | None = None,
         ca_certificate: str | None = None,
     ) -> Cluster:
-        """Persist a new Cluster in REGISTERING state."""
+        """Persist a new Cluster in REGISTERING state under a caller-supplied id."""
         now = datetime.now(UTC)
         cluster = Cluster(
+            id=cluster_id,
             name=name,
             endpoint=endpoint,
             credential_ref=credential_ref,
             ca_certificate=ca_certificate,
             cluster_type=cluster_type,
             source_client_id=source_client_id,
-            source_integration_id=source_integration_id,
-            source_revision=source_revision,
-            project_ids=project_ids,
             labels={},
             status=ClusterStatus.REGISTERING,
             created_by=created_by,
@@ -121,17 +110,6 @@ class ClusterStore(StoreBase):
         """Return a Cluster by name without its CA certificate."""
         async with self._session_context() as session:
             result = await session.execute(select(Cluster).where(col(Cluster.name) == name).limit(1))
-            cluster = result.scalar_one_or_none()
-            return None if cluster is None else self._without_secret(cluster)
-
-    async def get_by_source(self, client_id: str, integration_id: uuid.UUID) -> Cluster | None:
-        """Return a cluster by its stable external owner and integration identity."""
-        async with self._session_context() as session:
-            result = await session.execute(
-                select(Cluster)
-                .where(col(Cluster.source_client_id) == client_id)
-                .where(col(Cluster.source_integration_id) == integration_id)
-            )
             cluster = result.scalar_one_or_none()
             return None if cluster is None else self._without_secret(cluster)
 
@@ -180,7 +158,7 @@ class ClusterStore(StoreBase):
                 return None
             return self._without_secret(cluster)
 
-    async def update(  # noqa: C901
+    async def update(
         self,
         cluster_id: uuid.UUID,
         *,
@@ -191,8 +169,6 @@ class ClusterStore(StoreBase):
         ca_certificate: str | None = None,
         enabled: bool | None = None,
         labels: dict[str, str] | None = None,
-        project_ids: _UnsetType | builtins.list[uuid.UUID] | None = _UNSET,
-        source_revision: int | None = None,
     ) -> Cluster:
         """Update mutable cluster fields."""
         async with self._session_context() as session:
@@ -212,10 +188,6 @@ class ClusterStore(StoreBase):
                     cluster.enabled = enabled
                 if labels is not None:
                     cluster.labels = merge_user_labels(cluster.labels, labels)
-                if not isinstance(project_ids, _UnsetType):
-                    cluster.project_ids = project_ids
-                if source_revision is not None:
-                    cluster.source_revision = source_revision
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await session.commit()
@@ -289,8 +261,6 @@ class ClusterStore(StoreBase):
         credential_ref: uuid.UUID | None = None,
         ca_certificate: str | None = None,
         labels: dict[str, str] | None = None,
-        project_ids: _UnsetType | builtins.list[uuid.UUID] | None = _UNSET,
-        source_revision: int | None = None,
     ) -> Cluster:
         """Re-enable a DRAINING cluster and transition it back to ACTIVE."""
         async with self._session_context() as session:
@@ -309,10 +279,6 @@ class ClusterStore(StoreBase):
                     cluster.ca_certificate = ca_certificate
                 if labels is not None:
                     cluster.labels = merge_user_labels(cluster.labels, labels)
-                if not isinstance(project_ids, _UnsetType):
-                    cluster.project_ids = project_ids
-                if source_revision is not None:
-                    cluster.source_revision = source_revision
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await session.commit()

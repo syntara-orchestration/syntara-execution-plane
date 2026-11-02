@@ -85,11 +85,9 @@ def test_cluster_commands_use_uuid_credential_refs():
 
     credential_ref = uuid4()
     command = ClusterRegister(
-        resource_key=uuid4(),
-        desired_revision=1,
+        resource_id=uuid4(),
         name="workers",
         endpoint="https://cluster.example",
-        namespace="execution",
         credential_ref=credential_ref,
     )
 

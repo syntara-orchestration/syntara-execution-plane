@@ -135,7 +135,7 @@ async def test_store_creates_a_registering_cluster_and_owns_commit() -> None:
     credential_ref = uuid.uuid4()
 
     cluster = await store.create(
-        "cluster-a", "https://cluster.example", credential_ref, actor_id, {"region": "eu-west"}
+        uuid.uuid4(), "cluster-a", "https://cluster.example", credential_ref, actor_id, {"region": "eu-west"}
     )
 
     assert cluster.status is ClusterStatus.REGISTERING
@@ -159,6 +159,7 @@ async def test_store_persists_an_explicit_cluster_type() -> None:
     store._session_factory = _SessionFactory(session)  # type: ignore[assignment]
 
     cluster = await store.create(
+        uuid.uuid4(),
         "cluster-a",
         "https://cluster.example",
         uuid.uuid4(),
@@ -181,7 +182,7 @@ async def test_store_rolls_back_failed_cluster_creation() -> None:
     store._session_factory = _SessionFactory(session)  # type: ignore[assignment]
 
     with pytest.raises(RuntimeError, match="database unavailable"):
-        await store.create("cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
+        await store.create(uuid.uuid4(), "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
 
     assert session.rollbacks == 1
     await store.close()
@@ -257,8 +258,9 @@ async def test_store_ignores_cluster_finalization_before_draining() -> None:
 
 
 class _ClusterStore:
-    def __init__(self, cluster: Cluster) -> None:
+    def __init__(self, cluster: Cluster, *, exists: bool = False) -> None:
         self.cluster = cluster
+        self.exists = exists
         self.states: list[tuple[ClusterStatus, str | None]] = []
         self.created = False
         self.updates: list[dict[str, object]] = []
@@ -267,6 +269,7 @@ class _ClusterStore:
 
     async def create(
         self,
+        _cluster_id: uuid.UUID,
         _name: str,
         _endpoint: str,
         _credential_ref: uuid.UUID,
@@ -275,13 +278,13 @@ class _ClusterStore:
         *,
         cluster_type: ClusterType = ClusterType.OPENSHIFT,
         source_client_id: str | None = None,
-        source_integration_id: uuid.UUID | None = None,
-        source_revision: int = 0,
-        project_ids: list[uuid.UUID] | None = None,
         ca_certificate: str | None = None,
     ) -> Cluster:
         self.created = True
         return self.cluster
+
+    async def get(self, _cluster_id: uuid.UUID) -> Cluster | None:
+        return self.cluster if self.exists else None
 
     async def update(
         self,
@@ -293,8 +296,6 @@ class _ClusterStore:
         credential_ref: uuid.UUID | None = None,
         ca_certificate: str | None = None,
         labels: dict[str, str] | None = None,
-        project_ids: object = None,
-        source_revision: int | None = None,
     ) -> Cluster:
         kwargs: dict[str, object] = {
             "updated_by": updated_by,
@@ -319,9 +320,6 @@ class _ClusterStore:
     async def get_by_name(self, _name: str) -> Cluster | None:
         return self.cluster
 
-    async def get_by_source(self, _client_id: str, _integration_id: uuid.UUID) -> Cluster | None:
-        return self.cluster
-
     async def reactivate(
         self,
         _cluster_id: uuid.UUID,
@@ -331,8 +329,6 @@ class _ClusterStore:
         credential_ref: uuid.UUID | None = None,
         ca_certificate: str | None = None,
         labels: dict[str, str] | None = None,
-        project_ids: object = None,
-        source_revision: int | None = None,
     ) -> Cluster:
         return self.cluster
 
@@ -468,6 +464,7 @@ async def test_registrar_creates_cluster_with_identity_label_and_cleanses_user_l
     service = ClusterRegistrar(store, _TargetService(), _Discovery(object()))
 
     cluster = await service.provision(
+        uuid.uuid4(),
         "cluster-a",
         "https://cluster.example",
         uuid.uuid4(),
@@ -490,6 +487,7 @@ async def test_registrar_provision_promotes_the_requested_global_default() -> No
     service = ClusterRegistrar(store, _TargetService(), _Discovery(object()))
 
     result = await service.provision(
+        cluster.id,
         "cluster-a",
         "https://cluster.example",
         uuid.uuid4(),
@@ -513,6 +511,7 @@ async def test_registrar_provision_bootstraps_a_default_when_none_exists() -> No
     service = ClusterRegistrar(store, _TargetService(), _Discovery(object()))
 
     result = await service.provision(
+        cluster.id,
         "cluster-a",
         "https://cluster.example",
         uuid.uuid4(),
@@ -592,6 +591,7 @@ async def test_registrar_reactivate_preserves_the_cluster_identity_label() -> No
     service = ClusterRegistrar(store, _TargetService(targets=[target]), _Discovery(object()))
 
     await service.provision(
+        cluster.id,
         "cluster-a",
         "https://cluster.example",
         uuid.uuid4(),
@@ -634,7 +634,7 @@ async def test_registrar_creates_every_discovered_target_via_target_port_then_ac
     )
     service = ClusterRegistrar(store, targets, discovery)
 
-    result = await service.register("cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
+    result = await service.register(cluster.id, "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
 
     assert result.status is ClusterStatus.ACTIVE
     assert [target["is_default"] for target in targets.created] == [True, False]
@@ -671,6 +671,7 @@ async def test_registrar_register_promotes_the_requested_global_default() -> Non
     actor_id = uuid.uuid4()
 
     result = await service.register(
+        cluster.id,
         "cluster-a",
         "https://cluster.example",
         uuid.uuid4(),
@@ -695,7 +696,9 @@ async def test_registrar_marks_persisted_cluster_error_when_discovery_or_default
     store = _ClusterStore(cluster)
     failed_discovery = ClusterRegistrar(store, _TargetService(), _Discovery(DiscoveryResult.failed("unreachable")))
 
-    result = await failed_discovery.register("cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
+    result = await failed_discovery.register(
+        cluster.id, "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4()
+    )
 
     assert result.status is ClusterStatus.ERROR
     assert store.states == [(ClusterStatus.ERROR, "discovery failed")]
@@ -721,7 +724,9 @@ async def test_registrar_marks_persisted_cluster_error_when_discovery_or_default
         ),
     )
 
-    result = await default_failure.register("cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
+    result = await default_failure.register(
+        cluster.id, "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4()
+    )
 
     assert result.status is ClusterStatus.ERROR
     assert "default target" in (result.status_message or "")
@@ -735,7 +740,7 @@ async def test_registrar_marks_persisted_cluster_error_when_discovery_raises() -
     store = _ClusterStore(cluster)
     service = ClusterRegistrar(store, _TargetService(), _FailingDiscovery())
 
-    result = await service.register("cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
+    result = await service.register(cluster.id, "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4())
 
     assert result.status is ClusterStatus.ERROR
     assert result.status_message == "discovery failed"
@@ -762,7 +767,7 @@ async def test_registrar_marks_cluster_error_when_discovery_returns_no_single_de
     )
 
     result = await ClusterRegistrar(store, _TargetService(), discovery).register(
-        "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4()
+        cluster.id, "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4()
     )
 
     assert result.status is ClusterStatus.ERROR
@@ -799,7 +804,7 @@ async def test_registrar_keeps_cluster_active_when_a_non_default_target_fails() 
     )
 
     result = await ClusterRegistrar(store, targets, discovery).register(
-        "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4()
+        cluster.id, "cluster-a", "https://cluster.example", uuid.uuid4(), uuid.uuid4()
     )
 
     assert result.status is ClusterStatus.ACTIVE
@@ -841,9 +846,10 @@ async def test_reactivate_preserves_the_current_default_target_configuration() -
     targets = _TargetService(targets=[target])
     actor_id = uuid.uuid4()
     target_credential_ref = uuid.uuid4()
-    service = ClusterRegistrar(_ClusterStore(cluster), targets, _Discovery(object()))
+    service = ClusterRegistrar(_ClusterStore(cluster, exists=True), targets, _Discovery(object()))
 
     await service.provision(
+        cluster.id,
         "cluster-a",
         "https://cluster.example",
         target_credential_ref,

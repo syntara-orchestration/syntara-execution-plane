@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from sqlalchemy import Column, Index, Integer, String, UniqueConstraint, Uuid, text
+from sqlalchemy import Column, Index, String, Uuid, text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import DateTime
@@ -13,7 +13,6 @@ from sqlmodel import Field, Relationship, SQLModel
 
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.credential import EncryptedCredential
-from execution_plane.models.sqlmodel_types import UUIDListJSONB
 
 if TYPE_CHECKING:
     type ExecutionTarget = Any
@@ -59,15 +58,14 @@ class Cluster(SQLModel, table=True):
         "status_message",
         "enabled",
         "is_default",
-        "source_integration_id",
     ]
     __table_args__ = (
-        UniqueConstraint("source_client_id", "source_integration_id", name="uq_clusters_source_integration"),
         Index("uq_clusters_default", "is_default", unique=True, postgresql_where=text("is_default = true")),
         {"schema": EP_SCHEMA},
     )
 
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    # Caller-supplied physical id, shared with the owning AO Integration (same UUID).
+    id: uuid.UUID = Field(primary_key=True)
     name: str = Field(sa_column=Column(String, nullable=False))
     endpoint: str = Field(sa_column=Column(String, nullable=False))
     status: ClusterStatus = Field(
@@ -90,13 +88,6 @@ class Cluster(SQLModel, table=True):
         exclude=True,
     )
     source_client_id: str | None = Field(default=None, sa_column=Column(String(128), nullable=True))
-    source_integration_id: uuid.UUID | None = Field(default=None, nullable=True)
-    source_revision: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
-    project_ids: list[uuid.UUID] | None = Field(
-        default=None,
-        sa_column=Column(UUIDListJSONB(), nullable=True),
-        description="Null permits all projects; a list limits placement and target visibility.",
-    )
     cluster_type: ClusterType = Field(
         default=ClusterType.OPENSHIFT,
         sa_column=Column(

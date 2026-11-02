@@ -54,7 +54,6 @@ class ClusterRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    source_integration_id: uuid.UUID | None
     name: str
     endpoint: str
     status: str
@@ -62,6 +61,5 @@ class ClusterRead(BaseModel):
     enabled: bool
     is_default: bool
     labels: dict[str, str]
-    project_ids: list[uuid.UUID] | None
     created_at: datetime
     updated_at: datetime
