@@ -26,7 +26,6 @@ def register_cluster(
     api_url: str,
     cluster_name: str,
     endpoint: str,
-    namespace: str,
     credential_ref: UUID,
     ca_certificate: str | None = None,
     labels: dict[str, str] | None = None,
@@ -41,7 +40,6 @@ def register_cluster(
     payload: dict[str, object] = {
         "name": cluster_name,
         "endpoint": endpoint,
-        "namespace": namespace,
         "credential_ref": str(credential_ref),
         "labels": labels or {"execution-plane.syntara.io/local": "kind"},
         "enabled": True,
@@ -67,7 +65,6 @@ def main() -> int:
     parser.add_argument("--api-url", default=os.environ.get("AO_API_BASE", DEFAULT_API_URL))
     parser.add_argument("--cluster-name", required=True)
     parser.add_argument("--endpoint", required=True)
-    parser.add_argument("--namespace", required=True)
     parser.add_argument("--credential-ref", required=True, type=UUID)
     parser.add_argument("--ca-file", type=Path)
     parser.add_argument("--admin-username", default=os.environ.get("ADMIN_USERNAME", "admin"))

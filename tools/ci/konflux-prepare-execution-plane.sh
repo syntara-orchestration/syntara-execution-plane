@@ -201,7 +201,6 @@ _register_cluster() {
     --api-url "${AO_API_BASE}" \
     --cluster-name "${CLUSTER_NAME}" \
     --endpoint "${ENDPOINT}" \
-    --namespace "${NAMESPACE}" \
     --credential-ref "${credential_ref}" \
     --ca-file "${ca_pem}" \
     --insecure
