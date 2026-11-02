@@ -37,7 +37,7 @@ spec:
     finally: "1h"
   params:
     - name: git-url
-      value: "{{source_url}}"
+      value: https://github.com/syntara-orchestration/syntara-execution-plane
     - name: pipeline-github-org
       value: "{{repo_owner}}"
     - name: pipeline-github-repo

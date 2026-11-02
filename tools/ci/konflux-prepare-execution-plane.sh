@@ -214,29 +214,6 @@ _configure_ep_callback_url() {
   kubectl rollout status "deploy/${EP_WORKER_DEPLOY}" -n "${AO_NAMESPACE}" --timeout=180s
 }
 
-_allow_ep_callback_identity() {
-  local callback_cn allowlist ep_url
-  callback_cn="execution-plane-callback.ao.svc"
-  ep_url=$(_ep_api_url)
-  allowlist=$(kubectl get deploy "${AO_NAME}-backend" -n "${AO_NAMESPACE}" -o json | python3 -c '
-import json, sys
-deploy = json.load(sys.stdin)
-env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
-raw = next((e.get("value") or "[]" for e in env if e.get("name") == "APP_S2S_TLS_CN_ALLOWLIST"), "[]")
-cns = json.loads(raw)
-need = "execution-plane-callback.ao.svc"
-if need not in cns:
-    cns.append(need)
-print(json.dumps(cns))
-')
-  echo "=== Allow EP callback CN ${callback_cn} on ${AO_NAME}-backend ==="
-  kubectl set env "deploy/${AO_NAME}-backend" -n "${AO_NAMESPACE}" \
-    "APP_EP_CALLBACK_SERVICE_CN=${callback_cn}" \
-    "APP_S2S_TLS_CN_ALLOWLIST=${allowlist}" \
-    "APP_EP_API_URL=${ep_url}"
-  kubectl rollout status "deploy/${AO_NAME}-backend" -n "${AO_NAMESPACE}" --timeout=180s
-}
-
 _register_cluster_binding() {
   local issuer=$1 credential_ref=$2
   kubectl get configmap kube-root-ca.crt -n "${AO_NAMESPACE}" \
@@ -435,7 +412,6 @@ chmod 600 "${WORK_DIR}/jwt-primary.pem"
 AO_JWT_ISSUER=$(_ao_jwt_issuer)
 echo "AO JWT issuer: ${AO_JWT_ISSUER}"
 
-_allow_ep_callback_identity
 _configure_ep_callback_url
 _register_cluster_binding "${AO_JWT_ISSUER}" "${CREDENTIAL_REF}"
 
