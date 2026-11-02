@@ -3,9 +3,8 @@
 #
 # This PR's Execution Plane head is what gets deployed and tested (the
 # pipeline source repo provides ep-revision); AO comes from the pipeline's
-# ao-revision default (feat/ANSTRAT-1803 — must include EP script dispatch
-# and credential.resolve until those land on devel). The ao-operator-revision
-# pin drops when the prebuilt operator bundle honors ENABLE_EXECUTION_PLANE
+# ao-revision default (devel). The ao-operator-revision pin drops when the
+# prebuilt operator bundle honors ENABLE_EXECUTION_PLANE
 # (automation-orchestrator-operator#1573).
 #
 # Replaces the ~1,000-line inline PipelineRun. The pipeline bundle must
@@ -55,7 +54,7 @@ spec:
     - name: ao-git-url
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
-      value: feat/ANSTRAT-1803
+      value: devel
   pipelineRef:
     resolver: bundles
     params:
