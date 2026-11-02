@@ -35,8 +35,21 @@ class _StoreContext:
 
 
 class _CredentialResolver:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events
+
+    async def __aenter__(self) -> Self:
+        if self.events is not None:
+            self.events.append("resolver:start")
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        if self.events is not None:
+            self.events.append("resolver:stop")
+
     async def close(self) -> None:
-        return None
+        if self.events is not None:
+            self.events.append("resolver:close")
 
 
 class _DrainMonitor:
@@ -184,7 +197,7 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch:
         lambda target, cluster, settings, **_kwargs: _ResourceMonitor(target, cluster, settings, events),
     )
     monkeypatch.setattr(worker, "CompletionNotifier", lambda _settings: _CompletionDelivery(SimpleNamespace(), events))
-    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver())
+    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver(events))
     monkeypatch.setattr(worker, "VanillaK8sWorkerManager", lambda *_args, **_kwargs: workload_manager)
 
     def build_resolver(cluster: object, target: object, managers: WorkerManagerRegistry) -> object:
@@ -210,6 +223,8 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch:
 
     assert built_with == [(cluster_store, target_store, poll_calls[0])]
     assert poll_calls[0].get(BackendType.VANILLA_K8S) is workload_manager
+    assert "resolver:start" in events
+    assert "resolver:stop" in events
 
 
 @pytest.mark.asyncio

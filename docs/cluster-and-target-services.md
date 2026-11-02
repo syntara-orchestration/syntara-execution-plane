@@ -59,7 +59,7 @@ across Clusters: two Clusters cannot represent the same endpoint.
 credential value. Before dispatch, health probing, or Kubernetes reconciliation,
 EP sends a `credential.resolve` command to
 `EP_CREDENTIAL_RESOLUTION_CALLBACK_URL` at the caller's command ingress and uses the correlated
-`CredentialResolution` value only in memory.
+credential value only in memory.
 
 `REGISTERING` represents a Cluster whose connectivity, dependencies, or target
 configuration is not yet complete. `ACTIVE` means the Cluster is available to

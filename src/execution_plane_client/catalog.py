@@ -6,7 +6,7 @@ from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.clusters import ClusterDelete, ClusterProvision, ClusterRegister, ClusterUpdate
 from execution_plane_client.commands.control import CancelCommand, Completion
 from execution_plane_client.commands.credentials import CredentialResolve
-from execution_plane_client.commands.targets import TargetDelete, TargetRegister, TargetUpdate
+from execution_plane_client.commands.targets import TargetDelete, TargetHealth, TargetRegister, TargetUpdate
 from execution_plane_client.commands.work import WorkExecute
 from execution_plane_client.errors import UnsupportedCommand
 from execution_plane_client.protocol import MessageEnvelope
@@ -37,6 +37,7 @@ class CommandCatalog:
             TargetRegister,
             TargetUpdate,
             TargetDelete,
+            TargetHealth,
             CancelCommand,
         )
         self._definitions = {

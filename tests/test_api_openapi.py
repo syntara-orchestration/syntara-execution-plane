@@ -76,6 +76,7 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
         ),
         ("execution_target.update", {"resource_id": str(uuid4()), "labels": {}}),
         ("execution_target.delete", {"resource_id": str(uuid4())}),
+        ("execution_target.health", {"resource_id": str(uuid4())}),
     ],
 )
 def test_command_schema_validates_the_other_installed_commands(kind, payload) -> None:
@@ -128,6 +129,7 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
         "execution_target.register": "TargetRegister",
         "execution_target.update": "TargetUpdate",
         "execution_target.delete": "TargetDelete",
+        "execution_target.health": "TargetHealth",
     }
     assert command["discriminator"]["propertyName"] == "command_type"
     mapping = command["discriminator"]["mapping"]
@@ -158,6 +160,31 @@ def test_completion_is_documented_as_an_outbound_command() -> None:
     assert "parent_command_id" in command["required"]
     receipt = webhook["responses"]["2XX"]["content"]["application/json"]["schema"]
     assert receipt == {"$ref": "#/components/schemas/TransportReceipt"}
+
+
+def test_transport_receipt_uses_discriminated_command_result() -> None:
+    document = create_app().openapi()
+    components = document["components"]["schemas"]
+    result = components["TransportReceipt"]["properties"]["result"]
+    union = result["anyOf"][0]
+    mapping = union["discriminator"]["mapping"]
+
+    assert union["discriminator"]["propertyName"] == "command_type"
+    assert mapping == {
+        "credential.resolve": "#/components/schemas/CredentialResolveCommandResult",
+        "execution_target.health": "#/components/schemas/TargetHealthCommandResult",
+    }
+    assert union["oneOf"] == [{"$ref": reference} for reference in mapping.values()]
+    assert components["CredentialResolveCommandResult"]["properties"]["credential"] == {
+        "type": "string",
+        "maxLength": 65536,
+        "minLength": 1,
+        "title": "Credential",
+    }
+    assert components["TargetHealthCommandResult"]["properties"]["healthy"] == {
+        "type": "boolean",
+        "title": "Healthy",
+    }
 
 
 def test_command_schema_references_resolve_and_do_not_replace_resource_schemas() -> None:

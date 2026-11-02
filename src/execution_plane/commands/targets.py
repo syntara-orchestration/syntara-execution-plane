@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
+from execution_plane.config import get_ep_settings
+from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
 from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     ExecutionTargetStore,
@@ -15,8 +17,15 @@ from execution_plane.execution_target.execution_target_store import (
 from execution_plane.models.cluster import Cluster
 from execution_plane.models.execution_target import BackendType, ExecutionTarget
 from execution_plane.models.execution_target_placement import ExecutionTargetPlacement
+from execution_plane.resource_monitor.probes import DispatchingTargetProbe
 from execution_plane_client.commands.base import CommandPayload
-from execution_plane_client.commands.targets import TargetDelete, TargetRegister, TargetUpdate
+from execution_plane_client.commands.results import TargetHealthCommandResult
+from execution_plane_client.commands.targets import (
+    TargetDelete,
+    TargetHealth,
+    TargetRegister,
+    TargetUpdate,
+)
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
@@ -138,3 +147,50 @@ class TargetDeleteCommandHandler:
             target_store = ExecutionTargetStore.from_transaction(session)
             await target_store.request_delete(command.resource_id, SYSTEM_ACTOR_ID)
         return _target_result(command.resource_id)
+
+
+class TargetHealthCommandHandler:
+    """Probe one caller-owned ExecutionTarget on demand."""
+
+    async def handle(
+        self, message: MessageEnvelope, payload: CommandPayload, context: EPCommandContext
+    ) -> HandlingResult:
+        """Resolve the Cluster credential and return one probe result."""
+        del message
+        command = _validated_payload(payload, TargetHealth)
+        sessions = async_sessionmaker(context.engine, expire_on_commit=False)
+        async with sessions.begin() as session:
+            target = await session.get(ExecutionTarget, command.resource_id)
+            if target is None:
+                raise ResourceNotFoundError
+            cluster = await session.get(Cluster, target.cluster_id)
+            if cluster is None or cluster.source_client_id != context.client_id:
+                raise ResourceNotFoundError
+
+        settings = get_ep_settings()
+        async with CredentialResolver(settings) as credential_resolver:
+            try:
+                credential = await credential_resolver.resolve(
+                    cluster.credential_ref,
+                    client_id=context.client_id,
+                )
+            except CredentialResolutionError:
+                health = TargetHealthCommandResult(
+                    healthy=False,
+                    message="Cluster credential could not be resolved",
+                )
+            else:
+                probe = DispatchingTargetProbe(
+                    timeout_seconds=settings.resource_monitor_probe_timeout_seconds,
+                )
+                probe_result = await probe.probe(cluster, credential, target)
+                health = TargetHealthCommandResult(
+                    healthy=probe_result.healthy,
+                    message=probe_result.message,
+                    skipped=probe_result.skipped,
+                )
+
+            return HandlingResult(
+                ResourceReference(kind="execution_target", resource_id=command.resource_id),
+                health,
+            )

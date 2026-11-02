@@ -123,11 +123,3 @@ class CapabilitiesRead(WireModel):
 
     protocol_revision: Literal[1] = 1
     commands: dict[str, list[int]]
-
-
-class TransportReceipt(WireModel):
-    """Receipt of a handled request, without a persisted command record."""
-
-    received: Literal[True] = True
-    message_id: UUID
-    resource: ResourceReference | None = None

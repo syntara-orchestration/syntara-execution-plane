@@ -10,12 +10,15 @@ import pytest
 
 from execution_plane.api.auth import ServiceIdentity, get_service_identity
 from execution_plane.api.main import create_app
-from execution_plane.commands.targets import TargetUpdateCommandHandler
+from execution_plane.commands.targets import TargetHealthCommandHandler, TargetUpdateCommandHandler
 from execution_plane.execution_target.execution_target_store import TargetNotEligibleForDefaultError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.control import CancelCommand
+from execution_plane_client.commands.results import TargetHealthCommandResult
 from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.handlers import HandlingResult
+from execution_plane_client.protocol import ResourceReference
 
 
 def command_message(kind="command.cancel", payload=None):
@@ -141,6 +144,42 @@ async def test_ingress_maps_ineligible_default_promotion_to_conflict(monkeypatch
     assert response.status_code == 409
 
 
+async def test_ingress_returns_command_result(monkeypatch):
+    target_id = uuid4()
+
+    async def health(*_args: object, **_kwargs: object) -> HandlingResult:
+        return HandlingResult(
+            ResourceReference(kind="execution_target", resource_id=target_id),
+            TargetHealthCommandResult(
+                command_type="execution_target.health",
+                command_revision=1,
+                healthy=True,
+                message=None,
+                skipped=False,
+            ),
+        )
+
+    monkeypatch.setattr(TargetHealthCommandHandler, "handle", health)
+    app = create_app()
+    app.state.ep_engine = object()
+    app.dependency_overrides[get_service_identity] = lambda: ServiceIdentity(
+        client_id="ao", scopes=frozenset({"execution_target.health"})
+    )
+    message = command_message("execution_target.health", {"resource_id": str(target_id)})
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://ep.test") as client:
+        response = await client.post("/v1/commands", json=message)
+
+    assert response.status_code == 202
+    assert response.json()["result"] == {
+        "command_type": "execution_target.health",
+        "command_revision": 1,
+        "healthy": True,
+        "message": None,
+        "skipped": False,
+    }
+
+
 async def test_strict_json_rejects_duplicate_keys():
     app = create_app()
     app.dependency_overrides[get_service_identity] = lambda: ServiceIdentity(client_id="ao", scopes=frozenset())
@@ -177,6 +216,6 @@ async def test_capabilities_do_not_advertise_uninstalled_completion_handlers():
         response = await client.get("/v1/capabilities")
     assert response.status_code == 200
     commands = response.json()["commands"]
-    assert len(commands) == 9
+    assert len(commands) == 10
     assert commands["command.cancel"] == [1]
     assert "work.execute.completed" not in commands

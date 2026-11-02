@@ -35,8 +35,8 @@ message = ClusterRegister(
 body = message.model_dump(mode="json")  # Send using your application's HTTP client.
 ```
 
-Every concrete command supports this method, including `ClusterDelete` and
-`TargetDelete`. Partial updates serialize only supplied fields, retaining explicit
+Every concrete command supports this method, including `ClusterDelete`,
+`TargetDelete` and `TargetHealth`. Partial updates serialize only supplied fields, retaining explicit
 nulls and placement discriminators without resetting omitted configuration.
 
 By default, each call generates a command UUID and UTC timestamp; `message_id`

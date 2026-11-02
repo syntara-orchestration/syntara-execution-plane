@@ -10,12 +10,15 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from execution_plane.commands import targets as targets_module
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.commands.targets import (
     TargetDeleteCommandHandler,
+    TargetHealthCommandHandler,
     TargetRegisterCommandHandler,
     TargetUpdateCommandHandler,
 )
+from execution_plane.credential_resolution.resolver import CredentialResolutionError
 from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     ExecutionTargetStore,
@@ -23,11 +26,14 @@ from execution_plane.execution_target.execution_target_store import (
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
 from execution_plane.models.execution_target_placement import ExecutionTargetPlacement, KubernetesPlacement
+from execution_plane.resource_monitor.probes import ProbeResult
+from execution_plane_client.commands.results import TargetHealthCommandResult
 from execution_plane_client.commands.targets import (
     KubernetesPlacement as ClientKubernetesPlacement,
 )
 from execution_plane_client.commands.targets import (
     TargetDelete,
+    TargetHealth,
     TargetRegister,
     TargetUpdate,
 )
@@ -169,6 +175,36 @@ class _SessionMaker:
         return _Transaction(self.session)
 
 
+class _ScopedCredentialResolver:
+    def __init__(self, *, credential: str = "resolved-token", error: Exception | None = None) -> None:
+        self.credential = credential
+        self.error = error
+        self.events: list[str] = []
+
+    async def __aenter__(self) -> Self:
+        self.events.append("resolver:enter")
+        return self
+
+    async def __aexit__(self, *_exc_info: object) -> None:
+        self.events.append("resolver:exit")
+
+    async def resolve(self, credential_ref: UUID, *, client_id: str) -> str:
+        del credential_ref, client_id
+        self.events.append("resolver:resolve")
+        if self.error is not None:
+            raise self.error
+        return self.credential
+
+
+class _FakeProbe:
+    def __init__(self, result: ProbeResult) -> None:
+        self.result = result
+
+    async def probe(self, cluster: Cluster, credential: str, target: ExecutionTarget) -> ProbeResult:
+        del cluster, target
+        return self.result
+
+
 def _context(monkeypatch: pytest.MonkeyPatch, session: _Session, store: _FakeStore) -> EPCommandContext:
     monkeypatch.setattr(
         "execution_plane.commands.targets.async_sessionmaker",
@@ -297,3 +333,66 @@ async def test_target_delete_rejects_the_current_default(monkeypatch: pytest.Mon
         )
 
     assert store.delete_requested == []
+
+
+@pytest.mark.asyncio
+async def test_target_health_resolves_cluster_credential_and_probes_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cluster = _cluster()
+    target = _target(cluster_id=cluster.id)
+    session = _Session(cluster=cluster, target=target)
+    store = _FakeStore(target=target)
+    probe_result = ProbeResult(healthy=True)
+    resolver = _ScopedCredentialResolver()
+    monkeypatch.setattr(targets_module, "CredentialResolver", lambda _settings: resolver)
+    monkeypatch.setattr(targets_module, "DispatchingTargetProbe", lambda **_kwargs: _FakeProbe(probe_result))
+    handler = TargetHealthCommandHandler()
+
+    result = await handler.handle(
+        Mock(spec=MessageEnvelope),
+        TargetHealth(resource_id=target.id),
+        _context(monkeypatch, session, store),
+    )
+
+    assert result.resource is not None
+    assert result.resource.resource_id == target.id
+    assert result.result == TargetHealthCommandResult(
+        command_type="execution_target.health",
+        command_revision=1,
+        healthy=True,
+        message=None,
+        skipped=False,
+    )
+    assert resolver.events == ["resolver:enter", "resolver:resolve", "resolver:exit"]
+
+
+@pytest.mark.asyncio
+async def test_target_health_reports_resolution_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cluster = _cluster()
+    target = _target(cluster_id=cluster.id)
+    session = _Session(cluster=cluster, target=target)
+    store = _FakeStore(target=target)
+
+    resolver = _ScopedCredentialResolver(error=CredentialResolutionError())
+    monkeypatch.setattr(targets_module, "CredentialResolver", lambda _settings: resolver)
+    monkeypatch.setattr(
+        targets_module,
+        "DispatchingTargetProbe",
+        lambda **_kwargs: _FakeProbe(ProbeResult(healthy=True)),
+    )
+    handler = TargetHealthCommandHandler()
+
+    result = await handler.handle(
+        Mock(spec=MessageEnvelope),
+        TargetHealth(resource_id=target.id),
+        _context(monkeypatch, session, store),
+    )
+
+    assert result.result is not None
+    assert result.result.healthy is False
+    assert result.result.message == "Cluster credential could not be resolved"
+    assert result.result.skipped is False
+    assert resolver.events == ["resolver:enter", "resolver:resolve", "resolver:exit"]

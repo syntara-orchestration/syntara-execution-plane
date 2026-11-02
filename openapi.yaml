@@ -626,6 +626,29 @@ components:
       - updated_at
       title: ClusterRead
       description: Provisioned cluster state, keyed by the actual cluster UUID.
+    CredentialResolveCommandResult:
+      properties:
+        command_type:
+          type: string
+          const: credential.resolve
+          title: Command Type
+          default: credential.resolve
+        command_revision:
+          type: integer
+          const: 1
+          title: Command Revision
+          default: 1
+        credential:
+          type: string
+          maxLength: 65536
+          minLength: 1
+          title: Credential
+      additionalProperties: false
+      type: object
+      required:
+      - credential
+      title: CredentialResolveCommandResult
+      description: Typed result returned for a credential-resolution command.
     ExecutionTargetRead:
       properties:
         id:
@@ -856,6 +879,36 @@ components:
       required:
       - resources
       title: ResourcesResponse[WorkItemRead]
+    TargetHealthCommandResult:
+      properties:
+        command_type:
+          type: string
+          const: execution_target.health
+          title: Command Type
+          default: execution_target.health
+        command_revision:
+          type: integer
+          const: 1
+          title: Command Revision
+          default: 1
+        healthy:
+          type: boolean
+          title: Healthy
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+        skipped:
+          type: boolean
+          title: Skipped
+          default: false
+      additionalProperties: false
+      type: object
+      required:
+      - healthy
+      title: TargetHealthCommandResult
+      description: Typed result returned for an execution-target health command.
     TargetStatus:
       type: string
       enum:
@@ -883,6 +936,18 @@ components:
           anyOf:
           - $ref: '#/components/schemas/ResourceReference'
           - type: 'null'
+        result:
+          anyOf:
+          - oneOf:
+            - $ref: '#/components/schemas/CredentialResolveCommandResult'
+            - $ref: '#/components/schemas/TargetHealthCommandResult'
+            discriminator:
+              propertyName: command_type
+              mapping:
+                credential.resolve: '#/components/schemas/CredentialResolveCommandResult'
+                execution_target.health: '#/components/schemas/TargetHealthCommandResult'
+          - type: 'null'
+          title: Result
       additionalProperties: false
       type: object
       required:
@@ -1166,6 +1231,7 @@ components:
       - $ref: '#/components/schemas/ClusterUpdateCommandV1'
       - $ref: '#/components/schemas/CancelCommandV1'
       - $ref: '#/components/schemas/TargetDeleteCommandV1'
+      - $ref: '#/components/schemas/TargetHealthCommandV1'
       - $ref: '#/components/schemas/TargetRegisterCommandV1'
       - $ref: '#/components/schemas/TargetUpdateCommandV1'
       - $ref: '#/components/schemas/WorkExecuteCommandV1'
@@ -1180,6 +1246,7 @@ components:
           cluster.update: '#/components/schemas/ClusterUpdateCommandV1'
           command.cancel: '#/components/schemas/CancelCommandV1'
           execution_target.delete: '#/components/schemas/TargetDeleteCommandV1'
+          execution_target.health: '#/components/schemas/TargetHealthCommandV1'
           execution_target.register: '#/components/schemas/TargetRegisterCommandV1'
           execution_target.update: '#/components/schemas/TargetUpdateCommandV1'
           work.execute: '#/components/schemas/WorkExecuteCommandV1'
@@ -1327,6 +1394,18 @@ components:
       - resource_id
       title: TargetDelete
       description: Request draining of an independently managed execution target.
+    TargetHealth:
+      properties:
+        resource_id:
+          type: string
+          format: uuid
+          title: Resource Id
+      additionalProperties: false
+      type: object
+      required:
+      - resource_id
+      title: TargetHealth
+      description: Query the current health of one ExecutionTarget.
     TargetRegister:
       properties:
         resource_id:
@@ -1729,6 +1808,40 @@ components:
       - payload
       - occurred_at
       title: TargetDeleteCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    TargetHealthCommandV1:
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          title: Command Id
+        parent_command_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Parent Command Id
+        command_type:
+          type: string
+          const: execution_target.health
+        command_revision:
+          type: integer
+          const: 1
+        payload:
+          $ref: '#/components/schemas/TargetHealth'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_id
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: TargetHealthCommandV1
       description: One versioned operation; participants persist only its domain effects.
     TargetRegisterCommandV1:
       properties:

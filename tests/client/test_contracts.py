@@ -97,9 +97,10 @@ def test_cluster_commands_use_uuid_credential_refs():
     assert "credential" not in payload
 
 
-def test_credential_resolution_contract_hides_value_from_repr_and_correlates_by_message_id():
+def test_credential_resolution_contract_hides_value_and_receipt_correlates_result():
     from execution_plane_client.catalog import CommandCatalog
-    from execution_plane_client.commands.credentials import CredentialResolution, CredentialResolve
+    from execution_plane_client.commands.credentials import CredentialResolve
+    from execution_plane_client.commands.results import CredentialResolveCommandResult, TransportReceipt
 
     credential_ref = uuid4()
     message = CredentialResolve(credential_ref=credential_ref).to_message(
@@ -109,14 +110,16 @@ def test_credential_resolution_contract_hides_value_from_repr_and_correlates_by_
     )
 
     payload = CommandCatalog().validate(message)
-    resolution = CredentialResolution(message_id=message.message_id, credential="secret-token")
+    result = CredentialResolveCommandResult(credential="secret-token")
+    receipt = TransportReceipt(message_id=message.message_id, result=result)
 
     assert isinstance(payload, CredentialResolve)
     assert payload.credential_ref == credential_ref
     assert message.command.payload == {"credential_ref": str(credential_ref)}
-    assert resolution.message_id == message.message_id
-    assert "secret-token" not in repr(resolution)
+    assert receipt.message_id == message.message_id
+    assert receipt.result is result
+    assert "secret-token" not in repr(result)
     with pytest.raises(ValidationError, match="credential"):
-        CredentialResolution(message_id=message.message_id, credential="")
+        CredentialResolveCommandResult(credential="")
     with pytest.raises(ValidationError, match="credential"):
-        CredentialResolution(message_id=message.message_id, credential="x" * 65537)
+        CredentialResolveCommandResult(credential="x" * 65537)
