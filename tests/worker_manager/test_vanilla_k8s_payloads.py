@@ -125,6 +125,9 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
     async def persist(_id, result, status, **_kwargs: object) -> None:
         trace.append(("persist", result, status))
 
+    async def mark_dispatched(*_args: object, **_kwargs: object) -> bool:
+        return True
+
     def run_job(**kwargs: object) -> dict:
         kwargs["on_result"](frame)
         assert trace[0][0] == "persist"
@@ -143,7 +146,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
     manager = module.VanillaK8sWorkerManager(
         SimpleNamespace(get_with_credentials=AsyncMock(return_value=target)),
         SimpleNamespace(get_with_credentials=AsyncMock(return_value=cluster)),
-        SimpleNamespace(set_result=persist),
+        SimpleNamespace(set_result=persist, mark_dispatched=mark_dispatched),
         EPSettings(),
         credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
     )

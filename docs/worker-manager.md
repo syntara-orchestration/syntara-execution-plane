@@ -6,7 +6,7 @@ does not require a Kubernetes Job or Pod:
 
 ```python
 class WorkerManager(Protocol):
-    async def dispatch(self, work_item: WorkItem) -> dict[str, Any]: ...
+    async def dispatch(self, work_item: WorkItem) -> dict[str, Any] | None: ...
 ```
 
 The worker process registers managers by `ExecutionTarget.backend_type`. The
@@ -33,8 +33,10 @@ after a controller crash only when both the Job and its Pods are gone.
 
 EP's WorkItem and attempt lifecycle remains authoritative if a Job disappears,
 finishes, or cannot be cleaned up. Claims carry a database owner and generation;
-long-running dispatch refreshes the lease, and every mutation checks the same
-fence. A stale controller cannot update a newer attempt.
+`dispatched` fences external attempt ownership, `running` means Execute has
+been submitted and is not yet terminal, and long-running dispatch refreshes
+the lease. Every mutation checks the same fence. A stale controller cannot
+update a newer attempt.
 
 Known pre-Execute failures, including credential-resolution failures, can be
 requeued after backoff. A gRPC failure after Execute might have been submitted is

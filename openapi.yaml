@@ -1006,6 +1006,7 @@ components:
       - pending
       - claimed
       - dispatched
+      - running
       - cancel_requested
       - reconciliation_required
       - completed

@@ -22,6 +22,11 @@ from syntara_plugin.runtime import ContainerResult
 from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
 from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItemStatus
+from execution_plane.worker_manager.base import (
+    ExecutionStartPersistenceError,
+    ExecutionStartRejectedError,
+    WorkerManagerBase,
+)
 from execution_plane.worker_manager.vanilla_k8s.transport import TransportError, run_job
 from execution_plane_client.commands.work import WorkExecute
 
@@ -51,6 +56,8 @@ class _DispatchContext:
     identity: str
     attempt_id: str
     target_config: dict[str, Any]
+    cancelled: threading.Event
+    execution_start: Callable[[], None]
 
 
 class RetryableDispatchError(Exception):
@@ -85,14 +92,20 @@ class WorkloadOutcomeUnknownError(Exception):
 
 
 class WorkloadCancelledError(Exception):
-    """Cancellation was observed before Execute could be submitted."""
+    """Cancellation was confirmed and its relationship to Execute is retained."""
 
-    def __init__(self) -> None:
-        """Describe a confirmed cold-start cancellation."""
-        super().__init__("Node workload termination was confirmed after cancellation")
+    def __init__(self, *, execution_started: bool) -> None:
+        """Describe a confirmed cancellation and whether Execute was submitted."""
+        self.execution_started = execution_started
+        message = (
+            "Node workload termination was confirmed after execution started"
+            if execution_started
+            else "Node workload termination was confirmed before Execute"
+        )
+        super().__init__(message)
 
 
-class VanillaK8sWorkerManager:
+class VanillaK8sWorkerManager(WorkerManagerBase):
     """Dispatch a work item to a fresh Kubernetes pod and return its terminal result."""
 
     def __init__(
@@ -104,13 +117,13 @@ class VanillaK8sWorkerManager:
         credential_resolver: CredentialResolver | None = None,
     ) -> None:
         """Bind this backend to EP-owned stores and cold-start settings."""
+        super().__init__(work_progress)
         self._target_credentials = target_credentials
         self._cluster_credentials = cluster_credentials
-        self._work_progress = work_progress
         self._settings = settings
         self._credential_resolver = credential_resolver or CredentialResolver(settings)
 
-    async def dispatch(self, work_item: WorkItem) -> dict[str, Any]:
+    async def _dispatch(self, work_item: WorkItem) -> dict[str, Any]:
         """Allocate the worker, stream its result, and persist the WorkItem outcome.
 
         Returns ``{"output": ...}`` on success. Raises:
@@ -158,6 +171,8 @@ class VanillaK8sWorkerManager:
             identity=identity,
             attempt_id=attempt_id,
             target_config=self._k8s_target(target, cluster, credential),
+            cancelled=threading.Event(),
+            execution_start=self.execution_start_callback(work_item),
         )
 
     async def _run_transport(
@@ -201,6 +216,7 @@ class VanillaK8sWorkerManager:
                 progress=partial(self._log_progress, identity=context.identity),
                 on_result=on_result,
                 on_resource=on_resource,
+                on_execute_submitted=partial(self._mark_execute_submitted, context),
                 node_selectors=context.target_config["node_selectors"],
                 tolerations=context.target_config["tolerations"],
                 allowed_egress_cidrs=self._settings.workload_allowed_egress_cidrs,
@@ -236,7 +252,7 @@ class VanillaK8sWorkerManager:
         if exc.retryable:
             raise RetryableDispatchError(str(exc)) from None
         if exc.cancelled_confirmed:
-            raise WorkloadCancelledError from None
+            raise WorkloadCancelledError(execution_started=exc.submitted) from None
         if exc.submitted:
             raise WorkloadOutcomeUnknownError(str(exc)) from None
         raise NodeExecutionError(str(exc), error_type="NodeTransportError") from None
@@ -339,6 +355,18 @@ class VanillaK8sWorkerManager:
     def _log_progress(identity: str, frame: dict[str, Any]) -> None:
         """Log safe transport progress frames."""
         logger.debug("node progress", work_item_id=identity, node_event=frame.get("event"))
+
+    def _mark_execute_submitted(self, context: _DispatchContext) -> None:
+        """Persist execution start at the exact Execute submission boundary."""
+        try:
+            context.execution_start()
+        except ExecutionStartRejectedError:
+            context.cancelled.set()
+            message = "Node execution cancelled before submission"
+            raise TransportError(message, cancellation_requested=True) from None
+        except ExecutionStartPersistenceError as exc:
+            message = "Could not persist node execution start"
+            raise TransportError(message, submitted=True) from exc
 
     async def _resolve_cluster_credential(self, cluster: Cluster) -> str:
         """Resolve the Cluster's credential reference for a dispatch attempt."""

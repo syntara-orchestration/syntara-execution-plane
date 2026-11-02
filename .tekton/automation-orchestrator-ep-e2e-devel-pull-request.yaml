@@ -55,7 +55,7 @@ spec:
     - name: ao-git-url
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
-      value: feat/ANSTRAT-1803
+      value: feat/ANSTRAT-1803-AAP-97911
   pipelineRef:
     resolver: bundles
     params:
