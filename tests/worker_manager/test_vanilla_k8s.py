@@ -45,9 +45,6 @@ async def test_dispatch_marks_running_at_the_execute_submission_boundary(
             "result": ContainerResult(
                 "sha256:" + "a" * 64,
                 output={},
-                status_code=0,
-                error_code="",
-                error_message="",
             ),
         }
 

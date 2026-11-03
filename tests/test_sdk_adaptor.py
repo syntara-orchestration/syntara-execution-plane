@@ -26,13 +26,13 @@ _DIGEST = "sha256:" + "a" * 64
 
 
 @contextmanager
-def _server(*, handler=None, service=None, step="script.v1", fallback=False) -> Iterator[grpc.Channel]:
+def _server(*, handler=None, service=None, step="script.v1") -> Iterator[grpc.Channel]:
     with ThreadPoolExecutor(max_workers=4) as pool:
         server = grpc.server(pool)
         if service is not None:
             rpc.add_ContainerServiceServicer_to_server(service, server)
         else:
-            registry = StepRegistry({}, fallback_step=handler) if fallback else StepRegistry({step: handler})
+            registry = StepRegistry({step: handler})
             add_container_runtime_service(server, registry)
         port = server.add_insecure_port("127.0.0.1:0")
         assert port
@@ -66,8 +66,7 @@ def _invoke(channel, **overrides: object) -> dict[str, Any]:
     )
 
 
-@pytest.mark.parametrize("fallback", [False, True])
-def test_sdk_service_receives_identity_inputs_and_empty_credential_paths(fallback):
+def test_sdk_service_receives_identity_inputs_and_empty_credential_paths():
     calls = []
 
     def handler(invocation) -> ContainerResult:
@@ -82,7 +81,7 @@ def test_sdk_service_receives_identity_inputs_and_empty_credential_paths(fallbac
         calls.append("execute")
         return ContainerResult(_DIGEST, output={"stdout": "hello"})
 
-    with _server(handler=handler, fallback=fallback) as channel:
+    with _server(handler=handler) as channel:
         result = _invoke(channel, on_execute_submitted=lambda: calls.append("submitted"))
     assert calls == ["submitted", "execute"]
     assert _map_result(result, None)["output"] == {"stdout": "hello"}
@@ -137,9 +136,13 @@ def test_deliberate_failure_retains_partial_output_and_status_metadata():
         output={"stdout": "partial", "exit_code": 17},
         status_code=17,
         status_message="script exited",
-        error_code="SCRIPT_FAILED",
-        error_message="Script returned nonzero status",
-        retryable=True,
+        error_result={
+            "code": "SCRIPT_FAILED",
+            "message": "Script returned nonzero status",
+            "retryable": True,
+            "category": "business",
+        },
+        error_schema_digest="sha256:" + "b" * 64,
     )
     with _server(handler=lambda _: terminal) as channel:
         frame = _invoke(channel)
@@ -157,7 +160,12 @@ def test_deliberate_failure_retains_partial_output_and_status_metadata():
 
 
 def test_deliberate_failure_without_output_is_still_a_terminal_failure():
-    terminal = ContainerResult(_DIGEST, status_code=300, error_code="FAILED", error_message="Failed")
+    terminal = ContainerResult(
+        _DIGEST,
+        status_code=300,
+        error_result={"code": "FAILED", "message": "Failed", "retryable": False, "category": "business"},
+        error_schema_digest="sha256:" + "b" * 64,
+    )
     with _server(handler=lambda _: terminal) as channel:
         frame = _invoke(channel)
     with pytest.raises(NodeExecutionError) as error:
