@@ -431,20 +431,28 @@ def _map_result(frame: dict[str, Any], output_config: dict[str, str] | None) -> 
         "output_schema_digest": result.output_schema_digest,
         "status_code": result.status_code,
         "status_message": result.status_message,
-        "retryable": result.retryable,
     }
     if result.object_reference is not None:
         details["object_reference"] = result.object_reference
     output = _select_output(dict(result.output), output_config) if result.output is not None else None
     if result.status_code != 0:
-        details["error_code"] = result.error_code
-        details["error_message"] = result.error_message
+        # Extract error information from error_result
+        error_result = result.error_result or {}
+        error_code = error_result.get("code", "UNKNOWN_ERROR")
+        error_message = error_result.get("message", "Step failed")
+        retryable = error_result.get("retryable", False)
+
+        details["error_code"] = error_code
+        details["error_message"] = error_message
+        details["retryable"] = retryable
         raise NodeExecutionError(
-            result.error_message,
-            error_type="CancelledError" if result.error_code == "CANCELLED" else result.error_code,
+            error_message,
+            error_type="CancelledError" if error_code == "CANCELLED" else error_code,
             output=output,
             details=details,
         )
+    else:
+        details["retryable"] = False
     if output is not None:
         details["output"] = output
     return details

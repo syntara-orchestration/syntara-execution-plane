@@ -11,13 +11,13 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from syntara_plugin.runtime import (
-    ANY_STEP_REVISION,
     ContainerClient,
     ContainerInvocation,
     ContainerProgress,
     ContainerRemoteError,
     ContainerResult,
 )
+from syntara_plugin.runtime.container import ANY_STEP_REVISION
 
 from execution_plane_client.commands.work import WorkloadInvocation
 
