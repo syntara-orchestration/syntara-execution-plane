@@ -43,9 +43,6 @@ async def test_dispatch_resolves_the_cluster_reference_and_passes_the_token_to_k
             "result": ContainerResult(
                 "sha256:" + "a" * 64,
                 output={},
-                status_code=0,
-                error_code="",
-                error_message="",
             ),
         }
 

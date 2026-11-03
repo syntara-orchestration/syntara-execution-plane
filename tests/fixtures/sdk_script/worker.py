@@ -54,21 +54,39 @@ def execute(invocation: ContainerInvocation) -> ContainerResult:
             except subprocess.TimeoutExpired:
                 continue
     status = 0 if process.returncode == 0 else 1
-    return ContainerResult(
-        OUTPUT_SCHEMA_DIGEST,
-        # AO consumes script.v1 results verbatim, so this workload must provide
-        # the ScriptOutput contract rather than only generic process metadata.
-        output={
-            "return_code": process.returncode,
-            "stdout": stdout[:10_000],
-            "stderr": stderr[:10_000],
-            "stdout_json": _stdout_json(language, stdout),
-        },
-        status_code=status,
-        status_message="completed" if status == 0 else "failed",
-        error_code="SCRIPT_FAILED" if status else "",
-        error_message="Script returned nonzero status" if status else "",
-    )
+    if status == 0:
+        return ContainerResult(
+            OUTPUT_SCHEMA_DIGEST,
+            # AO consumes script.v1 results verbatim, so this workload must provide
+            # the ScriptOutput contract rather than only generic process metadata.
+            output={
+                "return_code": process.returncode,
+                "stdout": stdout[:10_000],
+                "stderr": stderr[:10_000],
+                "stdout_json": _stdout_json(language, stdout),
+            },
+            status_code=status,
+            status_message="completed",
+        )
+    else:
+        return ContainerResult(
+            OUTPUT_SCHEMA_DIGEST,
+            output={
+                "return_code": process.returncode,
+                "stdout": stdout[:10_000],
+                "stderr": stderr[:10_000],
+                "stdout_json": _stdout_json(language, stdout),
+            },
+            status_code=status,
+            status_message="failed",
+            error_result={
+                "code": "SCRIPT_FAILED",
+                "message": "Script returned nonzero status",
+                "retryable": False,
+                "category": "business",
+            },
+            error_schema_digest="sha256:" + "b" * 64,
+        )
 
 
 def main() -> None:

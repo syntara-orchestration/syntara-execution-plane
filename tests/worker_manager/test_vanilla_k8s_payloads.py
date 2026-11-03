@@ -86,9 +86,13 @@ def test_node_result_preserves_partial_output_on_failure() -> None:
             "sha256:" + "a" * 64,
             status_code=2,
             status_message="failed",
-            error_code="SCRIPT_EXECUTION_ERROR",
-            error_message="node exited with failure",
-            retryable=True,
+            error_result={
+                "code": "SCRIPT_EXECUTION_ERROR",
+                "message": "node exited with failure",
+                "retryable": True,
+                "category": "business",
+            },
+            error_schema_digest="sha256:" + "b" * 64,
             output={"stdout": "partial", "stderr": "problem", "exit_code": 2},
         ),
     }
@@ -113,13 +117,25 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
     from execution_plane.worker_manager.vanilla_k8s import manager as module
 
     trace = []
-    terminal = ContainerResult(
-        "sha256:" + "a" * 64,
-        output={"stdout": "partial"},
-        status_code=status_code,
-        error_code="SCRIPT_FAILED" if status_code else "",
-        error_message="Script failed" if status_code else "",
-    )
+    if status_code == 0:
+        terminal = ContainerResult(
+            "sha256:" + "a" * 64,
+            output={"stdout": "partial"},
+            status_code=status_code,
+        )
+    else:
+        terminal = ContainerResult(
+            "sha256:" + "a" * 64,
+            output={"stdout": "partial"},
+            status_code=status_code,
+            error_result={
+                "code": "SCRIPT_FAILED",
+                "message": "Script failed",
+                "retryable": False,
+                "category": "business",
+            },
+            error_schema_digest="sha256:" + "b" * 64,
+        )
     frame = {"kind": "result", "result": terminal}
 
     async def persist(_id, result, status, **_kwargs: object) -> None:

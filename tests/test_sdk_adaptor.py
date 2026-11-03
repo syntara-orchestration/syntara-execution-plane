@@ -137,9 +137,13 @@ def test_deliberate_failure_retains_partial_output_and_status_metadata():
         output={"stdout": "partial", "exit_code": 17},
         status_code=17,
         status_message="script exited",
-        error_code="SCRIPT_FAILED",
-        error_message="Script returned nonzero status",
-        retryable=True,
+        error_result={
+            "code": "SCRIPT_FAILED",
+            "message": "Script returned nonzero status",
+            "retryable": True,
+            "category": "business",
+        },
+        error_schema_digest="sha256:" + "b" * 64,
     )
     with _server(handler=lambda _: terminal) as channel:
         frame = _invoke(channel)
@@ -157,7 +161,12 @@ def test_deliberate_failure_retains_partial_output_and_status_metadata():
 
 
 def test_deliberate_failure_without_output_is_still_a_terminal_failure():
-    terminal = ContainerResult(_DIGEST, status_code=300, error_code="FAILED", error_message="Failed")
+    terminal = ContainerResult(
+        _DIGEST,
+        status_code=300,
+        error_result={"code": "FAILED", "message": "Failed", "retryable": False, "category": "business"},
+        error_schema_digest="sha256:" + "b" * 64,
+    )
     with _server(handler=lambda _: terminal) as channel:
         frame = _invoke(channel)
     with pytest.raises(NodeExecutionError) as error:
