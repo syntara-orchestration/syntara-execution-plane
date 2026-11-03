@@ -14,20 +14,7 @@ from sqlmodel import Field, SQLModel
 
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.encrypted_payload import EncryptedWorkItemPayload
-
-
-class WorkItemStatus(StrEnum):
-    """Lifecycle states of a dispatched work item."""
-
-    PENDING = "pending"
-    CLAIMED = "claimed"
-    DISPATCHED = "dispatched"
-    RUNNING = "running"
-    CANCEL_REQUESTED = "cancel_requested"
-    RECONCILIATION_REQUIRED = "reconciliation_required"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+from execution_plane_client.models.work_item import WorkItemStatus
 
 
 class CompletionNotificationState(StrEnum):

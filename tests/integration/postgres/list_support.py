@@ -14,8 +14,8 @@ from execution_plane.api.auth import ServiceIdentity, get_service_identity
 from execution_plane.api.main import create_app
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 PATHS = ["/v1/work-items", "/v1/execution-targets", "/v1/clusters"]
 BASE_TIME = datetime(2025, 6, 1, 12, tzinfo=UTC)
@@ -108,7 +108,7 @@ async def seed_list_dataset(session, path: str, db_url: str):
                     id=resource_id,
                     cluster_id=cluster.id,
                     name=NAMES[index],
-                    backend_type=BackendType.VANILLA_K8S,
+                    backend_type=BackendType.KUBERNETES,
                     endpoint=values["endpoint"],
                     placement=KubernetesPlacement(namespace="ep"),
                     status=TargetStatus(status),

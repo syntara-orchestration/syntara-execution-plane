@@ -8,7 +8,7 @@ from urllib.parse import parse_qsl
 
 import pytest
 
-from execution_plane.api.pagination import encode_cursor
+from execution_plane.api.pagination import _encode_cursor
 from tests.integration.postgres.list_support import BASE_TIME, PATHS
 
 pytestmark = pytest.mark.integration
@@ -238,7 +238,7 @@ INVALID_SORT_CURSORS = [
     ids=[f"GET {p}?sort={f}&cursor=<sort_value={v!r}> -> 422" for p, f, v in INVALID_SORT_CURSORS],
 )
 async def test_get_list_rejects_invalid_typed_sort_cursor(list_api, field, sort_value):
-    token = encode_cursor(
+    token = _encode_cursor(
         {
             "id": list_api.records[0]["id"],
             "created_at": BASE_TIME.isoformat(),

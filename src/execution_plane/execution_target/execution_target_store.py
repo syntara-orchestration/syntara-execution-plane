@@ -12,17 +12,18 @@ from sqlmodel import col
 
 from execution_plane.labels import labels_with_execution_target_id, merge_user_labels
 from execution_plane.models.cluster import Cluster, ClusterStatus
-from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
+from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.models.work_item import WorkItem
 from execution_plane.query_filters import apply_list_filters
 from execution_plane.query_sorting import apply_cursor_sort
 from execution_plane.store_base import StoreBase
 from execution_plane.work_item.policy import DRAIN_BLOCKING_STATUSES
+from execution_plane_client.models.execution_target import BackendType, TargetStatus
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from execution_plane.models.execution_target_placement import (
+    from execution_plane_client.models.execution_target import (
         ExecutionTargetPlacement,
         ExecutionTargetPlacementTypes,
     )

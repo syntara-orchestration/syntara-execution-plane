@@ -11,7 +11,7 @@ import pytest
 from execution_plane.drain_monitor import DrainMonitor
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 _DATABASE_UNAVAILABLE = "database unavailable"
 _TEMPORARY_FAILURE = "temporary failure"
@@ -23,7 +23,7 @@ def _target(*, cluster_id: uuid.UUID | None = None, is_default: bool = False) ->
         id=uuid.uuid4(),
         cluster_id=cluster_id or uuid.uuid4(),
         name="target-a",
-        backend_type="vanilla_k8s",
+        backend_type="kubernetes",
         endpoint="https://target.example",
         placement=KubernetesPlacement(namespace="execution"),
         credential_ref=uuid.uuid4(),

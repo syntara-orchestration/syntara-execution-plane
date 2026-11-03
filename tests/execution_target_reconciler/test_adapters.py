@@ -22,7 +22,7 @@ from execution_plane.execution_target_reconciler.protocols import ExecutionTarge
 from execution_plane.execution_target_reconciler.types import WorkRequirements
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,7 +65,7 @@ def _target(
         id=uuid.uuid4(),
         cluster_id=cluster.id,
         name=name,
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint="https://target.example",
         placement=KubernetesPlacement(namespace="ao-execution", node_selectors=["k=v"]),
         credential_ref=uuid.uuid4(),
@@ -126,7 +126,7 @@ def test_execution_target_snapshot_shares_cluster_and_maps_enums() -> None:
     snapshot = cluster_snapshot_from_model(cluster)
     target = execution_target_snapshot_from_model(_target(cluster), snapshot)
     assert target.cluster is snapshot
-    assert target.backend_type is BackendType.VANILLA_K8S
+    assert target.backend_type is BackendType.KUBERNETES
     assert target.lifecycle == TargetStatus.ACTIVE.value
     assert target.labels == {"env": "production"}
     assert target.is_default is True

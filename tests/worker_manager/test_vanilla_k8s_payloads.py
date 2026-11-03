@@ -108,9 +108,9 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
     from uuid import uuid4
 
     from execution_plane.config import EPSettings
-    from execution_plane.models.execution_target_placement import KubernetesPlacement
     from execution_plane.models.work_item import WorkItem, WorkItemStatus
     from execution_plane.worker_manager.vanilla_k8s import manager as module
+    from execution_plane_client.models.execution_target import KubernetesPlacement
 
     trace = []
     terminal = ContainerResult(

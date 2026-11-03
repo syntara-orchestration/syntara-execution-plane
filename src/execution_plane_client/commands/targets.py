@@ -88,7 +88,7 @@ class TargetDefinition(WireModel):
     """Desired execution-target configuration."""
 
     name: Annotated[StrictStr, Field(min_length=1, max_length=255)]
-    backend_type: Literal["vanilla_k8s", "openshell"]
+    backend_type: Literal["kubernetes", "openshell"]
     placement: Placement
     endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
     credential_ref: UUID
@@ -103,7 +103,7 @@ class TargetDefinition(WireModel):
     @model_validator(mode="after")
     def check_backend(self) -> Self:
         """Reject backend/placement pairs unsupported by the provider adapters."""
-        if (self.backend_type == "vanilla_k8s") != isinstance(self.placement, KubernetesPlacement):
+        if (self.backend_type == "kubernetes") != isinstance(self.placement, KubernetesPlacement):
             message = "Backend does not support this placement"
             raise ValueError(message)
         return self

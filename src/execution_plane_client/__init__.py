@@ -1,1 +1,1 @@
-"""Shared command contracts and participant-owned handler registration."""
+"""Shared command, response, and handler contracts."""

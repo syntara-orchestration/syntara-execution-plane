@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from execution_plane.models.execution_target_placement import (
+from execution_plane_client.models.execution_target import (
     ExecutionTargetPlacement,
     KubernetesPlacement,
     RHELPlacement,

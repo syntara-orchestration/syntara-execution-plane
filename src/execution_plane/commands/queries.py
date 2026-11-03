@@ -12,12 +12,14 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from execution_plane.api.pagination import decode_cursor
-from execution_plane.api.schemas import ClusterRead, ExecutionTargetRead, WorkItemRead
+from execution_plane.api.pagination import _decode_cursor
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.work_item.work_item_store import WorkStore
+from execution_plane_client.models.cluster import ClusterRead
+from execution_plane_client.models.execution_target import ExecutionTargetRead
+from execution_plane_client.models.work_item import WorkItemRead
 
 
 class EPResourceQueries:
@@ -42,7 +44,7 @@ class EPResourceQueries:
     ) -> list[WorkItemRead]:
         """List work without embedding potentially large results."""
         parsed_cursor = (
-            decode_cursor(cursor, sort_field=sort_field, sort_direction=sort_direction) if cursor is not None else None
+            _decode_cursor(cursor, sort_field=sort_field, sort_direction=sort_direction) if cursor is not None else None
         )
         items = await self._work.list_for_client(
             client_id=self._client_id,
@@ -86,7 +88,7 @@ class EPResourceQueries:
     ) -> list[ClusterRead]:
         """List provisioned clusters owned by the authenticated client."""
         parsed_cursor = (
-            decode_cursor(cursor, sort_field=sort_field, sort_direction=sort_direction) if cursor is not None else None
+            _decode_cursor(cursor, sort_field=sort_field, sort_direction=sort_direction) if cursor is not None else None
         )
         rows = list(
             await self._clusters.list_for_client(
@@ -125,7 +127,7 @@ class EPResourceQueries:
     ) -> list[ExecutionTargetRead]:
         """Authorize targets through ownership of their physical cluster."""
         parsed_cursor = (
-            decode_cursor(cursor, sort_field=sort_field, sort_direction=sort_direction) if cursor is not None else None
+            _decode_cursor(cursor, sort_field=sort_field, sort_direction=sort_direction) if cursor is not None else None
         )
         rows = list(
             await self._targets.list_for_client(

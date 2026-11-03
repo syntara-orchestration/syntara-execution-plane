@@ -124,7 +124,7 @@ def _target(target_id: uuid.UUID, cluster: Cluster) -> ExecutionTarget:
         id=target_id,
         cluster_id=cluster.id,
         name="worker-target",
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint="https://example.test",
         placement={"type": "static"},
         status=TargetStatus.ACTIVE,

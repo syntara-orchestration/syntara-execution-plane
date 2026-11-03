@@ -11,7 +11,7 @@ import pytest
 from execution_plane.cluster.cluster_registrar import ClusterRegistration, DiscoveryResult
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import ExecutionTargetPlacement, KubernetesPlacement
+from execution_plane_client.models.execution_target import ExecutionTargetPlacement, KubernetesPlacement
 
 _DATABASE_UNAVAILABLE = "database unavailable"
 _TARGET_UNAVAILABLE = "target unavailable"
@@ -45,7 +45,7 @@ def _target(*, cluster_id: uuid.UUID | None = None, is_default: bool = False) ->
         name="target-a",
         endpoint="https://target.example",
         credential_ref=uuid.uuid4(),
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         is_default=is_default,
         status=TargetStatus.ACTIVE,
         placement=KubernetesPlacement(
@@ -620,7 +620,7 @@ async def test_registrar_creates_every_discovered_target_via_target_port_then_ac
             [
                 DiscoveredExecutionTarget(
                     "primary",
-                    BackendType.VANILLA_K8S,
+                    BackendType.KUBERNETES,
                     "https://one",
                     "key-1",
                     KubernetesPlacement(namespace="default"),
@@ -658,7 +658,7 @@ async def test_registrar_register_promotes_the_requested_global_default() -> Non
             [
                 DiscoveredExecutionTarget(
                     "primary",
-                    BackendType.VANILLA_K8S,
+                    BackendType.KUBERNETES,
                     "https://one",
                     "key",
                     KubernetesPlacement(namespace="default"),
@@ -713,7 +713,7 @@ async def test_registrar_marks_persisted_cluster_error_when_discovery_or_default
                 [
                     DiscoveredExecutionTarget(
                         "primary",
-                        BackendType.VANILLA_K8S,
+                        BackendType.KUBERNETES,
                         "https://one",
                         "key-1",
                         KubernetesPlacement(namespace="default"),
@@ -760,7 +760,7 @@ async def test_registrar_marks_cluster_error_when_discovery_returns_no_single_de
         DiscoveryResult.discovered(
             [
                 DiscoveredExecutionTarget(
-                    "one", BackendType.VANILLA_K8S, "https://one", "key", KubernetesPlacement(namespace="default")
+                    "one", BackendType.KUBERNETES, "https://one", "key", KubernetesPlacement(namespace="default")
                 )
             ]
         )
@@ -790,7 +790,7 @@ async def test_registrar_keeps_cluster_active_when_a_non_default_target_fails() 
             [
                 DiscoveredExecutionTarget(
                     "primary",
-                    BackendType.VANILLA_K8S,
+                    BackendType.KUBERNETES,
                     "https://one",
                     "key",
                     KubernetesPlacement(namespace="default"),

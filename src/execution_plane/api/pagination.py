@@ -1,4 +1,4 @@
-"""EP pagination models and helpers adapted from Syntara's pagination modules.
+"""EP pagination helpers adapted from Syntara's pagination modules.
 
 Source mapping:
 - ``syntara.core.models.base.query_params``: list query controls and page limits.
@@ -16,115 +16,18 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any
 from uuid import UUID
-
-from pydantic import BaseModel, Field
-
-T = TypeVar("T")
 
 VALID_CURSOR_FIELDS = {"id", "created_at", "direction", "sort_field", "sort_direction", "sort_value"}
 MAX_CURSOR_BYTES = 1024
 _CURSOR_NOT_OBJECT = "cursor must be a JSON object"
 
 
-class EPListParams(BaseModel):
-    """Query parameters accepted by all EP list endpoints.
-
-    Mirrors syntara.core.models.base.query_params.BaseListParams.
-    """
-
-    limit: int = Field(default=20, gt=0, le=100)
-    cursor: str | None = Field(default=None)
-    sort: str = Field(default="-created_at", description="Sort field; prefix with '-' for descending order.")
-    include_total: bool = Field(default=False)
-
-    @property
-    def sort_order(self) -> tuple[str, str]:
-        """Return the selected field and SQL ordering direction."""
-        return self.sort.removeprefix("-"), "desc" if self.sort.startswith("-") else "asc"
-
-
-class WorkItemListParams(EPListParams):
-    """Work-item sorting excludes nullable timestamps until null-aware pagination is supported."""
-
-    sort: Literal[
-        "created_at",
-        "-created_at",
-        "status",
-        "-status",
-        "resource_cleanup_status",
-        "-resource_cleanup_status",
-        "id",
-        "-id",
-    ] = Field(default="-created_at", description="Work-item sort field; newest first by default.")
-
-
-class ExecutionTargetListParams(EPListParams):
-    """Adapt syntara.core.models.base.query_params.BaseListParams for execution targets."""
-
-    sort: Literal[
-        "id",
-        "-id",
-        "created_at",
-        "-created_at",
-        "name",
-        "-name",
-        "endpoint",
-        "-endpoint",
-        "status",
-        "-status",
-        "backend_type",
-        "-backend_type",
-        "cluster_id",
-        "-cluster_id",
-        "enabled",
-        "-enabled",
-        "is_default",
-        "-is_default",
-    ] = Field(default="created_at", description="Execution-target sort field; oldest first by default.")
-
-
-class ClusterListParams(EPListParams):
-    """Adapt syntara.core.models.base.query_params.BaseListParams for clusters."""
-
-    sort: Literal[
-        "id",
-        "-id",
-        "created_at",
-        "-created_at",
-        "name",
-        "-name",
-        "endpoint",
-        "-endpoint",
-        "status",
-        "-status",
-        "enabled",
-        "-enabled",
-        "is_default",
-        "-is_default",
-        "updated_at",
-        "-updated_at",
-    ] = Field(default="created_at", description="Cluster sort field; oldest first by default.")
-
-
-class ResourcesResponse(BaseModel, Generic[T]):  # noqa: UP046
-    """Pagination envelope returned by all EP list endpoints.
-
-    Simplified from syntara.core.models.pagination.ResourcesResponse /
-    ResourcesResponseBase (drops ConfigDict extras; keeps the same four fields).
-    """
-
-    resources: list[T]
-    next: str | None = None
-    prev: str | None = None
-    total: int | None = None
-
-
-def serialize_sort_value(value: Any) -> str:  # noqa: ANN401
+def _serialize_sort_value(value: Any) -> str:  # noqa: ANN401
     """Serialize a sort column value to a string for cursor storage.
 
-    Copied from syntara.core.utils.cursor.serialize_sort_value.
+    Copied from syntara.core.utils.cursor._serialize_sort_value.
     """
     if value is None:
         return ""
@@ -137,10 +40,10 @@ def serialize_sort_value(value: Any) -> str:  # noqa: ANN401
     return str(value)
 
 
-def encode_cursor(data: dict[str, Any]) -> str:
+def _encode_cursor(data: dict[str, Any]) -> str:
     """Encode a cursor dict to an opaque base64-JSON token.
 
-    Simplified from syntara.core.utils.cursor.encode_cursor (plain dict instead
+    Simplified from syntara.core.utils.cursor._encode_cursor (plain dict instead
     of CursorData TypedDict; otherwise identical).
     """
     return base64.b64encode(json.dumps(data, sort_keys=True).encode()).decode()
@@ -153,7 +56,7 @@ def _validate_timestamp(value: str) -> None:
         raise ValueError(msg)
 
 
-def decode_cursor(
+def _decode_cursor(
     token: str,
     *,
     sort_field: str | None = None,
@@ -161,7 +64,7 @@ def decode_cursor(
 ) -> dict[str, Any]:
     """Decode and validate a cursor, optionally checking its sort against the query.
 
-    Derived from syntara.core.utils.cursor.decode_cursor. Unknown fields are
+    Derived from syntara.core.utils.cursor._decode_cursor. Unknown fields are
     ignored. For created_at sorting, a missing sort_value falls back to
     created_at, matching Syntara's _make_cursor and BaseService cursor handling.
     All other known fields are required and must contain strings. Invalid input
@@ -216,7 +119,7 @@ def generate_response(
     incoming cursor establishes that a later page exists.
     """
     has_more = len(items) > limit
-    going_backward = cursor is not None and decode_cursor(cursor)["direction"] == "prev"
+    going_backward = cursor is not None and _decode_cursor(cursor)["direction"] == "prev"
     trimmed = items[-limit:] if going_backward else items[:limit]
     has_next = going_backward or has_more
     has_prev = has_more if going_backward else cursor is not None
@@ -224,28 +127,28 @@ def generate_response(
     next_cursor = None
     if has_next and trimmed:
         last = trimmed[-1]
-        next_cursor = encode_cursor(
+        next_cursor = _encode_cursor(
             {
                 "id": str(last.id),
                 "created_at": last.created_at.isoformat(),
                 "direction": "next",
                 "sort_field": sort_field,
                 "sort_direction": sort_direction,
-                "sort_value": serialize_sort_value(getattr(last, sort_field)),
+                "sort_value": _serialize_sort_value(getattr(last, sort_field)),
             }
         )
 
     prev_cursor = None
     if has_prev and trimmed:
         first = trimmed[0]
-        prev_cursor = encode_cursor(
+        prev_cursor = _encode_cursor(
             {
                 "id": str(first.id),
                 "created_at": first.created_at.isoformat(),
                 "direction": "prev",
                 "sort_field": sort_field,
                 "sort_direction": sort_direction,
-                "sort_value": serialize_sort_value(getattr(first, sort_field)),
+                "sort_value": _serialize_sort_value(getattr(first, sort_field)),
             }
         )
 

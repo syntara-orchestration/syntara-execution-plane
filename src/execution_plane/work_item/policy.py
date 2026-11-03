@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from execution_plane.models.work_item import WorkItemStatus
+from execution_plane_client.models.work_item import WorkItemStatus
 
 TERMINAL_RESULT_STATUSES = frozenset(
     {

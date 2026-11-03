@@ -68,7 +68,7 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
                 "resource_id": str(uuid4()),
                 "cluster_id": str(uuid4()),
                 "name": "workers",
-                "backend_type": "vanilla_k8s",
+                "backend_type": "kubernetes",
                 "endpoint": "https://cluster.test",
                 "credential_ref": str(uuid4()),
                 "placement": {"type": "kubernetes", "namespace": "ep"},
@@ -238,3 +238,11 @@ def test_list_sort_contract_matches_model_fields_and_endpoint_default(path, mode
     schema = next(parameter["schema"] for parameter in parameters if parameter["name"] == "sort")
     assert schema["default"] == default
     assert set(schema["enum"]) == {sort for field in model.__sortable_fields__ for sort in (field, f"-{field}")}
+
+
+@pytest.mark.parametrize("path", ["/v1/work-items", "/v1/clusters", "/v1/execution-targets"])
+def test_list_parameters_are_documented_once(path) -> None:
+    parameters = create_app().openapi()["paths"][path]["get"]["parameters"]
+    names = [parameter["name"] for parameter in parameters]
+
+    assert len(names) == len(set(names))

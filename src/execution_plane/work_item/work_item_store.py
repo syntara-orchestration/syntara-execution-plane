@@ -17,7 +17,7 @@ from sqlmodel import col
 
 from execution_plane.models.cluster import Cluster
 from execution_plane.models.execution_target import ExecutionTarget
-from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
+from execution_plane.models.work_item import CompletionNotificationState, WorkItem
 from execution_plane.query_filters import apply_list_filters
 from execution_plane.query_sorting import apply_cursor_sort
 from execution_plane.store_base import StoreBase
@@ -31,6 +31,7 @@ from execution_plane.work_item.policy import (
     require_terminal_result_status,
     validate_completion_notification_retry_delay,
 )
+from execution_plane_client.models.work_item import WorkItemStatus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

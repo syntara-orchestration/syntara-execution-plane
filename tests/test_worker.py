@@ -126,7 +126,7 @@ async def test_process_item_preserves_execution_started_for_cancelled_running_wo
         claim_owner_id=uuid4(),
         claim_generation=1,
     )
-    target = SimpleNamespace(backend_type=BackendType.VANILLA_K8S)
+    target = SimpleNamespace(backend_type=BackendType.KUBERNETES)
     manager = _Manager()
     work_store = _WorkStore()
 
@@ -222,7 +222,7 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch:
     await worker.run_worker("postgresql+asyncpg://localhost/syntara")
 
     assert built_with == [(cluster_store, target_store, poll_calls[0])]
-    assert poll_calls[0].get(BackendType.VANILLA_K8S) is workload_manager
+    assert poll_calls[0].get(BackendType.KUBERNETES) is workload_manager
     assert "resolver:start" in events
     assert "resolver:stop" in events
 

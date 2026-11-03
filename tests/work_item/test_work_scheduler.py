@@ -15,9 +15,9 @@ from execution_plane.execution_target_reconciler.types import (
 )
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_scheduler import WorkScheduler
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -46,7 +46,7 @@ def _target(cluster: Cluster) -> ExecutionTarget:
         id=uuid4(),
         cluster_id=cluster.id,
         name="ep-default",
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint="https://target.example",
         placement=KubernetesPlacement(namespace="ao-execution"),
         credential_ref=uuid4(),

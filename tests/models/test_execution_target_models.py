@@ -6,12 +6,12 @@ import uuid
 
 from execution_plane.models.cluster import Cluster  # noqa: F401
 from execution_plane.models.execution_target import BackendType, ExecutionTarget
-from execution_plane.models.execution_target_placement import (
+from execution_plane.models.sqlmodel_types import DiscriminatedJSONB
+from execution_plane_client.models.execution_target import (
     ExecutionTargetPlacement,
     KubernetesPlacement,
     RHELPlacement,
 )
-from execution_plane.models.sqlmodel_types import DiscriminatedJSONB
 
 
 def test_execution_target_requires_placement() -> None:
@@ -45,7 +45,7 @@ def test_execution_target_serializes_placement_with_public_name() -> None:
     target = ExecutionTarget(
         cluster_id=uuid.uuid4(),
         name="default",
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint="https://target.example",
         placement=KubernetesPlacement(namespace="default"),
         credential_ref=uuid.uuid4(),

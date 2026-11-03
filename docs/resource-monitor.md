@@ -61,7 +61,7 @@ This implementation is **health-only** and **Kubernetes-only**.
 
 | In | Out |
 |---|---|
-| OpenShift / `vanilla_k8s` ExecutionTargets | `ClusterType.RHEL` probes ([ANSTRAT-2338](https://redhat.atlassian.net/browse/ANSTRAT-2338)) |
+| OpenShift / `kubernetes` ExecutionTargets | `ClusterType.RHEL` probes ([ANSTRAT-2338](https://redhat.atlassian.net/browse/ANSTRAT-2338)) |
 | API reachability and namespace existence | Remaining node CPU/memory, Metrics Server, ResourceQuota, node allocatable |
 | `TargetStatus.ACTIVE` ↔ `DEGRADED` | `CAPACITY_EXHAUSTED`, `pool_size`, `current_jobs` |
 | `HealthFilter` denying `DEGRADED` with `HEALTH` | Allowing degraded targets “with reduced capacity” |

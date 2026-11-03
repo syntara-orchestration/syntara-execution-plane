@@ -8,9 +8,9 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from execution_plane.api.schemas import WorkItemRead
 from execution_plane.models.work_item import WorkItemStatus
 from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.models.work_item import WorkItemRead
 
 
 def _payload(**invocation_overrides: object) -> dict[str, Any]:

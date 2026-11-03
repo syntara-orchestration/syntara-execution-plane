@@ -10,9 +10,9 @@ import httpx
 import structlog
 
 from execution_plane.callback_client import CallbackHTTPClient
-from execution_plane.models.work_item import WorkItemStatus
 from execution_plane_client.commands.control import Completion
 from execution_plane_client.commands.results import TransportReceipt
+from execution_plane_client.models.work_item import WorkItemStatus
 from execution_plane_client.protocol import ResourceReference
 
 if TYPE_CHECKING:

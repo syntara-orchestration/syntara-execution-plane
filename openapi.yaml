@@ -92,60 +92,128 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by id (id=value or id[operator]=value). Operators: eq,
-          in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
-          use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Work UUID; id[in]=uuid1,uuid2 for membership
+          title: Id
+        description: Work UUID; id[in]=uuid1,uuid2 for membership
       - name: status
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by status (status=value or status[operator]=value). Operators:
-          eq, in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
-          fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Work status; supports eq and in
+          title: Status
+        description: Work status; supports eq and in
       - name: created_at
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by created_at (created_at=value or created_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Creation time; supports eq, in, gt, gte, lt, lte, and isnull
+          title: Created At
+        description: Creation time; supports eq, in, gt, gte, lt, lte, and isnull
       - name: claimed_at
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by claimed_at (claimed_at=value or claimed_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Claim time; supports ranges and isnull
+          title: Claimed At
+        description: Claim time; supports ranges and isnull
       - name: completed_at
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by completed_at (completed_at=value or completed_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Completion time; supports ranges and isnull
+          title: Completed At
+        description: Completion time; supports ranges and isnull
       - name: resource_cleanup_status
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by resource_cleanup_status (resource_cleanup_status=value
-          or resource_cleanup_status[operator]=value). Operators: eq, in, contains,
-          starts_with, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
-          fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Cleanup status; supports eq and in
+          title: Resource Cleanup Status
+        description: Cleanup status; supports eq and in
       - name: resource_cleanup_error
         in: query
         required: false
         schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Cleanup error; supports text operators and isnull
+          title: Resource Cleanup Error
+        description: Cleanup error; supports text operators and isnull
+      - name: id[operator]
+        in: query
+        required: false
+        schema:
           type: string
-        description: 'Filter by resource_cleanup_error (resource_cleanup_error=value
-          or resource_cleanup_error[operator]=value). Operators: eq, in, contains,
-          starts_with, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
-          fields/operators use AND.'
+        description: 'Dynamic filter operator for id. Operators: eq, in, gt, gte,
+          lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: status[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for status. Operators: eq, in, gt, gte,
+          lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: created_at[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for created_at. Operators: eq, in, gt,
+          gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: claimed_at[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for claimed_at. Operators: eq, in, gt,
+          gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: completed_at[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for completed_at. Operators: eq, in,
+          gt, gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: resource_cleanup_status[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for resource_cleanup_status. Operators:
+          eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
+          values use OR; different fields/operators use AND.'
+      - name: resource_cleanup_error[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for resource_cleanup_error. Operators:
+          eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
+          values use OR; different fields/operators use AND.'
       responses:
         '200':
           description: Successful Response
@@ -243,74 +311,162 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by id (id=value or id[operator]=value). Operators: eq,
-          in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
-          use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Cluster UUID; id[in]=uuid1,uuid2 for membership
+          title: Id
+        description: Cluster UUID; id[in]=uuid1,uuid2 for membership
       - name: created_at
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by created_at (created_at=value or created_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Creation time; supports eq, in, gt, gte, lt, lte, and isnull
+          title: Created At
+        description: Creation time; supports eq, in, gt, gte, lt, lte, and isnull
       - name: updated_at
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by updated_at (updated_at=value or updated_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Update time; supports ranges and isnull
+          title: Updated At
+        description: Update time; supports ranges and isnull
       - name: name
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by name (name=value or name[operator]=value). Operators:
-          eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Name; supports eq, in, contains, and starts_with
+          title: Name
+        description: Name; supports eq, in, contains, and starts_with
       - name: endpoint
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by endpoint (endpoint=value or endpoint[operator]=value).
-          Operators: eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Endpoint; supports eq, in, contains, and starts_with
+          title: Endpoint
+        description: Endpoint; supports eq, in, contains, and starts_with
       - name: status
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by status (status=value or status[operator]=value). Operators:
-          eq, in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
-          fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Cluster status; supports eq and in
+          title: Status
+        description: Cluster status; supports eq and in
       - name: status_message
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by status_message (status_message=value or status_message[operator]=value).
-          Operators: eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Status message; supports text operators and isnull
+          title: Status Message
+        description: Status message; supports text operators and isnull
       - name: enabled
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by enabled (enabled=value or enabled[operator]=value).
-          Operators: eq, in, isnull. Comma-separated values use OR; different fields/operators
-          use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Boolean; supports eq, in, and isnull
+          title: Enabled
+        description: Boolean; supports eq, in, and isnull
       - name: is_default
         in: query
         required: false
         schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Boolean; supports eq, in, and isnull
+          title: Is Default
+        description: Boolean; supports eq, in, and isnull
+      - name: id[operator]
+        in: query
+        required: false
+        schema:
           type: string
-        description: 'Filter by is_default (is_default=value or is_default[operator]=value).
-          Operators: eq, in, isnull. Comma-separated values use OR; different fields/operators
+        description: 'Dynamic filter operator for id. Operators: eq, in, gt, gte,
+          lt, lte, isnull. Comma-separated values use OR; different fields/operators
           use AND.'
+      - name: created_at[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for created_at. Operators: eq, in, gt,
+          gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: updated_at[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for updated_at. Operators: eq, in, gt,
+          gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: name[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for name. Operators: eq, in, contains,
+          starts_with, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
+          fields/operators use AND.'
+      - name: endpoint[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for endpoint. Operators: eq, in, contains,
+          starts_with, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
+          fields/operators use AND.'
+      - name: status[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for status. Operators: eq, in, gt, gte,
+          lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: status_message[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for status_message. Operators: eq, in,
+          contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated values
+          use OR; different fields/operators use AND.'
+      - name: enabled[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for enabled. Operators: eq, in, isnull.
+          Comma-separated values use OR; different fields/operators use AND.'
+      - name: is_default[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for is_default. Operators: eq, in, isnull.
+          Comma-separated values use OR; different fields/operators use AND.'
       - name: labels[key]
         in: query
         required: false
@@ -417,90 +573,198 @@ paths:
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by id (id=value or id[operator]=value). Operators: eq,
-          in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
-          use AND.'
-      - name: created_at
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by created_at (created_at=value or created_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
-      - name: name
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by name (name=value or name[operator]=value). Operators:
-          eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
-      - name: endpoint
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by endpoint (endpoint=value or endpoint[operator]=value).
-          Operators: eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
-      - name: status
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by status (status=value or status[operator]=value). Operators:
-          eq, in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
-          fields/operators use AND.'
-      - name: backend_type
-        in: query
-        required: false
-        schema:
-          type: string
-        description: 'Filter by backend_type (backend_type=value or backend_type[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Target UUID; id[in]=uuid1,uuid2 for membership
+          title: Id
+        description: Target UUID; id[in]=uuid1,uuid2 for membership
       - name: cluster_id
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by cluster_id (cluster_id=value or cluster_id[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Physical cluster UUID; supports eq and in
+          title: Cluster Id
+        description: Physical cluster UUID; supports eq and in
+      - name: name
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Name; supports eq, in, contains, and starts_with
+          title: Name
+        description: Name; supports eq, in, contains, and starts_with
+      - name: endpoint
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Endpoint; supports eq, in, contains, and starts_with
+          title: Endpoint
+        description: Endpoint; supports eq, in, contains, and starts_with
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Target status; supports eq and in
+          title: Status
+        description: Target status; supports eq and in
+      - name: backend_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Backend type; supports eq and in
+          title: Backend Type
+        description: Backend type; supports eq and in
       - name: enabled
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by enabled (enabled=value or enabled[operator]=value).
-          Operators: eq, in, isnull. Comma-separated values use OR; different fields/operators
-          use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Boolean; supports eq, in, and isnull
+          title: Enabled
+        description: Boolean; supports eq, in, and isnull
       - name: is_default
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by is_default (is_default=value or is_default[operator]=value).
-          Operators: eq, in, isnull. Comma-separated values use OR; different fields/operators
-          use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Boolean; supports eq, in, and isnull
+          title: Is Default
+        description: Boolean; supports eq, in, and isnull
+      - name: created_at
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Creation time; supports eq, in, gt, gte, lt, lte, and isnull
+          title: Created At
+        description: Creation time; supports eq, in, gt, gte, lt, lte, and isnull
       - name: last_ran_at
         in: query
         required: false
         schema:
-          type: string
-        description: 'Filter by last_ran_at (last_ran_at=value or last_ran_at[operator]=value).
-          Operators: eq, in, gt, gte, lt, lte, isnull. Comma-separated values use
-          OR; different fields/operators use AND.'
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Last run time; supports ranges and isnull
+          title: Last Ran At
+        description: Last run time; supports ranges and isnull
       - name: status_message
         in: query
         required: false
         schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Status message; supports text operators and isnull
+          title: Status Message
+        description: Status message; supports text operators and isnull
+      - name: id[operator]
+        in: query
+        required: false
+        schema:
           type: string
-        description: 'Filter by status_message (status_message=value or status_message[operator]=value).
-          Operators: eq, in, contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated
-          values use OR; different fields/operators use AND.'
+        description: 'Dynamic filter operator for id. Operators: eq, in, gt, gte,
+          lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: created_at[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for created_at. Operators: eq, in, gt,
+          gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: name[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for name. Operators: eq, in, contains,
+          starts_with, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
+          fields/operators use AND.'
+      - name: endpoint[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for endpoint. Operators: eq, in, contains,
+          starts_with, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
+          fields/operators use AND.'
+      - name: status[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for status. Operators: eq, in, gt, gte,
+          lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: backend_type[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for backend_type. Operators: eq, in,
+          gt, gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: cluster_id[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for cluster_id. Operators: eq, in, gt,
+          gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: enabled[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for enabled. Operators: eq, in, isnull.
+          Comma-separated values use OR; different fields/operators use AND.'
+      - name: is_default[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for is_default. Operators: eq, in, isnull.
+          Comma-separated values use OR; different fields/operators use AND.'
+      - name: last_ran_at[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for last_ran_at. Operators: eq, in,
+          gt, gte, lt, lte, isnull. Comma-separated values use OR; different fields/operators
+          use AND.'
+      - name: status_message[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for status_message. Operators: eq, in,
+          contains, starts_with, gt, gte, lt, lte, isnull. Comma-separated values
+          use OR; different fields/operators use AND.'
       - name: labels[key]
         in: query
         required: false
@@ -549,7 +813,7 @@ components:
     BackendType:
       type: string
       enum:
-      - vanilla_k8s
+      - kubernetes
       - openshell
       title: BackendType
       description: Supported execution target backends.
@@ -1420,7 +1684,7 @@ components:
         backend_type:
           type: string
           enum:
-          - vanilla_k8s
+          - kubernetes
           - openshell
           title: Backend Type
         placement:

@@ -11,7 +11,7 @@ from sqlmodel import SQLModel
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 
 def test_cluster_table_exposes_required_lifecycle_and_audit_contract() -> None:
@@ -73,7 +73,7 @@ def test_execution_target_belongs_to_cluster_with_default_and_draining_state() -
         ExecutionTarget(
             cluster_id=uuid.uuid4(),
             name="default",
-            backend_type=BackendType.VANILLA_K8S,
+            backend_type=BackendType.KUBERNETES,
             endpoint="https://target.example",
             placement=KubernetesPlacement(namespace="execution"),
             credential_ref=credential_ref,
@@ -84,7 +84,7 @@ def test_execution_target_belongs_to_cluster_with_default_and_draining_state() -
         not in ExecutionTarget(
             cluster_id=uuid.uuid4(),
             name="default",
-            backend_type=BackendType.VANILLA_K8S,
+            backend_type=BackendType.KUBERNETES,
             endpoint="https://target.example",
             placement=KubernetesPlacement(namespace="default"),
             credential_ref=credential_ref,

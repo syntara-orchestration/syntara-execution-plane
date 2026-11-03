@@ -17,7 +17,7 @@ from execution_plane.execution_target_reconciler.types import (
 )
 from execution_plane.models.cluster import ClusterType
 from execution_plane.models.execution_target import BackendType
-from execution_plane.models.execution_target_placement import KubernetesPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 MakeCluster = Callable[..., ClusterSnapshot]
 MakeTarget = Callable[..., ExecutionTargetSnapshot]
@@ -48,7 +48,7 @@ def target_snapshot(
     *,
     name: str = "ep-default",
     namespace: str = "ao-execution",
-    backend_type: BackendType = BackendType.VANILLA_K8S,
+    backend_type: BackendType = BackendType.KUBERNETES,
     labels: dict[str, str] | None = None,
     lifecycle: str = ACTIVE_LIFECYCLE,
     enabled: bool = True,

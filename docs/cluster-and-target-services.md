@@ -91,7 +91,7 @@ exactly one Cluster.
 | `id` | UUID primary key |
 | `cluster_id` | Non-null foreign key to `execution_plane.clusters.id` |
 | `name` | User-facing target name |
-| `backend_type` | Supported execution backend, such as `vanilla_k8s` or `openshell` |
+| `backend_type` | Supported execution backend, such as `kubernetes` or `openshell` |
 | `endpoint` | Endpoint used for worker connectivity |
 | `credential_ref` | Required AO UUID identifying the target credential |
 | `status` | `REGISTERING`, `VALIDATING`, `BOOTSTRAPPING`, `ACTIVE`, `DEGRADED`, `DRAINING`, or `FAILED` |
