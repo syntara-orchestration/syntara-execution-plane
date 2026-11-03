@@ -102,10 +102,12 @@ def _monitor_cancellation(
         return
 
 
-def _failure_frame(error: ContainerRemoteError) -> dict[str, Any]:
+def _failure_frame(error: ContainerRemoteError, *, cancelled: bool = False) -> dict[str, Any]:
     if error.outcome == "unknown":
+        # If the workload was cancelled, report it as a cancellation even if outcome is unknown
+        is_cancelled = error.code.value == "CANCELLED" or cancelled
         message = "Workload reported an unknown execution outcome"
-        raise WorkloadRpcError(message) from None
+        raise WorkloadRpcError(message, cancelled=is_cancelled) from None
     return {"kind": "failure", "code": error.code.value, "retryable": error.retryable, "outcome": error.outcome}
 
 
@@ -172,7 +174,7 @@ def invoke(
         return {"kind": "result", "result": result}
     except ContainerRemoteError as error:
         if error.source == "workload" and result is None:
-            return _failure_frame(error)
+            return _failure_frame(error, cancelled=cancelled.is_set())
         message = "Workload did not return a valid terminal outcome"
         raise WorkloadRpcError(message, cancelled=cancelled.is_set()) from None
     except ValueError:
