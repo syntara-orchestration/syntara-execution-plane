@@ -42,6 +42,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, for tools.* imports
 
 from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
+from tools import create_ao_credential as ao_credential
 from tools.work_item_client import ep_request, ep_service_token, list_execution_targets, wait_for_ep_api
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -56,7 +57,6 @@ KIND_NETWORK = "kind"
 CONTROL_PLANE_PORT = 6443
 EP_CA_PATH = PROJECT_ROOT / ".secrets" / "certs" / "ca.pem"
 WORKLOAD_RBAC_PATH = PROJECT_ROOT / "deploy" / "kubernetes" / "execution-target" / "rbac.yaml"
-CREATE_AO_CREDENTIAL_PATH = PROJECT_ROOT / "tools" / "create_ao_credential.py"
 
 
 def _run(
@@ -161,21 +161,14 @@ def create_ao_credential(
         "--duration",
         "12h",
     )
-    environment = dict(os.environ)
-    environment["AO_ADMIN_PASSWORD"] = admin_password
-    environment["AO_CREDENTIAL_TOKEN"] = token_result.stdout.strip()
-    arguments = [
-        sys.executable,
-        str(CREATE_AO_CREDENTIAL_PATH),
-        "--api-url",
-        api_url,
-        "--cluster-name",
-        cluster_name,
-    ]
-    if insecure:
-        arguments.append("--insecure")
-    result = _run(arguments, env=environment)
-    return uuid.UUID(result.stdout.strip())
+    return ao_credential.create_or_refresh_credential(
+        api_url=api_url,
+        cluster_name=cluster_name,
+        token=token_result.stdout.strip(),
+        username="admin",
+        password=admin_password,
+        insecure=insecure,
+    )
 
 
 def cluster_ca_pem(kubeconfig: Path) -> str:

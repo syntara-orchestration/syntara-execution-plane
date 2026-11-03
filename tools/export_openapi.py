@@ -22,6 +22,7 @@ from execution_plane.api.main import create_app
 
 
 def main() -> None:
+    """Export the service OpenAPI specification."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",
