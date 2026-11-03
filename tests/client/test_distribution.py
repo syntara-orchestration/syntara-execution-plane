@@ -20,6 +20,12 @@ def test_client_wheel_and_sdist_install_without_ep(tmp_path):
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         assert "execution_plane_client/py.typed" in names
+        assert {
+            "execution_plane_client/models/shared.py",
+            "execution_plane_client/models/work_item.py",
+            "execution_plane_client/models/execution_target.py",
+            "execution_plane_client/models/cluster.py",
+        } <= set(names)
         assert not any(name.startswith("execution_plane/") for name in names)
     source = tmp_path / "source"
     with tarfile.open(next(artifacts.glob("*.tar.gz"))) as archive:
@@ -40,6 +46,7 @@ def test_client_wheel_and_sdist_install_without_ep(tmp_path):
             "-c",
             "import json; from importlib.metadata import distributions; "
             "from execution_plane_client.catalog import CommandCatalog; "
+            "from execution_plane_client.models.work_item import WorkItemRead; "
             "from execution_plane_client.registry import CommandRegistry; "
             "print(json.dumps(sorted(d.metadata['Name'].lower() for d in distributions())))",
         ],

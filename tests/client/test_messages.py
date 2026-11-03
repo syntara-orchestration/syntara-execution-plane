@@ -57,7 +57,7 @@ CLUSTER = {
                 "cluster_id": RESOURCE_ID,
                 "name": "target",
                 "endpoint": "https://cluster.test",
-                "backend_type": "vanilla_k8s",
+                "backend_type": "kubernetes",
                 "credential_ref": RESOURCE_ID,
                 "placement": {"type": "kubernetes", "namespace": "ep"},
             },

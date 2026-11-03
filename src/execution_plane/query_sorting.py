@@ -59,7 +59,7 @@ def deserialize_sort_value(value: str, python_type: type | None) -> Any:  # noqa
 
     Deserialize a cursor ``sort_value`` string back to a typed Python value.
 
-    Inverse of :func:`serialize_sort_value`. Callers typically pass
+    Inverse of :func:`execution_plane.api.pagination._serialize_sort_value`. Callers typically pass
     :func:`column_python_type` (same approach as filter value coercion in
     ``syntara.core.utils.filters``).
 

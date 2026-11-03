@@ -28,13 +28,13 @@ from execution_plane.execution_target.execution_target_store import ExecutionTar
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
 from execution_plane.models.execution_target import BackendType
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.work_item_client import build_payload, default_node_image
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -170,7 +170,7 @@ async def _work_service(
             settings,
             credential_resolver=credential_resolver,
         )
-        worker_managers.register(BackendType.VANILLA_K8S, workload_manager)
+        worker_managers.register(BackendType.KUBERNETES, workload_manager)
         yield _WorkFixture(work_item_store, work_scheduler, worker_managers)
 
 

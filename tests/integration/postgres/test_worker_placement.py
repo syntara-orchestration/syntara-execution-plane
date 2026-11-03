@@ -17,10 +17,10 @@ from execution_plane.execution_target_reconciler.adapters import build_placement
 from execution_plane.execution_target_reconciler.types import WorkRequirements
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
@@ -105,7 +105,7 @@ async def _seed_work(sessions: async_sessionmaker[AsyncSession], *, matching: bo
                 id=target_id,
                 cluster_id=cluster_id,
                 name=f"workers-{target_id}",
-                backend_type=BackendType.VANILLA_K8S,
+                backend_type=BackendType.KUBERNETES,
                 endpoint="https://target.test",
                 placement=KubernetesPlacement(namespace="ep"),
                 credential_ref=uuid4(),

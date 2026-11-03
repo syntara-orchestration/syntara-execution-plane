@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from execution_plane.models.cluster import ClusterStatus
-from execution_plane.models.execution_target import TargetStatus
+from execution_plane_client.models.execution_target import TargetStatus
 
 if TYPE_CHECKING:
     import uuid

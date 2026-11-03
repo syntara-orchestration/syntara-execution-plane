@@ -23,8 +23,6 @@ from execution_plane.execution_target_reconciler.adapters import (
 )
 from execution_plane.execution_target_reconciler.exceptions import UnknownBackendTypeError
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
-from execution_plane.models.execution_target import BackendType
-from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.resource_monitor.monitor import ResourceMonitor
 from execution_plane.runtime import run_until_shutdown
 from execution_plane.work_item.work_item_store import WorkStore
@@ -38,9 +36,12 @@ from execution_plane.worker_manager.vanilla_k8s.manager import (
     WorkloadOutcomeUnknownError,
 )
 from execution_plane.worker_manager.vanilla_k8s.reconciler import run_orphan_policy_reconciler
+from execution_plane_client.models.execution_target import BackendType
+from execution_plane_client.models.work_item import WorkItemStatus
 
 if TYPE_CHECKING:
     from execution_plane.config import EPSettings
+    from execution_plane.models.work_item import WorkItem
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -302,7 +303,7 @@ async def run_worker(database_url: str) -> None:
             settings,
             credential_resolver=credential_resolver,
         )
-        worker_managers.register(BackendType.VANILLA_K8S, workload_manager)
+        worker_managers.register(BackendType.KUBERNETES, workload_manager)
         drain_monitor = DrainMonitor(target_store, cluster_store, work_item_store)
         resource_monitor = ResourceMonitor(
             target_store,

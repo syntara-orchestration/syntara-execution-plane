@@ -18,8 +18,8 @@ from execution_plane.execution_target.execution_target_store import ExecutionTar
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.types import IneligibilityReason, ResolveOutcome, WorkRequirements
 from execution_plane.models.execution_target import BackendType, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.resource_monitor.monitor import ResourceMonitor
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
     from execution_plane.credential_resolution.resolver import CredentialResolver
@@ -56,7 +56,7 @@ async def test_resource_monitor_excludes_a_missing_namespace_on_kind(
         extra = await target_store.create(
             ep_cluster.id,
             f"missing-{marker}",
-            BackendType.VANILLA_K8S,
+            BackendType.KUBERNETES,
             ep_cluster.endpoint,
             uuid.uuid4(),
             is_default=False,

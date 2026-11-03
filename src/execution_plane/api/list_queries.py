@@ -50,12 +50,12 @@ def list_filter_openapi(model: type[SQLModel]) -> dict[str, Any]:
             operators = [FilterOperator.EQ, FilterOperator.IN, FilterOperator.ISNULL]
         parameters.append(
             {
-                "name": field,
+                "name": f"{field}[operator]",
                 "in": "query",
                 "required": False,
                 "schema": {"type": "string"},
                 "description": (
-                    f"Filter by {field} ({field}=value or {field}[operator]=value). "
+                    f"Dynamic filter operator for {field}. "
                     f"Operators: {', '.join(op.value for op in operators)}. "
                     "Comma-separated values use OR; different fields/operators use AND."
                 ),

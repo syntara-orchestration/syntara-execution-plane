@@ -2,7 +2,6 @@
 
 import uuid
 from datetime import datetime
-from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import Column, Index, UniqueConstraint, text
@@ -15,27 +14,13 @@ if TYPE_CHECKING:
     from execution_plane.models.cluster import Cluster
 
 from execution_plane.models.constants import EP_SCHEMA
-from execution_plane.models.execution_target_placement import ExecutionTargetPlacement, ExecutionTargetPlacementTypes
 from execution_plane.models.sqlmodel_types import DiscriminatedJSONB
-
-
-class BackendType(StrEnum):
-    """Supported execution target backends."""
-
-    VANILLA_K8S = "vanilla_k8s"
-    OPENSHELL = "openshell"
-
-
-class TargetStatus(StrEnum):
-    """Lifecycle states of an execution target."""
-
-    REGISTERING = "registering"
-    VALIDATING = "validating"
-    BOOTSTRAPPING = "bootstrapping"
-    ACTIVE = "active"
-    DEGRADED = "degraded"
-    DRAINING = "draining"
-    FAILED = "failed"
+from execution_plane_client.models.execution_target import (
+    BackendType,
+    ExecutionTargetPlacement,
+    ExecutionTargetPlacementTypes,
+    TargetStatus,
+)
 
 
 class ExecutionTarget(SQLModel, table=True):

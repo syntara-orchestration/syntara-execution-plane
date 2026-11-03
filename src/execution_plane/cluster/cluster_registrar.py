@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from execution_plane.cluster.cluster_store import DefaultClusterError
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
-from execution_plane.models.execution_target import BackendType
+from execution_plane_client.models.execution_target import BackendType
 
 if TYPE_CHECKING:
     import uuid
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.execution_target import ExecutionTarget
-    from execution_plane.models.execution_target_placement import ExecutionTargetPlacement
+    from execution_plane_client.models.execution_target import ExecutionTargetPlacement
 
 
 @dataclass(frozen=True)
@@ -217,7 +217,7 @@ class ClusterRegistrar:
             target = await self._execution_targets.create(
                 cluster_id=cluster.id,
                 name=name,
-                backend_type=BackendType.VANILLA_K8S,
+                backend_type=BackendType.KUBERNETES,
                 endpoint=endpoint,
                 credential_ref=credential_ref,
                 placement=placement,

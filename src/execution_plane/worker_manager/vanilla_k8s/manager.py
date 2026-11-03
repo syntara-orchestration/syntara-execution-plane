@@ -20,8 +20,6 @@ from pydantic import ValidationError
 from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
-from execution_plane.models.execution_target_placement import KubernetesPlacement
-from execution_plane.models.work_item import WorkItemStatus
 from execution_plane.worker_manager.base import (
     ExecutionStartPersistenceError,
     ExecutionStartRejectedError,
@@ -29,6 +27,8 @@ from execution_plane.worker_manager.base import (
 )
 from execution_plane.worker_manager.vanilla_k8s.transport import TransportError, run_job
 from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.models.execution_target import KubernetesPlacement
+from execution_plane_client.models.work_item import WorkItemStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable

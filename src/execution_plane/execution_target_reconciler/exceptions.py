@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from execution_plane.models.execution_target import BackendType
+    from execution_plane_client.models.execution_target import BackendType
 
 
 class UnknownBackendTypeError(LookupError):

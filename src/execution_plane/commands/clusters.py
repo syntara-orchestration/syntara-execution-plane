@@ -15,7 +15,6 @@ from execution_plane.config import get_ep_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.labels import user_labels
 from execution_plane.models.cluster import Cluster
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.clusters import (
     ClusterDelete,
@@ -25,6 +24,7 @@ from execution_plane_client.commands.clusters import (
 )
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
+from execution_plane_client.models.execution_target import KubernetesPlacement
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
 
 

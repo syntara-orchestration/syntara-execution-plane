@@ -15,9 +15,8 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 
 from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
-from execution_plane.models.execution_target import BackendType
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.store_errors import StaleClaimError
+from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
@@ -37,7 +36,7 @@ def _target_config(
     credential: str,
 ) -> tuple[dict[str, str], str] | None:
     """Return the verified Kubernetes endpoint and namespace for this target."""
-    if target.backend_type is not BackendType.VANILLA_K8S or not isinstance(target.placement, KubernetesPlacement):
+    if target.backend_type is not BackendType.KUBERNETES or not isinstance(target.placement, KubernetesPlacement):
         return None
     return (
         {

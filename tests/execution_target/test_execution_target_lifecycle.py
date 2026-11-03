@@ -16,7 +16,7 @@ from execution_plane.execution_target.execution_target_store import (
 )
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import ExecutionTargetPlacement, KubernetesPlacement
+from execution_plane_client.models.execution_target import ExecutionTargetPlacement, KubernetesPlacement
 
 _DATABASE_UNAVAILABLE = "database unavailable"
 
@@ -31,7 +31,7 @@ def _target(*, is_default: bool = False, status: TargetStatus = TargetStatus.REG
         id=uuid.uuid4(),
         cluster_id=uuid.uuid4(),
         name="target-a",
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint="https://target.example",
         placement=KubernetesPlacement(namespace="default"),
         credential_ref=uuid.uuid4(),
@@ -244,7 +244,7 @@ async def test_store_creates_target_with_audit_fields_and_owns_the_commit() -> N
     target = await store.create(
         cluster_id,
         "target-a",
-        BackendType.VANILLA_K8S,
+        BackendType.KUBERNETES,
         "https://target.example",
         credential_ref,
         is_default=False,
@@ -306,7 +306,7 @@ async def test_store_rejects_a_second_default_target_for_a_cluster() -> None:
         await store.create(
             existing_default.cluster_id,
             "target-b",
-            BackendType.VANILLA_K8S,
+            BackendType.KUBERNETES,
             "https://target-b.example",
             uuid.uuid4(),
             is_default=True,
@@ -331,7 +331,7 @@ async def test_store_rolls_back_when_target_creation_cannot_commit() -> None:
         await store.create(
             uuid.uuid4(),
             "target-a",
-            BackendType.VANILLA_K8S,
+            BackendType.KUBERNETES,
             "https://target.example",
             uuid.uuid4(),
             is_default=False,

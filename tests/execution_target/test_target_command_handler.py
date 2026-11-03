@@ -25,7 +25,6 @@ from execution_plane.execution_target.execution_target_store import (
 )
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import ExecutionTargetPlacement, KubernetesPlacement
 from execution_plane.resource_monitor.probes import ProbeResult
 from execution_plane_client.commands.results import TargetHealthCommandResult
 from execution_plane_client.commands.targets import (
@@ -37,6 +36,7 @@ from execution_plane_client.commands.targets import (
     TargetRegister,
     TargetUpdate,
 )
+from execution_plane_client.models.execution_target import ExecutionTargetPlacement, KubernetesPlacement
 from execution_plane_client.protocol import MessageEnvelope
 
 
@@ -63,7 +63,7 @@ def _target(*, cluster_id: UUID, is_default: bool = False) -> ExecutionTarget:
         id=uuid4(),
         cluster_id=cluster_id,
         name="target-a",
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint="https://target.example",
         placement=KubernetesPlacement(namespace="execution"),
         credential_ref=uuid4(),
@@ -228,7 +228,7 @@ async def test_target_register_promotes_the_new_target_as_default(monkeypatch: p
         resource_id=target_id,
         cluster_id=cluster.id,
         name="workers",
-        backend_type="vanilla_k8s",
+        backend_type="kubernetes",
         endpoint="https://target.example",
         credential_ref=uuid4(),
         placement=ClientKubernetesPlacement(namespace="execution"),

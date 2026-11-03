@@ -16,11 +16,11 @@ from execution_plane.execution_target.execution_target_store import ExecutionTar
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.worker_manager.vanilla_k8s import manager as manager_module
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 pytestmark = pytest.mark.integration
 
@@ -55,7 +55,7 @@ async def _seed_claimed_item(sessions, *, payload) -> UUID:
                 id=target_id,
                 cluster_id=cluster_id,
                 name="workers",
-                backend_type=BackendType.VANILLA_K8S,
+                backend_type=BackendType.KUBERNETES,
                 endpoint="https://cluster.test",
                 placement=KubernetesPlacement(namespace="ep"),
                 status=TargetStatus.ACTIVE,
@@ -91,7 +91,7 @@ async def _process(engine, item_id) -> WorkItem:
     settings = get_ep_settings()
     registry = WorkerManagerRegistry()
     registry.register(
-        BackendType.VANILLA_K8S,
+        BackendType.KUBERNETES,
         VanillaK8sWorkerManager(target_store, cluster_store, store, settings),
     )
     sessions = async_sessionmaker(engine, expire_on_commit=False)

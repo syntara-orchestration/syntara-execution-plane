@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from execution_plane.config import EPSettings, get_ep_settings
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement, RHELPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement, RHELPlacement
 
 
 def settings(**overrides: float) -> EPSettings:
@@ -58,7 +58,7 @@ def make_target(
         id=uuid.uuid4(),
         cluster_id=cluster.id,
         name=name,
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint="https://target.example",
         placement=RHELPlacement() if rhel else KubernetesPlacement(namespace=namespace),
         credential_ref=uuid.uuid4(),

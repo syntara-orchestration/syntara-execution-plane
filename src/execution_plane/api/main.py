@@ -22,13 +22,8 @@ from execution_plane.api.auth import ServiceIdentity, get_service_identity, requ
 from execution_plane.api.list_queries import list_filter_openapi, list_query_filters
 from execution_plane.api.openapi import configure_command_openapi
 from execution_plane.api.pagination import (
-    ClusterListParams,
-    ExecutionTargetListParams,
-    ResourcesResponse,
-    WorkItemListParams,
     generate_response,
 )
-from execution_plane.api.schemas import ClusterRead, ExecutionTargetRead, WorkItemRead  # noqa: TC001
 from execution_plane.cluster.cluster_store import DefaultClusterError
 from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.context import EPCommandContext
@@ -48,6 +43,13 @@ from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNot
 from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.commands.results import TransportReceipt
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
+from execution_plane_client.models.cluster import ClusterListParams, ClusterRead  # noqa: TC001
+from execution_plane_client.models.execution_target import (  # noqa: TC001
+    ExecutionTargetListParams,
+    ExecutionTargetRead,
+)
+from execution_plane_client.models.shared import ResourcesResponse
+from execution_plane_client.models.work_item import WorkItemListParams, WorkItemRead  # noqa: TC001
 from execution_plane_client.protocol import CapabilitiesRead, MessageEnvelope
 
 if TYPE_CHECKING:

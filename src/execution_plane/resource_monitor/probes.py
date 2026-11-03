@@ -12,9 +12,8 @@ from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
 from execution_plane.models.cluster import ClusterStatus, ClusterType
-from execution_plane.models.execution_target import TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.resource_monitor.client import KubernetesClientError, read_namespace
+from execution_plane_client.models.execution_target import KubernetesPlacement, TargetStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -15,8 +15,7 @@ from execution_plane.execution_target.execution_target_store import (
     ExecutionTargetStore,
 )
 from execution_plane.models.cluster import Cluster
-from execution_plane.models.execution_target import BackendType, ExecutionTarget
-from execution_plane.models.execution_target_placement import ExecutionTargetPlacement
+from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.resource_monitor.probes import DispatchingTargetProbe
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.results import TargetHealthCommandResult
@@ -28,6 +27,7 @@ from execution_plane_client.commands.targets import (
 )
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
+from execution_plane_client.models.execution_target import BackendType, ExecutionTargetPlacement
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
 
 

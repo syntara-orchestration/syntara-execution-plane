@@ -7,8 +7,8 @@ from uuid import uuid4
 
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.worker_manager.vanilla_k8s.reconciler import _target_config
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 
 def test_policy_reconciler_uses_the_resolved_cluster_credential() -> None:
@@ -27,7 +27,7 @@ def test_policy_reconciler_uses_the_resolved_cluster_credential() -> None:
     target = ExecutionTarget(
         cluster_id=cluster.id,
         name="default",
-        backend_type=BackendType.VANILLA_K8S,
+        backend_type=BackendType.KUBERNETES,
         endpoint=cluster.endpoint,
         placement=KubernetesPlacement(namespace="execution"),
         credential_ref=uuid4(),

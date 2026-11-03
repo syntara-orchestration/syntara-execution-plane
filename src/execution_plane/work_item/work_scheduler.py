@@ -9,7 +9,7 @@ from execution_plane.execution_target_reconciler.adapters import (
     execution_target_snapshot_from_model,
 )
 from execution_plane.execution_target_reconciler.types import WorkRequirements
-from execution_plane.models.work_item import WorkItemStatus
+from execution_plane_client.models.work_item import WorkItemStatus
 
 if TYPE_CHECKING:
     from execution_plane.execution_target_reconciler.placement import PlacementResolver

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "execution-plane-client"
 dynamic = ["version"]
-description = "Shared execution-plane command contracts and handler registry"
+description = "Shared execution-plane command, response, and handler contracts"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.15"
@@ -27,7 +27,7 @@ raw-options = { search_parent_directories = true, fallback_version = "0.0.0" }
 version-file = "_version.py"
 
 [tool.hatch.build.targets.wheel]
-include = ["/*.py", "/py.typed", "/commands/**"]
+include = ["/*.py", "/py.typed", "/commands/**", "/models/**"]
 
 [tool.hatch.build.targets.wheel.sources]
 "" = "execution_plane_client"
@@ -36,4 +36,4 @@ include = ["/*.py", "/py.typed", "/commands/**"]
 dev-mode-dirs = [".."]
 
 [tool.hatch.build.targets.sdist]
-include = ["/*.py", "/py.typed", "/commands/**", "/pyproject.toml", "/README.md", "/LICENSE"]
+include = ["/*.py", "/py.typed", "/commands/**", "/models/**", "/pyproject.toml", "/README.md", "/LICENSE"]

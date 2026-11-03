@@ -12,7 +12,7 @@ from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.models.cluster import ClusterStatus
 from execution_plane.models.execution_target import BackendType
-from execution_plane.models.execution_target_placement import KubernetesPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement
 
 pytestmark = pytest.mark.integration
 
@@ -45,7 +45,7 @@ async def test_concurrent_default_promotions_leave_exactly_one_default(migrated_
                 target = await target_store.create(
                     cluster_id=cluster.id,
                     name=name,
-                    backend_type=BackendType.VANILLA_K8S,
+                    backend_type=BackendType.KUBERNETES,
                     endpoint=f"https://{name}.example",
                     credential_ref=uuid4(),
                     is_default=False,

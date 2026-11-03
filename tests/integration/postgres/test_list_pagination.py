@@ -13,11 +13,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from execution_plane.api.pagination import encode_cursor
+from execution_plane.api.pagination import _encode_cursor
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.execution_target_placement import KubernetesPlacement
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
+from execution_plane_client.models.execution_target import KubernetesPlacement
 from tests.integration.postgres.list_support import BASE_TIME as _BASE_TIME
 from tests.integration.postgres.list_support import LIST_SIZE
 
@@ -73,7 +73,7 @@ async def _insert_cluster_and_targets(sessions, client_id: str, count: int) -> t
                 id=uuid.uuid4(),
                 cluster_id=cluster.id,
                 name=f"target-{i}",
-                backend_type=BackendType.VANILLA_K8S,
+                backend_type=BackendType.KUBERNETES,
                 endpoint="https://target.test",
                 placement=KubernetesPlacement(namespace="ep"),
                 status=TargetStatus.ACTIVE,
@@ -130,7 +130,7 @@ async def _assert_page_round_trip(client, path, expected_ids, *, sort=None, page
             data = json.loads(base64.b64decode(cursor))
             assert data["sort_field"] == "created_at"
             assert data.pop("sort_value") == data["created_at"]
-            cursor = encode_cursor(data)
+            cursor = _encode_cursor(data)
         query = {**params, "cursor": cursor} if cursor is not None else params
         response = await client.get(path, params=query)
         assert response.status_code == 200, response.text
@@ -270,7 +270,7 @@ async def test_structurally_malformed_cursor_returns_422(pg_client, path, payloa
 )
 async def test_cursor_must_match_requested_sort(pg_client, path, cursor):
     client, _, _ = pg_client
-    response = await client.get(path, params={"cursor": encode_cursor(cursor), "sort": "created_at"})
+    response = await client.get(path, params={"cursor": _encode_cursor(cursor), "sort": "created_at"})
     assert response.status_code == 422, response.text
 
 
@@ -281,7 +281,7 @@ async def test_non_created_at_cursor_requires_sort_value(sort_client, sort):
     body = (await sort_client.get("/v1/work-items", params={"sort": sort, "limit": 2})).json()
     data = json.loads(base64.b64decode(body["next"]))
     del data["sort_value"]
-    response = await sort_client.get("/v1/work-items", params={"sort": sort, "cursor": encode_cursor(data)})
+    response = await sort_client.get("/v1/work-items", params={"sort": sort, "cursor": _encode_cursor(data)})
     assert response.status_code == 422, response.text
 
 
@@ -355,7 +355,7 @@ async def test_work_items_cursor_past_last_row(pg_client):
     client, sessions, client_id = pg_client
     await _insert_work_items(sessions, client_id, 2)
 
-    past_cursor = encode_cursor(
+    past_cursor = _encode_cursor(
         {
             "id": str(uuid.uuid4()),
             "created_at": "2000-01-01T00:00:00+00:00",

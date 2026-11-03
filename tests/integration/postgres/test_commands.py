@@ -267,7 +267,7 @@ async def test_target_commands_add_and_preserve_the_target_identity_label(comman
         "resource_id": str(target_id),
         "cluster_id": str(cluster_id),
         "name": "workers",
-        "backend_type": "vanilla_k8s",
+        "backend_type": "kubernetes",
         "endpoint": "https://cluster.test",
         "credential_ref": str(uuid4()),
         "placement": {"type": "kubernetes", "namespace": "ep"},
@@ -317,7 +317,7 @@ async def test_targets_enforce_cluster_ownership_defaults_and_domain_lifecycle(c
         "resource_id": str(target_id),
         "cluster_id": str(cluster_id),
         "name": "workers",
-        "backend_type": "vanilla_k8s",
+        "backend_type": "kubernetes",
         "endpoint": "https://cluster.test",
         "credential_ref": str(uuid4()),
         "placement": {"type": "kubernetes", "namespace": "ep", "node_selectors": ["env=test"]},
@@ -380,7 +380,7 @@ async def test_default_target_delete_is_rejected(command_client):
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster, ClusterStatus
     from execution_plane.models.execution_target import BackendType
-    from execution_plane.models.execution_target_placement import KubernetesPlacement
+    from execution_plane_client.models.execution_target import KubernetesPlacement
 
     client, sessions = command_client
     now, cluster_id = datetime.now(UTC), uuid4()
@@ -404,7 +404,7 @@ async def test_default_target_delete_is_rejected(command_client):
         default = await target_store.create(
             cluster_id=cluster_id,
             name="default",
-            backend_type=BackendType.VANILLA_K8S,
+            backend_type=BackendType.KUBERNETES,
             endpoint="https://cluster.test",
             credential_ref=uuid4(),
             is_default=True,
@@ -451,7 +451,7 @@ async def test_failed_target_creation_rolls_back(command_client, monkeypatch):
         "resource_id": str(target_id),
         "cluster_id": str(cluster_id),
         "name": "independent",
-        "backend_type": "vanilla_k8s",
+        "backend_type": "kubernetes",
         "endpoint": "https://cluster.test",
         "credential_ref": str(uuid4()),
         "placement": {"type": "kubernetes", "namespace": "ep"},

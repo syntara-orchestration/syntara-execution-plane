@@ -4,7 +4,7 @@
 
 ## Scope
 
-This document will cover the `vanilla_k8s` backend type: how the EP worker schedules, monitors, and reclaims pods on a Kubernetes cluster to execute scripts.
+This document will cover the `kubernetes` backend type: how the EP worker schedules, monitors, and reclaims pods on a Kubernetes cluster to execute scripts.
 
 ## Topics (to be filled in)
 
@@ -31,5 +31,5 @@ This document will cover the `vanilla_k8s` backend type: how the EP worker sched
 
 ### Configuration
 
-- Required fields on `ExecutionTarget` for `backend_type = vanilla_k8s`
+- Required fields on `ExecutionTarget` for `backend_type = kubernetes`
 - RBAC / ServiceAccount requirements in the target cluster
