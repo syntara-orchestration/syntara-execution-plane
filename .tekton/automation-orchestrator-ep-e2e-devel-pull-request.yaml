@@ -46,12 +46,6 @@ spec:
       value: "{{revision}}"
     - name: pipeline-github-pr-number
       value: "{{pull_request_number}}"
-    # Operator branch that honors ENABLE_EXECUTION_PLANE; the prebuilt devel
-    # bundle ignores it (automation-orchestrator-operator#1573)
-    - name: ao-operator-git-url
-      value: https://github.com/automation-nexus/automation-orchestrator-operator.git
-    - name: ao-operator-revision
-      value: AAP-90779-ep-from-source
     - name: ao-git-url
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
