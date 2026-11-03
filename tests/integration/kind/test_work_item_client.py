@@ -7,7 +7,8 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from execution_plane.work_item_client import (
+from execution_plane_client.commands.work import WorkExecute
+from tools.work_item_client import (
     DEFAULT_JWT_AUDIENCE,
     DEFAULT_JWT_CLIENT_ID,
     DEFAULT_JWT_ISSUER,
@@ -18,7 +19,6 @@ from execution_plane.work_item_client import (
     resolve_private_key_path,
     service_token_claims,
 )
-from execution_plane_client.commands.work import WorkExecute
 
 _PROJECT_ID = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -98,7 +98,7 @@ def test_resolve_private_key_path_reads_env(monkeypatch: pytest.MonkeyPatch, tmp
 def test_resolve_private_key_path_errors_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EP_AO_JWT_PRIVATE_KEY_FILE", raising=False)
     monkeypatch.setattr(
-        "execution_plane.work_item_client._PRIVATE_KEY_CANDIDATES",
+        "tools.work_item_client._PRIVATE_KEY_CANDIDATES",
         (Path("/nonexistent/jwt-primary.pem"),),
     )
     with pytest.raises(FileNotFoundError, match="AO JWT private key not found"):

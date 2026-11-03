@@ -23,7 +23,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-from execution_plane.work_item_client import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, for tools.* imports
+
+from tools.work_item_client import (
     DEFAULT_JWT_AUDIENCE,
     DEFAULT_JWT_CLIENT_ID,
     DEFAULT_JWT_ISSUER,

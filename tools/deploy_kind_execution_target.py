@@ -42,8 +42,10 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from execution_plane.work_item_client import ep_service_token
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, for tools.* imports
+
 from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
+from tools.work_item_client import ep_service_token
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CLUSTER_NAME = "ep-kind"

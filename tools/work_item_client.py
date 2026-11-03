@@ -23,7 +23,7 @@ from execution_plane_client.commands.work import WorkExecute
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_NODE_IMAGE = "localhost/syntara-sdk-script:dev"
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _POLL_PAUSE_SECONDS = 2.0
