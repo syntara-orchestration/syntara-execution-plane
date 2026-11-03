@@ -451,8 +451,7 @@ def _map_result(frame: dict[str, Any], output_config: dict[str, str] | None) -> 
             output=output,
             details=details,
         )
-    else:
-        details["retryable"] = False
+    details["retryable"] = False
     if output is not None:
         details["output"] = output
     return details
