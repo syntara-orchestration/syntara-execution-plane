@@ -161,17 +161,27 @@ def ep_service_token(
 
 
 def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
-    """Call the local EP API and return ``(status, JSON-or-None)``."""
-    ca_path = _ca_path()
-    if not ca_path.is_file():
-        msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
-        raise FileNotFoundError(msg)
+    """Call the local EP API and return ``(status, JSON-or-None)``.
+
+    HTTPS URLs are verified against the local CA (``EP_API_CA_FILE`` or
+    ``.secrets/certs/ca.pem``); plain HTTP URLs skip verification for
+    local-dev stacks that serve without TLS.
+    """
+    verify: str | bool = True
+    if url.startswith("https://"):
+        ca_path = _ca_path()
+        if not ca_path.is_file():
+            msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
+            raise FileNotFoundError(msg)
+        verify = str(ca_path)
+    else:
+        verify = False
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    with httpx.Client(verify=str(ca_path), timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+    with httpx.Client(verify=verify, timeout=_REQUEST_TIMEOUT_SECONDS) as client:
         response = client.request(method, url, headers=headers, json=body)
     if not response.content:
         return response.status_code, None
@@ -180,6 +190,23 @@ def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = 
     except json.JSONDecodeError:
         parsed = {"detail": response.text}
     return response.status_code, parsed
+
+
+def wait_for_ep_api(api_url: str, timeout: float = 30.0) -> None:
+    """Block until the local EP API answers readiness."""
+    url = f"{api_url.rstrip('/')}/healthz/ready"
+    deadline = time.monotonic() + timeout
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            status, _ = ep_request("GET", url, token="")
+            if status == HTTPStatus.OK:
+                return
+        except (httpx.HTTPError, FileNotFoundError) as exc:
+            last_error = exc
+        time.sleep(1.0)
+    msg = f"Execution Plane API is not ready at {url}"
+    raise TimeoutError(msg) from last_error
 
 
 def build_payload(
