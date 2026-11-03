@@ -193,16 +193,31 @@ def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = 
 
 
 def wait_for_ep_api(api_url: str, timeout: float = 30.0) -> None:
-    """Block until the local EP API answers readiness."""
+    """Block until the local EP API answers readiness.
+
+    Readiness is unauthenticated: request it directly rather than through
+    ep_request, whose Authorization header (even an empty bearer) is rejected
+    by the API's auth middleware where no header would pass.
+    """
     url = f"{api_url.rstrip('/')}/healthz/ready"
+    verify: str | bool = True
+    if url.startswith("https://"):
+        ca_path = _ca_path()
+        if not ca_path.is_file():
+            msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
+            raise FileNotFoundError(msg)
+        verify = str(ca_path)
+    else:
+        verify = False
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            status, _ = ep_request("GET", url, token="")
-            if status == HTTPStatus.OK:
+            with httpx.Client(verify=verify, timeout=5.0) as client:
+                response = client.get(url)
+            if response.status_code == HTTPStatus.OK:
                 return
-        except (httpx.HTTPError, FileNotFoundError) as exc:
+        except httpx.HTTPError as exc:
             last_error = exc
         time.sleep(1.0)
     msg = f"Execution Plane API is not ready at {url}"
