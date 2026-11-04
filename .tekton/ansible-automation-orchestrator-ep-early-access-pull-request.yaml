@@ -1,0 +1,75 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  annotations:
+    build.appstudio.openshift.io/repo: '{{source_url}}?rev={{revision}}'
+    build.appstudio.redhat.com/commit_sha: "{{revision}}"
+    build.appstudio.redhat.com/pull_request_number: "{{pull_request_number}}"
+    build.appstudio.redhat.com/target_branch: "{{target_branch}}"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+    pipelinesascode.tekton.dev/on-cel-expression: >-
+      event == "pull_request" && target_branch == "early-access" &&
+      (files.all.exists(x,
+        x.startsWith("src/") ||
+        x == "Containerfile" ||
+        x == "pyproject.toml" ||
+        x == "uv.lock" ||
+        x == "requirements.txt" ||
+        x == "requirements-build.txt" ||
+        x == "rpms.in.yaml" ||
+        x == "rpms.lock.yaml" ||
+        x == "alembic.ini" ||
+        x == "LICENSE") ||
+      ".tekton/ansible-automation-orchestrator-ep-early-access-pull-request.yaml".pathChanged())
+  creationTimestamp: null
+  labels:
+    appstudio.openshift.io/application: ansible-automation-orchestrator-early-access
+    appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-early-access
+    pipelines.appstudio.openshift.io/type: build
+  name: ansible-automation-orchestrator-ep-early-access-on-pull-request
+  namespace: nexus-tenant
+spec:
+  params:
+    - name: git-url
+      value: "{{repo_url}}"
+    - name: revision
+      value: "{{revision}}"
+    - name: output-image
+      value: quay.io/redhat-user-workloads/nexus-tenant/ansible-automation-platform/automation-orchestrator-execution-plane-rhel9:on-pr-{{revision}}
+    - name: image-expires-after
+      value: 5d
+    - name: dockerfile
+      value: Containerfile
+    - name: path-context
+      value: .
+    - name: build-args
+      value:
+        - BUILDER_IMAGE=registry.redhat.io/ansible-automation-platform/uv-builder-rhel9:latest@sha256:bdd64fcb4597cfb665c15c4b4841ded098baa26dce1f544b4dbd17a575b8984a
+    - name: build-platforms
+      value:
+        - linux-c4xlarge/amd64
+        - linux-c4xlarge/arm64
+    - name: hermetic
+      value: "true"
+    - name: prefetch-input
+      value: '[{"type": "pip", "path": "."}, {"type": "rpm", "path": "."}]'
+  pipelineRef:
+    params:
+      - name: name
+        value: container
+      - name: bundle
+        value: quay.io/aap-ci/tekton-catalog/pipeline/build/container:0.2@sha256:85e23e713364af6bed2c0e1c69cb2a49845e64d30cd7dd7ca32341d992cc1449
+      - name: kind
+        value: pipeline
+      - name: secret
+        value: quay-aap-ci-viewer
+    resolver: bundles
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-ansible-automation-orchestrator-execution-plane-early-access
+  workspaces:
+    - name: git-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+status: {}
