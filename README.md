@@ -37,7 +37,7 @@ target.
 
 For a separate local EP database, copy `.env.example` to `.env` if you need to
 override defaults. Generate local secrets and TLS material first (`make setup`,
-or `./tools/generate_secrets.sh` and `uv run python tools/generate_certs.py`).
+or `./tools/generate_secrets.sh` and `uv run python -m tools.generate_certs`).
 If a sibling Syntara checkout already has `backend/.secrets/jwt-primary.pub`,
 the secrets script copies it so EP can verify tokens issued by local AO.
 The standalone compose setup creates a local PostgreSQL server, an EP-owned
@@ -128,15 +128,15 @@ make setup
 uvx podman-compose up --build -d
 
 # Service token for curl. Submit needs --project-id.
-uv run python tools/generate_jwt_for_ep.py
-uv run python tools/generate_jwt_for_ep.py --project-id 00000000-0000-0000-0000-000000000001
+uv run python -m tools.generate_jwt_for_ep
+uv run python -m tools.generate_jwt_for_ep --project-id 00000000-0000-0000-0000-000000000001
 
 # Kind cluster + default ExecutionTarget (needs kind and kubectl)
-uv run python tools/deploy_kind_execution_target.py
+uv run python -m tools.deploy_kind_execution_target
 
 # Submit a script work item; --wait polls until it is terminal
-uv run python tools/submit_work_item.py
-uv run python tools/submit_work_item.py --language bash --code 'echo hello' --wait
+uv run python -m tools.submit_work_item
+uv run python -m tools.submit_work_item --language bash --code 'echo hello' --wait
 ```
 
 Makefile aliases: `make generate-token`, `make kind-target`, and `make submit-work`.

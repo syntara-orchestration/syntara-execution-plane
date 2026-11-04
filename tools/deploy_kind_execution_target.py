@@ -14,11 +14,11 @@ This script:
 
 Usage:
     make setup && uvx podman-compose up --build -d
-    AO_ADMIN_PASSWORD=<password> uv run python tools/deploy_kind_execution_target.py \
+    AO_ADMIN_PASSWORD=<password> uv run python -m tools.deploy_kind_execution_target \
       --create-ao-credential --ao-insecure
 
     # Then list targets:
-    TOKEN=$(uv run python tools/generate_jwt_for_ep.py)
+    TOKEN=$(uv run python -m tools.generate_jwt_for_ep)
     curl -k -H "Authorization: Bearer $TOKEN" https://127.0.0.1:8001/v1/execution-targets
 """
 
@@ -29,7 +29,6 @@ import base64
 import json
 import os
 import shutil
-import ssl
 import subprocess
 import sys
 import tempfile
@@ -39,11 +38,11 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
-from execution_plane.work_item_client import ep_service_token
 from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
+from tools import create_ao_credential as ao_credential
+
+from .work_item_client import ep_request, ep_service_token, list_execution_targets, wait_for_ep_api
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CLUSTER_NAME = "ep-kind"
@@ -57,7 +56,6 @@ KIND_NETWORK = "kind"
 CONTROL_PLANE_PORT = 6443
 EP_CA_PATH = PROJECT_ROOT / ".secrets" / "certs" / "ca.pem"
 WORKLOAD_RBAC_PATH = PROJECT_ROOT / "deploy" / "kubernetes" / "execution-target" / "rbac.yaml"
-CREATE_AO_CREDENTIAL_PATH = PROJECT_ROOT / "tools" / "create_ao_credential.py"
 
 
 def _run(
@@ -162,21 +160,14 @@ def create_ao_credential(
         "--duration",
         "12h",
     )
-    environment = dict(os.environ)
-    environment["AO_ADMIN_PASSWORD"] = admin_password
-    environment["AO_CREDENTIAL_TOKEN"] = token_result.stdout.strip()
-    arguments = [
-        sys.executable,
-        str(CREATE_AO_CREDENTIAL_PATH),
-        "--api-url",
-        api_url,
-        "--cluster-name",
-        cluster_name,
-    ]
-    if insecure:
-        arguments.append("--insecure")
-    result = _run(arguments, env=environment)
-    return uuid.UUID(result.stdout.strip())
+    return ao_credential.create_or_refresh_credential(
+        api_url=api_url,
+        cluster_name=cluster_name,
+        token=token_result.stdout.strip(),
+        username="admin",
+        password=admin_password,
+        insecure=insecure,
+    )
 
 
 def cluster_ca_pem(kubeconfig: Path) -> str:
@@ -235,62 +226,6 @@ def connect_worker_to_kind_network() -> str | None:
     else:
         print(f"[WARN] Could not connect {worker} to {KIND_NETWORK}: {connected.stderr.strip()}")
     return worker
-
-
-def _ssl_context() -> ssl.SSLContext:
-    ca_path = Path(os.environ.get("EP_API_CA_FILE", str(EP_CA_PATH)))
-    if not ca_path.is_file():
-        msg = f"EP API CA not found at {ca_path}; set EP_API_CA_FILE or generate certificates"
-        raise FileNotFoundError(msg)
-    return ssl.create_default_context(cafile=str(ca_path))
-
-
-def _ssl_context_for(url: str) -> ssl.SSLContext | None:
-    """Return an SSL context for HTTPS URLs and None for plain HTTP."""
-    return _ssl_context() if url.startswith("https://") else None
-
-
-def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
-    """Call the local EP API and return (status, JSON-or-text)."""
-    data = None if body is None else json.dumps(body).encode("utf-8")
-    request = Request(  # noqa: S310
-        url,
-        data=data,
-        method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urlopen(request, context=_ssl_context_for(url), timeout=15) as response:  # noqa: S310
-            payload = response.read().decode("utf-8")
-            parsed: Any = json.loads(payload) if payload else None
-            return response.status, parsed
-    except HTTPError as exc:
-        payload = exc.read().decode("utf-8")
-        try:
-            parsed = json.loads(payload) if payload else {"detail": str(exc)}
-        except json.JSONDecodeError:
-            parsed = {"detail": payload or str(exc)}
-        return exc.code, parsed
-
-
-def wait_for_ep_api(api_url: str, timeout: int = 30) -> None:
-    """Block until the local API answers readiness."""
-    url = f"{api_url.rstrip('/')}/healthz/ready"
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            request = Request(url, method="GET")  # noqa: S310
-            with urlopen(request, context=_ssl_context_for(url), timeout=5) as response:  # noqa: S310
-                if response.status == HTTPStatus.OK:
-                    return
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError):
-            time.sleep(1)
-    msg = f"Execution Plane API is not ready at {url}"
-    raise TimeoutError(msg)
 
 
 def provision_cluster(
@@ -369,19 +304,6 @@ def wait_for_cluster(api_url: str, token: str, source_integration_id: uuid.UUID,
         time.sleep(3)
     msg = f"Timed out waiting for cluster {source_integration_id} to become active"
     raise TimeoutError(msg)
-
-
-def list_execution_targets(api_url: str, token: str) -> list[dict[str, Any]]:
-    """Return registered execution targets visible to the service token."""
-    status, payload = ep_request("GET", f"{api_url}/v1/execution-targets", token)
-    if status >= HTTPStatus.BAD_REQUEST:
-        msg = f"Listing execution targets failed ({status}): {payload}"
-        raise RuntimeError(msg)
-    resources = payload.get("resources") if isinstance(payload, dict) else None
-    if not isinstance(resources, list):
-        msg = f"Unexpected execution-target response: {payload}"
-        raise TypeError(msg)
-    return resources
 
 
 def source_integration_id(cluster_name: str) -> uuid.UUID:

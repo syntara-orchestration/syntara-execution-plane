@@ -38,7 +38,7 @@ jobs:
           retention-days: 7
 
   # Regenerates openapi.yaml and fails if the committed file differs.
-  # To fix: run `uv run python tools/export_openapi.py` and commit the result.
+  # To fix: run `uv run python -m tools.export_openapi` and commit the result.
   openapi-drift:
     runs-on: ubuntu-latest
     steps:
@@ -52,11 +52,11 @@ jobs:
       - name: Create pybuild-deps cache directory
         run: mkdir -p /home/runner/.cache/pybuild-deps
       - run: uv sync --locked --all-groups
-      - run: uv run python tools/export_openapi.py
+      - run: uv run python -m tools.export_openapi
       - name: Fail if openapi.yaml has uncommitted changes
         run: |
           if ! git diff --exit-code -- openapi.yaml; then
-            echo "openapi.yaml is out of sync. Run 'uv run python tools/export_openapi.py' and commit the result."
+            echo "openapi.yaml is out of sync. Run 'uv run python -m tools.export_openapi' and commit the result."
             exit 1
           fi
 
@@ -169,7 +169,7 @@ jobs:
 
       - name: Provision RBAC and register kind cluster
         run: |
-          uv run python tools/deploy_kind_execution_target.py \
+          uv run python -m tools.deploy_kind_execution_target \
             --cluster-name integration-test \
             --credential-ref "$EP_KIND_CREDENTIAL_REF" \
             --wait-for-api 60

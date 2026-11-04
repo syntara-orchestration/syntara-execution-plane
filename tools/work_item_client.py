@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import httpx
 import jwt
@@ -23,7 +24,7 @@ from execution_plane_client.commands.work import WorkExecute
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_NODE_IMAGE = "localhost/syntara-sdk-script:dev"
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _POLL_PAUSE_SECONDS = 2.0
@@ -160,18 +161,36 @@ def ep_service_token(
     return token
 
 
+def _verify_for(url: str) -> str | bool:
+    """Return the TLS verification setting for an EP API URL.
+
+    HTTPS URLs are verified against the local CA (``EP_API_CA_FILE`` or
+    ``.secrets/certs/ca.pem``). Plain HTTP carries no TLS at all: it is only
+    permitted for loopback hosts, where local-dev stacks serve without TLS —
+    elsewhere the caller would send the bearer token unencrypted.
+    """
+    if url.startswith("https://"):
+        ca_path = _ca_path()
+        if not ca_path.is_file():
+            msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
+            raise FileNotFoundError(msg)
+        return str(ca_path)
+    host = urlparse(url).hostname or ""
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        msg = f"Refusing to call a non-loopback HTTP URL (token would be sent unencrypted): {url}"
+        raise ValueError(msg)
+    return False
+
+
 def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
     """Call the local EP API and return ``(status, JSON-or-None)``."""
-    ca_path = _ca_path()
-    if not ca_path.is_file():
-        msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
-        raise FileNotFoundError(msg)
+    verify = _verify_for(url)
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    with httpx.Client(verify=str(ca_path), timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+    with httpx.Client(verify=verify, timeout=_REQUEST_TIMEOUT_SECONDS) as client:
         response = client.request(method, url, headers=headers, json=body)
     if not response.content:
         return response.status_code, None
@@ -180,6 +199,30 @@ def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = 
     except json.JSONDecodeError:
         parsed = {"detail": response.text}
     return response.status_code, parsed
+
+
+def wait_for_ep_api(api_url: str, timeout: float = 30.0) -> None:
+    """Block until the local EP API answers readiness.
+
+    Readiness is unauthenticated: request it directly rather than through
+    ep_request, whose Authorization header (even an empty bearer) is rejected
+    by the API's auth middleware where no header would pass.
+    """
+    url = f"{api_url.rstrip('/')}/healthz/ready"
+    verify = _verify_for(url)
+    deadline = time.monotonic() + timeout
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with httpx.Client(verify=verify, timeout=5.0) as client:
+                response = client.get(url)
+            if response.status_code == HTTPStatus.OK:
+                return
+        except httpx.HTTPError as exc:
+            last_error = exc
+        time.sleep(1.0)
+    msg = f"Execution Plane API is not ready at {url}"
+    raise TimeoutError(msg) from last_error
 
 
 def build_payload(
@@ -259,10 +302,12 @@ def list_execution_targets(api_url: str, token: str) -> list[dict[str, Any]]:
     if status >= HTTPStatus.BAD_REQUEST:
         msg = f"Listing execution targets failed ({status}): {response}"
         raise RuntimeError(msg)
-    if not isinstance(response, list):
+    # The API wraps collections in a page envelope ({"resources": [...]}).
+    resources = response.get("resources") if isinstance(response, dict) else response
+    if not isinstance(resources, list):
         msg = f"Unexpected execution-target response: {response}"
         raise TypeError(msg)
-    return response
+    return resources
 
 
 def wait_for_work_item(

@@ -6,8 +6,8 @@ name (`api`) plus localhost. Certificates are stored in `.secrets/certs/` and
 mounted into containers by `compose.yaml`.
 
 Usage:
-    uv run python tools/generate_certs.py          # Generate missing certs
-    uv run python tools/generate_certs.py --force   # Regenerate all
+    uv run python -m tools.generate_certs.py          # Generate missing certs
+    uv run python -m tools.generate_certs.py --force   # Regenerate all
 """
 
 from __future__ import annotations

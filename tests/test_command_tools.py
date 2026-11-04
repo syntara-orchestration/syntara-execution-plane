@@ -3,10 +3,9 @@
 import sys
 from uuid import uuid4
 
-from execution_plane import work_item_client
 from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.protocol import MessageEnvelope
-from tools import deploy_kind_execution_target, submit_work_item
+from tools import deploy_kind_execution_target, submit_work_item, work_item_client
 
 
 def test_default_token_scopes_authorize_command_tools():
