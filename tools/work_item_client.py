@@ -301,10 +301,12 @@ def list_execution_targets(api_url: str, token: str) -> list[dict[str, Any]]:
     if status >= HTTPStatus.BAD_REQUEST:
         msg = f"Listing execution targets failed ({status}): {response}"
         raise RuntimeError(msg)
-    if not isinstance(response, list):
+    # The API wraps collections in a page envelope ({"resources": [...]}).
+    resources = response.get("resources") if isinstance(response, dict) else response
+    if not isinstance(resources, list):
         msg = f"Unexpected execution-target response: {response}"
         raise TypeError(msg)
-    return response
+    return resources
 
 
 def wait_for_work_item(
