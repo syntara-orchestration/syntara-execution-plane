@@ -50,6 +50,12 @@ spec:
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
       value: feat/ANSTRAT-1803
+    # aap-dev deploys with the execution-target registration hook
+    # (ansible/aap-dev#1141): the integrations-based cluster registration and
+    # execution-target placement replaced konflux-prepare-execution-plane.sh.
+    # Drop this pin once the hook merges on aap-dev main.
+    - name: aap-dev-revision
+      value: goneri/configure-ep-execution-target
   pipelineRef:
     resolver: bundles
     params:
