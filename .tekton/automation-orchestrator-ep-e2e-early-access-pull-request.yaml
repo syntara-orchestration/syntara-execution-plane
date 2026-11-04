@@ -1,0 +1,65 @@
+---
+# Thin stub: the ep-api-tests bundle pipeline.
+#
+# This PR's Execution Plane head is what gets deployed and tested (the
+# pipeline source repo provides ep-revision); AO comes from the pipeline's
+# ao-revision default (feat/ANSTRAT-1803 — must include EP script dispatch
+# and credential.resolve until those land on devel). The ao-operator-revision
+# pin drops when the prebuilt operator bundle honors ENABLE_EXECUTION_PLANE
+# (automation-orchestrator-operator#1573).
+#
+# Replaces the ~1,000-line inline PipelineRun. The pipeline bundle must
+# publish first (aap-konflux-pipelines#4747); the digest below points at a
+# placeholder until then — bump it when the bundle is out.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  annotations:
+    build.appstudio.openshift.io/repo: "{{source_url}}?rev={{revision}}"
+    build.appstudio.redhat.com/commit_sha: "{{revision}}"
+    build.appstudio.redhat.com/pull_request_number: "{{pull_request_number}}"
+    build.appstudio.redhat.com/target_branch: "{{target_branch}}"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+    pipelinesascode.tekton.dev/max-keep-runs: "2"
+    pipelinesascode.tekton.dev/on-cel-expression: >-
+      event == "pull_request" && target_branch == "early-access"
+  creationTimestamp: null
+  labels:
+    appstudio.openshift.io/application: ansible-automation-orchestrator-early-access
+    appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-early-access
+    pipelines.appstudio.openshift.io/type: test
+  name: automation-orchestrator-ep-e2e-early-access-pull-request
+  namespace: nexus-tenant
+spec:
+  timeouts:
+    pipeline: "6h"
+    tasks: "5h"
+    finally: "1h"
+  params:
+    - name: git-url
+      value: https://github.com/syntara-orchestration/syntara-execution-plane
+    - name: pipeline-github-org
+      value: "{{repo_owner}}"
+    - name: pipeline-github-repo
+      value: "{{repo_name}}"
+    - name: pipeline-github-pr-revision
+      value: "{{revision}}"
+    - name: pipeline-github-pr-number
+      value: "{{pull_request_number}}"
+    - name: ao-git-url
+      value: https://github.com/syntara-orchestration/syntara.git
+    - name: ao-revision
+      value: feat/ANSTRAT-1803
+  pipelineRef:
+    resolver: bundles
+    params:
+      - name: name
+        value: ep-api-tests
+      - name: bundle
+        value: quay.io/aap-ci/tekton-catalog/pipeline/test/ep-api-tests:0.1@sha256:dfad30b2af8e73ef73619517c04f7f58d4075f90f16282ceb0b0f376dea287e5
+      - name: kind
+        value: pipeline
+      - name: secret
+        value: quay-aap-ci-viewer
+  taskRunTemplate:
+    serviceAccountName: konflux-integration-runner
