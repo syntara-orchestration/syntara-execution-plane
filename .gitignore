@@ -28,3 +28,6 @@ docs/superpowers/
 
 # hatch-vcs generated
 src/execution_plane_client/_version.py
+
+# JetBrains IDE
+.idea/
