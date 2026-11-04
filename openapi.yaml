@@ -98,6 +98,16 @@ paths:
           description: Work UUID; id[in]=uuid1,uuid2 for membership
           title: Id
         description: Work UUID; id[in]=uuid1,uuid2 for membership
+      - name: execution_target_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Execution target UUID; supports eq, in, and isnull
+          title: Execution Target Id
+        description: Execution target UUID; supports eq, in, and isnull
       - name: status
         in: query
         required: false
@@ -166,6 +176,14 @@ paths:
         description: 'Dynamic filter operator for id. Operators: eq, in, gt, gte,
           lt, lte, isnull. Comma-separated values use OR; different fields/operators
           use AND.'
+      - name: execution_target_id[operator]
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Dynamic filter operator for execution_target_id. Operators:
+          eq, in, gt, gte, lt, lte, isnull. Comma-separated values use OR; different
+          fields/operators use AND.'
       - name: status[operator]
         in: query
         required: false

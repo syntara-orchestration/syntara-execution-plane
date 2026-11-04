@@ -136,6 +136,7 @@ def test_list_params_publish_resource_filter_fields() -> None:
         "sort",
         "include_total",
         "id",
+        "execution_target_id",
         "status",
         "created_at",
         "claimed_at",

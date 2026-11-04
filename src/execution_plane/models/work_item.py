@@ -38,6 +38,7 @@ class WorkItem(SQLModel, table=True):
     # Origin: syntara.core.models.base.BaseResource field allowlists.
     __filterable_fields__: ClassVar[list[str]] = [
         "id",
+        "execution_target_id",
         "status",
         "created_at",
         "claimed_at",
@@ -46,6 +47,7 @@ class WorkItem(SQLModel, table=True):
         "resource_cleanup_error",
     ]
     __table_args__ = (
+        sa.Index("ix_work_items_execution_target_status", "execution_target_id", "status"),
         sa.Index("ix_work_items_status", "status"),
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),
         sa.Index(

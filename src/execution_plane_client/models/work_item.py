@@ -28,6 +28,9 @@ class WorkItemListParams(EPListParams):
     """Work-item query controls and documented filter fields."""
 
     id: str | None = Field(default=None, description="Work UUID; id[in]=uuid1,uuid2 for membership")
+    execution_target_id: str | None = Field(
+        default=None, description="Execution target UUID; supports eq, in, and isnull"
+    )
     status: str | None = Field(default=None, description="Work status; supports eq and in")
     created_at: str | None = Field(
         default=None, description="Creation time; supports eq, in, gt, gte, lt, lte, and isnull"
