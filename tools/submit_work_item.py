@@ -4,9 +4,9 @@
 Submission requires an AO service token with `work.execute` and `work-items:read`.
 
 Usage:
-    uv run python tools/submit_work_item.py
-    uv run python tools/submit_work_item.py --language bash --code 'echo hello'
-    uv run python tools/submit_work_item.py --code-file ./job.py --wait
+    uv run python -m tools.submit_work_item.py
+    uv run python -m tools.submit_work_item.py --language bash --code 'echo hello'
+    uv run python -m tools.submit_work_item.py --code-file ./job.py --wait
 """
 
 from __future__ import annotations
@@ -19,9 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, for tools.* imports
-
-from tools.work_item_client import (
+from .work_item_client import (
     DEFAULT_API_URL,
     DEFAULT_NODE_IMAGE,
     build_payload,

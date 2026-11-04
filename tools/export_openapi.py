@@ -5,7 +5,7 @@ OpenAPI spec to a file. No database or external services are required.
 
 Usage:
     make openapi
-    uv run python tools/export_openapi.py [--output PATH] [--format {json,yaml}]
+    uv run python -m tools.export_openapi.py [--output PATH] [--format {json,yaml}]
 
 The committed openapi.yaml is kept in sync by the `openapi-drift` CI job.
 Run this script locally and commit the result whenever the API changes.

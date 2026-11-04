@@ -14,11 +14,11 @@ This script:
 
 Usage:
     make setup && uvx podman-compose up --build -d
-    AO_ADMIN_PASSWORD=<password> uv run python tools/deploy_kind_execution_target.py \
+    AO_ADMIN_PASSWORD=<password> uv run python -m tools.deploy_kind_execution_target \
       --create-ao-credential --ao-insecure
 
     # Then list targets:
-    TOKEN=$(uv run python tools/generate_jwt_for_ep.py)
+    TOKEN=$(uv run python -m tools.generate_jwt_for_ep)
     curl -k -H "Authorization: Bearer $TOKEN" https://127.0.0.1:8001/v1/execution-targets
 """
 
@@ -39,11 +39,10 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, for tools.* imports
-
 from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
 from tools import create_ao_credential as ao_credential
-from tools.work_item_client import ep_request, ep_service_token, list_execution_targets, wait_for_ep_api
+
+from .work_item_client import ep_request, ep_service_token, list_execution_targets, wait_for_ep_api
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CLUSTER_NAME = "ep-kind"

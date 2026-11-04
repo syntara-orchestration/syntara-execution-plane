@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import httpx
 import jwt
@@ -160,22 +161,30 @@ def ep_service_token(
     return token
 
 
-def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
-    """Call the local EP API and return ``(status, JSON-or-None)``.
+def _verify_for(url: str) -> str | bool:
+    """Return the TLS verification setting for an EP API URL.
 
     HTTPS URLs are verified against the local CA (``EP_API_CA_FILE`` or
-    ``.secrets/certs/ca.pem``); plain HTTP URLs skip verification for
-    local-dev stacks that serve without TLS.
+    ``.secrets/certs/ca.pem``). Plain HTTP carries no TLS at all: it is only
+    permitted for loopback hosts, where local-dev stacks serve without TLS —
+    elsewhere the caller would send the bearer token unencrypted.
     """
-    verify: str | bool = True
     if url.startswith("https://"):
         ca_path = _ca_path()
         if not ca_path.is_file():
             msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
             raise FileNotFoundError(msg)
-        verify = str(ca_path)
-    else:
-        verify = False
+        return str(ca_path)
+    host = urlparse(url).hostname or ""
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        msg = f"Refusing to call a non-loopback HTTP URL (token would be sent unencrypted): {url}"
+        raise ValueError(msg)
+    return False
+
+
+def ep_request(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
+    """Call the local EP API and return ``(status, JSON-or-None)``."""
+    verify = _verify_for(url)
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -200,15 +209,7 @@ def wait_for_ep_api(api_url: str, timeout: float = 30.0) -> None:
     by the API's auth middleware where no header would pass.
     """
     url = f"{api_url.rstrip('/')}/healthz/ready"
-    verify: str | bool = True
-    if url.startswith("https://"):
-        ca_path = _ca_path()
-        if not ca_path.is_file():
-            msg = f"EP API CA not found at {ca_path}; run ./tools/generate_certs.py first"
-            raise FileNotFoundError(msg)
-        verify = str(ca_path)
-    else:
-        verify = False
+    verify = _verify_for(url)
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:

@@ -34,7 +34,7 @@ typecheck:
 	uv run mypy --strict src
 
 openapi:
-	uv run python tools/export_openapi.py
+	uv run python -m tools.export_openapi
 
 # Fully pinned, hashed lockfiles for Cachi2/Hermeto pip prefetch.
 # Konflux does not read uv.lock; keep these in sync after dependency changes.
@@ -69,7 +69,7 @@ secrets:
 	./tools/generate_secrets.sh
 
 certs:
-	uv run python tools/generate_certs.py
+	uv run python -m tools.generate_certs
 
 setup: install secrets certs
 
@@ -80,10 +80,10 @@ compose-down:
 	uvx podman-compose -f compose.yaml down
 
 generate-token:
-	uv run python tools/generate_jwt_for_ep.py
+	uv run python -m tools.generate_jwt_for_ep
 
 kind-target:
-	uv run python tools/deploy_kind_execution_target.py $(KIND_ARGS)
+	uv run python -m tools.deploy_kind_execution_target $(KIND_ARGS)
 
 submit-work:
-	uv run python tools/submit_work_item.py
+	uv run python -m tools.submit_work_item
