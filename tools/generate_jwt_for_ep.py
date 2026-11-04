@@ -5,12 +5,12 @@ EP does not issue tokens. It verifies ES256 tokens signed with AO's private
 key. This script signs a service token that matches the compose defaults.
 
 Usage:
-    uv run python tools/generate_jwt_for_ep.py
-    TOKEN=$(uv run python tools/generate_jwt_for_ep.py)
+    uv run python -m tools.generate_jwt_for_ep.py
+    TOKEN=$(uv run python -m tools.generate_jwt_for_ep.py)
     curl -k -H "Authorization: Bearer $TOKEN" https://127.0.0.1:8001/v1/work-items
 
     # Optionally include a project UUID as caller metadata:
-    uv run python tools/generate_jwt_for_ep.py --project-id 00000000-0000-0000-0000-000000000001
+    uv run python -m tools.generate_jwt_for_ep.py --project-id 00000000-0000-0000-0000-000000000001
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
-from execution_plane.work_item_client import (
+from .work_item_client import (
     DEFAULT_JWT_AUDIENCE,
     DEFAULT_JWT_CLIENT_ID,
     DEFAULT_JWT_ISSUER,

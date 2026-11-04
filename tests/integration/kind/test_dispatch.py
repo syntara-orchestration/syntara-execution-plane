@@ -31,10 +31,10 @@ from execution_plane.models.execution_target import BackendType
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
-from execution_plane.work_item_client import build_payload, default_node_image
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
 from execution_plane_client.models.execution_target import KubernetesPlacement
+from tools.work_item_client import build_payload, default_node_image
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
