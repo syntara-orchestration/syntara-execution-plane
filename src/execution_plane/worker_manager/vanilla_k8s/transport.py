@@ -508,7 +508,13 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                                 identity=attempt_id,
                                 progress=progress,
                                 cancelled=cancelled,
-                                startup=min(2, max(0.1, grpc_deadline - time.monotonic())),
+                                # Bound the health wait by the remaining gRPC
+                                # deadline, not a fixed 2s: the port-forward
+                                # handshake (API-server/kubelet SPDY round-trips)
+                                # intermittently exceeds 2s before Execute, and
+                                # a short fixed cap made the dispatch-retry
+                                # loop race the scripts' timeout windows.
+                                startup=max(0.1, grpc_deadline - time.monotonic()),
                                 grace=grace,
                                 on_execute_submitted=mark_submitted,
                             )
