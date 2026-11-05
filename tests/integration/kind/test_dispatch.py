@@ -48,6 +48,9 @@ _WORKLOAD_WAIT_SECONDS = 5
 _CANCEL_WORKLOAD_WAIT_SECONDS = 15
 _JOB_WAIT_TIMEOUT_SECONDS = 30
 _DISPATCH_CLEANUP_TIMEOUT_SECONDS = 30
+# Retryable transport errors leave items pending for a later claim; drain
+# a few stale items before giving up on claiming the one just dispatched.
+_DISPATCH_CLAIM_ATTEMPTS = 8
 
 
 async def _read_job(batch_api: BatchV1Api, job_name: str, namespace: str) -> V1Job | None:
@@ -187,14 +190,81 @@ async def _dispatch_item(
         payload=payload,
     )
 
-    assigned = await work.scheduler.claim_and_place_work()
-    assert assigned is not None
-    assert assigned.id == item.id
+    # A retryable transport error leaves the item pending for a later
+    # claim, so a leftover from an earlier test can be claimed before
+    # ours. Drain foreign pending items until the scheduler hands us the
+    # item this test just dispatched.
+    assigned = None
+    for _ in range(_DISPATCH_CLAIM_ATTEMPTS):
+        candidate = await work.scheduler.claim_and_place_work()
+        if candidate is None:
+            continue
+        if candidate.id == item.id:
+            assigned = candidate
+            break
+        # A stale item: mark it failed so it stops shadowing later claims.
+        await work.store.set_result(
+            candidate.id,
+            {"error": "claimed by a later test (stale pending item)", "error_type": "TestIsolation"},
+            WorkItemStatus.FAILED,
+            claim_owner_id=candidate.claim_owner_id,
+            claim_generation=candidate.claim_generation,
+        )
+    assert assigned is not None, (
+        f"Scheduler never claimed item {item.id}; a stale pending item may be blocking placement"
+    )
     assert assigned.execution_target_id is not None
 
     attempt_id = f"{assigned.id}-{assigned.claim_generation}"
     job_name = "syntara-node-" + hashlib.sha256(attempt_id.encode()).hexdigest()[:32]
     return _DispatchedItem(item, assigned, job_name, worker_managers)
+
+
+async def _process_until_terminal(
+    assigned: WorkItem,
+    work: _WorkFixture,
+    target_store,
+    settings,
+    *,
+    client_id: str,
+    max_attempts: int = 4,
+) -> WorkItem:
+    """Run _process_item until the item reaches a terminal status.
+
+    A retryable transport error (for example a refused kubelet
+    port-forward) leaves the item pending for a later claim — the
+    production worker re-claims and re-dispatches; mirror that here
+    instead of assuming a single _process_item call completes the item.
+    """
+    current = assigned
+    for _ in range(max_attempts):
+        await _process_item(current, work.store, target_store, work.worker_managers, settings)
+        item = await work.store.get(current.id, client_id=client_id)
+        assert item is not None
+        if item.status is not WorkItemStatus.PENDING:
+            return item
+        # The item went back to pending: re-claim it (claim generation
+        # advanced) before dispatching again.
+        reclaimed = None
+        for _ in range(_DISPATCH_CLAIM_ATTEMPTS):
+            candidate = await work.scheduler.claim_and_place_work()
+            if candidate is None:
+                continue
+            if candidate.id == current.id:
+                reclaimed = candidate
+                break
+            await work.store.set_result(
+                candidate.id,
+                {"error": "claimed by a later test (stale pending item)", "error_type": "TestIsolation"},
+                WorkItemStatus.FAILED,
+                claim_owner_id=candidate.claim_owner_id,
+                claim_generation=candidate.claim_generation,
+            )
+        assert reclaimed is not None, f"Item {current.id} stayed pending but was not re-claimable"
+        current = reclaimed
+    item = await work.store.get(current.id, client_id=client_id)
+    assert item is not None
+    return item
 
 
 async def _cancel_processing_task(
@@ -277,12 +347,9 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
                     image=_NODE_IMAGE,
                 ),
             )
-            item = dispatched.item
             assigned = dispatched.assigned
 
-            await _process_item(assigned, work.store, target_store, work.worker_managers, settings)
-
-            final_item = await work.store.get(item.id, client_id=client_id)
+            final_item = await _process_until_terminal(assigned, work, target_store, settings, client_id=client_id)
 
     assert final_item is not None
     assert final_item.status is WorkItemStatus.COMPLETED, (
