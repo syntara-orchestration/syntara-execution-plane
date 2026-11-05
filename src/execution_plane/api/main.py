@@ -19,7 +19,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from execution_plane.api.auth import ServiceIdentity, get_service_identity, require_scope
-from execution_plane.api.list_queries import list_filter_openapi, list_query_filters
 from execution_plane.api.openapi import configure_command_openapi
 from execution_plane.api.pagination import (
     generate_response,
@@ -36,20 +35,21 @@ from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     TargetNotEligibleForDefaultError,
 )
-from execution_plane.models.cluster import Cluster
-from execution_plane.models.execution_target import ExecutionTarget
-from execution_plane.models.work_item import WorkItem
 from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNotFoundError
 from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.commands.results import TransportReceipt
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
-from execution_plane_client.models.cluster import ClusterListParams, ClusterRead  # noqa: TC001
-from execution_plane_client.models.execution_target import (  # noqa: TC001
+from execution_plane_client.models.cluster import ClusterListParams, ClusterListResponse, ClusterRead
+from execution_plane_client.models.execution_target import (
     ExecutionTargetListParams,
+    ExecutionTargetListResponse,
     ExecutionTargetRead,
 )
-from execution_plane_client.models.shared import ResourcesResponse
-from execution_plane_client.models.work_item import WorkItemListParams, WorkItemRead  # noqa: TC001
+from execution_plane_client.models.work_item import (
+    WorkItemListParams,
+    WorkItemListResponse,
+    WorkItemRead,
+)
 from execution_plane_client.protocol import CapabilitiesRead, MessageEnvelope
 
 if TYPE_CHECKING:
@@ -57,6 +57,19 @@ if TYPE_CHECKING:
 
 logger = structlog.stdlib.get_logger(__name__)
 _BODY_LIMIT = 1024 * 1024
+
+
+def _extract_filters(request: Request) -> dict[str, str]:
+    """Extract filter parameters from query string, excluding pagination/sort controls.
+
+    In syntara, this filtering happens in BaseService.list_resources where it builds
+    query_params from query_params_items. We use a static method here since EP doesn't
+    yet use syntara's BaseService class structure.
+
+    See: syntara.core.services.base.BaseService.list_resources
+    """
+    excluded_params = {"limit", "cursor", "sort", "include_total"}
+    return {key: value for key, value in request.query_params.items() if key not in excluded_params}
 
 
 @asynccontextmanager
@@ -177,15 +190,14 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     @app.get(
         "/v1/work-items",
         responses={422: {"description": "Invalid query parameters or cursor"}},
-        openapi_extra=list_filter_openapi(WorkItem),
     )
     async def work_items(
         request: Request,
         identity: Annotated[ServiceIdentity, Depends(require_scope("work-items:read"))],
         params: Annotated[WorkItemListParams, Query()],
-    ) -> ResourcesResponse[WorkItemRead]:
+    ) -> WorkItemListResponse:
         sort_field, sort_direction = params.sort_order
-        filters = list_query_filters(request)
+        filters = _extract_filters(request)
         queries = EPResourceQueries(request.app.state.ep_engine, identity.client_id)
         try:
             raw = await queries.work_items(
@@ -201,7 +213,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             raw, params.limit, params.cursor, sort_field=sort_field, sort_direction=sort_direction
         )
         total = await queries.count_work_items(filters) if params.include_total else None
-        return ResourcesResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
+        return WorkItemListResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
 
     @app.get("/v1/work-items/{resource_id}")
     async def work_item(
@@ -214,15 +226,14 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     @app.get(
         "/v1/clusters",
         responses={422: {"description": "Invalid query parameters or cursor"}},
-        openapi_extra=list_filter_openapi(Cluster),
     )
     async def clusters(
         request: Request,
         identity: Annotated[ServiceIdentity, Depends(require_scope("clusters:read"))],
         params: Annotated[ClusterListParams, Query()],
-    ) -> ResourcesResponse[ClusterRead]:
+    ) -> ClusterListResponse:
         sort_field, sort_direction = params.sort_order
-        filters = list_query_filters(request)
+        filters = _extract_filters(request)
         queries = EPResourceQueries(request.app.state.ep_engine, identity.client_id)
         try:
             raw = await queries.clusters(
@@ -238,7 +249,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             raw, params.limit, params.cursor, sort_field=sort_field, sort_direction=sort_direction
         )
         total = await queries.count_clusters(filters) if params.include_total else None
-        return ResourcesResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
+        return ClusterListResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
 
     @app.get("/v1/clusters/{resource_id}")
     async def cluster(
@@ -251,15 +262,14 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     @app.get(
         "/v1/execution-targets",
         responses={422: {"description": "Invalid query parameters or cursor"}},
-        openapi_extra=list_filter_openapi(ExecutionTarget),
     )
     async def targets(
         request: Request,
         identity: Annotated[ServiceIdentity, Depends(require_scope("execution-targets:read"))],
         params: Annotated[ExecutionTargetListParams, Query()],
-    ) -> ResourcesResponse[ExecutionTargetRead]:
+    ) -> ExecutionTargetListResponse:
         sort_field, sort_direction = params.sort_order
-        filters = list_query_filters(request)
+        filters = _extract_filters(request)
         queries = EPResourceQueries(request.app.state.ep_engine, identity.client_id)
         try:
             raw = await queries.targets(
@@ -275,7 +285,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             raw, params.limit, params.cursor, sort_field=sort_field, sort_direction=sort_direction
         )
         total = await queries.count_targets(filters) if params.include_total else None
-        return ResourcesResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
+        return ExecutionTargetListResponse(resources=trimmed, next=next_cur, prev=prev_cur, total=total)
 
     @app.get("/v1/execution-targets/{resource_id}")
     async def target(

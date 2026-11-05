@@ -234,10 +234,35 @@ def test_cluster_register_is_addressed_by_resource_id_without_namespace() -> Non
     ],
 )
 def test_list_sort_contract_matches_model_fields_and_endpoint_default(path, model, default) -> None:
+    """Verify sort defaults match model metadata.
+
+    Sort validation happens server-side in EP's query parser (like syntara).
+    The EP models import __sortable_fields__ from client metadata to ensure consistency.
+    """
     parameters = create_app().openapi()["paths"][path]["get"]["parameters"]
     schema = next(parameter["schema"] for parameter in parameters if parameter["name"] == "sort")
     assert schema["default"] == default
-    assert set(schema["enum"]) == {sort for field in model.__sortable_fields__ for sort in (field, f"-{field}")}
+    # Note: No enum validation - sort fields validated server-side like syntara does
+
+
+def test_ep_models_use_client_metadata() -> None:
+    """Verify EP database models import query metadata from client (single source of truth)."""
+    from execution_plane_client.models.cluster import CLUSTER_FILTERABLE_FIELDS, CLUSTER_SORTABLE_FIELDS
+    from execution_plane_client.models.execution_target import (
+        EXECUTION_TARGET_FILTERABLE_FIELDS,
+        EXECUTION_TARGET_SORTABLE_FIELDS,
+    )
+    from execution_plane_client.models.work_item import WORK_ITEM_FILTERABLE_FIELDS, WORK_ITEM_SORTABLE_FIELDS
+
+    # EP models should reference client metadata, not duplicate lists
+    assert Cluster.__sortable_fields__ is CLUSTER_SORTABLE_FIELDS
+    assert Cluster.__filterable_fields__ is CLUSTER_FILTERABLE_FIELDS
+
+    assert ExecutionTarget.__sortable_fields__ is EXECUTION_TARGET_SORTABLE_FIELDS
+    assert ExecutionTarget.__filterable_fields__ is EXECUTION_TARGET_FILTERABLE_FIELDS
+
+    assert WorkItem.__sortable_fields__ is WORK_ITEM_SORTABLE_FIELDS
+    assert WorkItem.__filterable_fields__ is WORK_ITEM_FILTERABLE_FIELDS
 
 
 @pytest.mark.parametrize("path", ["/v1/work-items", "/v1/clusters", "/v1/execution-targets"])

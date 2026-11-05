@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.sqlmodel_types import DiscriminatedJSONB
 from execution_plane_client.models.execution_target import (
+    EXECUTION_TARGET_FILTERABLE_FIELDS,
+    EXECUTION_TARGET_SORTABLE_FIELDS,
     BackendType,
     ExecutionTargetPlacement,
     ExecutionTargetPlacementTypes,
@@ -27,31 +29,9 @@ class ExecutionTarget(SQLModel, table=True):
     """A registered compute environment where worker pods run."""
 
     __tablename__ = "execution_targets"
-    __sortable_fields__: ClassVar[list[str]] = [
-        "id",
-        "created_at",
-        "name",
-        "endpoint",
-        "status",
-        "backend_type",
-        "cluster_id",
-        "enabled",
-        "is_default",
-    ]
-    # Origin: syntara.core.models.base.BaseResource field allowlists.
-    __filterable_fields__: ClassVar[list[str]] = [
-        "id",
-        "created_at",
-        "name",
-        "endpoint",
-        "status",
-        "backend_type",
-        "cluster_id",
-        "enabled",
-        "is_default",
-        "last_ran_at",
-        "status_message",
-    ]
+    # Query metadata sourced from execution_plane_client - single source of truth
+    __sortable_fields__: ClassVar[list[str]] = EXECUTION_TARGET_SORTABLE_FIELDS
+    __filterable_fields__: ClassVar[list[str]] = EXECUTION_TARGET_FILTERABLE_FIELDS
     __table_args__ = (
         UniqueConstraint("cluster_id", "name", name="execution_targets_cluster_name_key"),
         Index("ix_execution_targets_name", "name"),

@@ -14,7 +14,11 @@ from sqlmodel import Field, SQLModel
 
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.encrypted_payload import EncryptedWorkItemPayload
-from execution_plane_client.models.work_item import WorkItemStatus
+from execution_plane_client.models.work_item import (
+    WORK_ITEM_FILTERABLE_FIELDS,
+    WORK_ITEM_SORTABLE_FIELDS,
+    WorkItemStatus,
+)
 
 
 class CompletionNotificationState(StrEnum):
@@ -29,23 +33,9 @@ class WorkItem(SQLModel, table=True):
     """A unit of work accepted and managed by the Execution Plane service."""
 
     __tablename__ = "work_items"
-    __sortable_fields__: ClassVar[list[str]] = [
-        "created_at",
-        "status",
-        "resource_cleanup_status",
-        "id",
-    ]
-    # Origin: syntara.core.models.base.BaseResource field allowlists.
-    __filterable_fields__: ClassVar[list[str]] = [
-        "id",
-        "execution_target_id",
-        "status",
-        "created_at",
-        "claimed_at",
-        "completed_at",
-        "resource_cleanup_status",
-        "resource_cleanup_error",
-    ]
+    # Query metadata sourced from execution_plane_client - single source of truth
+    __sortable_fields__: ClassVar[list[str]] = WORK_ITEM_SORTABLE_FIELDS
+    __filterable_fields__: ClassVar[list[str]] = WORK_ITEM_FILTERABLE_FIELDS
     __table_args__ = (
         sa.Index("ix_work_items_execution_target_status", "execution_target_id", "status"),
         sa.Index("ix_work_items_status", "status"),
