@@ -32,6 +32,9 @@ class EPSettings(BaseSettings):
     # Runtime configuration accepts only the EP-owned database variable. Alembic
     # has a separate DATABASE_URL input for the one-off migration job.
     database_url: str = Field(validation_alias="EP_DATABASE_URL")
+    db_pool_size: int = Field(default=5, ge=1, validation_alias="EP_DB_POOL_SIZE")
+    db_pool_max_overflow: int = Field(default=0, ge=0, validation_alias="EP_DB_POOL_MAX_OVERFLOW")
+    db_pool_timeout: float = Field(default=30.0, gt=0.0, allow_inf_nan=False, validation_alias="EP_DB_POOL_TIMEOUT")
     db_ssl_mode: str = Field(default="prefer", validation_alias="EP_DB_SSL_MODE")
     db_ssl_root_cert: str | None = Field(default=None, validation_alias="EP_DB_SSL_ROOT_CERT")
     db_ssl_cert: str | None = Field(default=None, validation_alias="EP_DB_SSL_CERT")

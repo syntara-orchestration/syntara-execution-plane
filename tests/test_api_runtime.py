@@ -13,6 +13,22 @@ if TYPE_CHECKING:
 from execution_plane.api import main as api_main
 
 
+async def test_api_lifespan_owns_one_engine() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    engine = AsyncMock(spec=AsyncEngine)
+    app = api_main.create_app()
+    with patch.object(api_main, "create_ep_engine", return_value=engine) as create_engine:
+        async with api_main.lifespan(app):
+            assert app.state.ep_engine is engine
+            assert app.state.ep_session_factory.kw["bind"] is engine
+            engine.dispose.assert_not_awaited()
+        create_engine.assert_called_once_with(app.state.ep_settings.database_url)
+    engine.dispose.assert_awaited_once()
+
+
 def test_api_main_configures_a_bounded_graceful_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SimpleNamespace(
         api_host="127.0.0.1",

@@ -26,3 +26,19 @@ async def test_borrowed_transaction_flushes_without_committing_or_rolling_back()
     session.flush.assert_awaited_once()
     session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()
+
+
+async def test_closing_borrowed_stores_does_not_dispose_shared_engine():
+    """Only the runtime owner can dispose a pool used by multiple stores."""
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    engine = AsyncMock(spec=AsyncEngine)
+    async with (
+        WorkStore.from_engine(engine),
+        ClusterStore.from_engine(engine),
+        ExecutionTargetStore.from_engine(engine),
+    ):
+        pass
+    engine.dispose.assert_not_awaited()

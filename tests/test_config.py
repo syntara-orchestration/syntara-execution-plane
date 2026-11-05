@@ -39,3 +39,28 @@ def test_resource_monitor_timeout_must_be_shorter_than_interval(monkeypatch: pyt
     monkeypatch.setenv("EP_RESOURCE_MONITOR_PROBE_TIMEOUT_SECONDS", "5")
     with pytest.raises(ValidationError, match="shorter than"):
         EPSettings()
+
+
+def test_database_pool_defaults() -> None:
+    settings = EPSettings()
+    assert settings.db_pool_size == 5
+    assert settings.db_pool_max_overflow == 0
+    assert settings.db_pool_timeout == 30.0
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("EP_DB_POOL_SIZE", "0"),
+        ("EP_DB_POOL_SIZE", "-1"),
+        ("EP_DB_POOL_MAX_OVERFLOW", "-1"),
+        ("EP_DB_POOL_TIMEOUT", "0"),
+        ("EP_DB_POOL_TIMEOUT", "-1"),
+        ("EP_DB_POOL_TIMEOUT", "inf"),
+        ("EP_DB_POOL_TIMEOUT", "nan"),
+    ],
+)
+def test_database_pool_requires_finite_bounds(monkeypatch: pytest.MonkeyPatch, variable: str, value: str) -> None:
+    monkeypatch.setenv(variable, value)
+    with pytest.raises(ValidationError):
+        EPSettings()

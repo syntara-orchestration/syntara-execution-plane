@@ -60,6 +60,23 @@ uv run execution-plane-api
 
 The API exposes versioned OpenAPI at `/docs`, authenticated work submission, scoped status reads and cancellation under `/v1`, plus liveness and readiness endpoints. Work moves through `pending`, `claimed`, `dispatched`, and `running`; cancellation of dispatched or running work first returns `cancel_requested`, and only becomes `cancelled` after the gRPC invocation is confirmed stopped. `reconciliation_required` makes an uncertain external outcome visible instead of launching a duplicate. Cancellation by stable request ID creates a tombstone when it races ahead of submission, preventing a late request from starting work. Configure EP-owned HTTPS with `EP_API_PORT`, `EP_API_TLS_CERT_PATH`, and `EP_API_TLS_KEY_PATH`; `EP_API_TLS_CLIENT_CA_PATH` makes the API validate client certificates when provided. SIGINT and SIGTERM trigger clean shutdown, with API in-flight requests bounded by `EP_API_GRACEFUL_SHUTDOWN_SECONDS` (default 20). Kubernetes manifests expect a TLS certificate in `execution-plane-api-tls` whose SAN matches the service DNS name. The first API release also requires signed AO service tokens with an audience, client ID, project ID, and operation scopes.
 
+Each API or worker process owns one shared PostgreSQL connection pool. Stores
+borrow connections for individual database operations and return them before
+waiting on workloads. Configure the pool through these environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `EP_DB_POOL_SIZE` | `5` | Maximum retained connections; must be at least 1. |
+| `EP_DB_POOL_MAX_OVERFLOW` | `0` | Additional temporary connections allowed during bursts; must be nonnegative. |
+| `EP_DB_POOL_TIMEOUT` | `30` | Seconds to wait for a pool connection before raising an error; must be finite and positive. |
+
+With the defaults, an API process uses at most five database connections, and a
+worker uses at most six, including its separate, dedicated LISTEN connection.
+Pools open connections on demand and check their health before reuse. Budget
+connections across all processes and replicas, including rolling-update overlap.
+The acquisition timeout does not limit WorkItem runtime. Overflow connections,
+when enabled, are closed on return rather than retained for reuse.
+
 Run the worker with the same EP database and a fixed AO completion callback URL:
 
 ```bash
