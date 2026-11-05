@@ -4,9 +4,14 @@
 # Why it lives here: syntara-step-types has no Konflux component yet, and the
 # step-types-e2e pipeline bundle is not published until
 # ansible-automation-platform/aap-konflux-pipelines#4950 merges. This
-# PipelineRun embeds the whole pipeline spec inline and resolves the
-# deploy-ao task straight from the #4950 branch (git resolver), so the full
-# chain can be demonstrated today:
+# PipelineRun embeds the whole pipeline spec inline, including the
+# deploy-ao-using-aap-dev task itself as a taskSpec, so the full chain can
+# be demonstrated today. (The task cannot be resolved from the #4950
+# branch with the git resolver: ansible-automation-platform/
+# aap-konflux-pipelines is private and the cluster resolver has no
+# credentials for it; and the published task bundle predates the
+# step-types-* params. The taskSpec below is the task exactly as it
+# stands on the aap-konflux-pipelines#4950 branch.)
 #
 #   this PR's Execution Plane  (ep-revision = {{revision}})
 #   + AO feat/ANSTRAT-1803    (script-node dispatch)
@@ -15,6 +20,8 @@
 #        staged syntara-step-types checkout)
 #   + syntara-step-types goneri/e2e-dispatch  (syntara-orchestration/
 #        syntara-step-types#20: the dispatch e2e suite the run task executes)
+#   + deploy-ao-using-aap-dev taskSpec    (the aap-konflux-pipelines#4950
+#        branch: step-types-* params and the clone-step-types step)
 #   -> deploy on a Kind cluster (AWS spot VM) and run
 #      tools/konflux-run-e2e.sh: each plugin's example workload dispatched
 #      through AO and the Execution Plane, business results asserted.
@@ -373,15 +380,819 @@ spec:
         value: $(params.ao-operator-pr-number)
       - name: ao-operator-github-app-secret
         value: $(params.ao-operator-github-app-secret)
-      taskRef:
-        resolver: git
+      taskSpec:
+        description: |
+          Deploy Automation Orchestrator (AO) on a remote Kind cluster via SSH using aap-dev.
+
+          Clones aap-dev and syntara (at the specified revision) on the remote Kind VM,
+          symlinks the AO backend and frontend sources into aap-dev, records them in
+          src/sources.yaml (required for install-from-src after aap-dev#1023), then builds and deploys AO
+          using the OLM operator mode (AO_OPERATOR=true with skaffold-ao-operator.yaml). When
+          `ao-backend-replicas` is set, the backend is deployed at that size from the start via
+          AO_BACKEND_REPLICAS. After deployment, configures resource limits and network settings,
+          retrieves the admin password created by the operator, and exposes the backend externally
+          via a Kubernetes NodePort service.
+
+          Mirrors the e2e-ao-operator GitHub Actions workflow in syntara-orchestration/syntara.
         params:
-        - name: url
-          value: https://github.com/ansible-automation-platform/aap-konflux-pipelines.git
-        - name: revision
-          value: goneri/step-types-e2e-pipeline
-        - name: pathInRepo
-          value: tasks/deploy-ao-using-aap-dev/0.1/task.yaml
+        - name: cluster-access-secret
+          type: string
+          description: Name of the Kubernetes Secret containing the Kind cluster kubeconfig.
+        - name: ssh-credentials-secret
+          type: string
+          description: Name of the Kubernetes Secret containing SSH credentials (host, user, id_rsa).
+        - name: registry-credentials-secret
+          type: string
+          description: |
+            Name of the Kubernetes Secret containing registry credentials used for podman login
+            on the remote VM. Required keys: quay-username, quay-token, rh-registry-username,
+            rh-registry-token.
+        - name: aap-dev-git-url
+          type: string
+          description: HTTPS URL of the aap-dev repository (without credentials).
+          default: https://github.com/ansible/aap-dev.git
+        - name: aap-dev-revision
+          type: string
+          description: Branch or tag of aap-dev to clone on the remote VM.
+          default: main
+        - name: aap-dev-commit
+          type: string
+          description: |
+            Optional commit SHA to check out after cloning aap-dev. When set, the repo is
+            cloned at aap-dev-revision then pinned to this exact commit. Leave empty to
+            use the branch tip.
+          default: ''
+        - name: aap-dev-git-auth-secret
+          type: string
+          description: |
+            Name of the Kubernetes Secret used to clone aap-dev on the remote VM
+            (kubernetes.io/basic-auth with username and password keys).
+        - name: ao-revision
+          type: string
+          description: Branch, tag, or SHA of syntara to check out on the remote VM.
+        - name: ao-pr-number
+          type: string
+          description: |
+            GitHub PR number for syntara. Used to fetch the PR head ref so that
+            fork PR head SHAs (which do not exist in the base repo) are available
+            for checkout.
+          default: ''
+        - name: ao-operator-git-url
+          type: string
+          description: |
+            HTTPS URL of the automation-orchestrator-operator repository. Required
+            when ao-operator-revision is set; unused (and left empty) on the
+            prebuilt-bundle path — no internal repository is baked in as a
+            default.
+          default: ''
+        - name: ao-operator-revision
+          type: string
+          description: |
+            Branch, tag, or SHA of automation-orchestrator-operator to build the
+            operator manager from, instead of deploying the prebuilt bundle.
+            Empty (default) uses the prebuilt AO_OPERATOR_BUNDLE_IMAGE — today's
+            behavior, so existing consumers are unaffected.
+
+            When set, the checkout is cloned to ~/automation-orchestrator-operator
+            on the VM; aap-dev's ensure-ao-operator-from-src builds the manager
+            image into the Kind registry and points the CSV at it. Needed while the
+            prebuilt devel bundle ignores ENABLE_EXECUTION_PLANE
+            (automation-orchestrator-operator#1573); the params stay afterwards for
+            cross-repo co-testing.
+          default: ''
+        - name: ao-operator-pr-number
+          type: string
+          description: |
+            GitHub PR number for automation-orchestrator-operator. Used to fetch
+            the PR head ref so that fork PR head SHAs are available for checkout.
+            Only used when ao-operator-revision is set.
+          default: ''
+        - name: ao-operator-github-app-secret
+          type: string
+          description: |
+            GitHub App secret for cloning automation-orchestrator-operator
+            (automation-nexus org). Only used when ao-operator-revision is set.
+          default: orchestrator-ci-for-konflux-gh-app-nexus-org
+        - name: enable-execution-plane
+          type: string
+          description: |
+            Deploy the operator-managed Execution Plane alongside AO (passed to
+            aap-dev as AO_EXECUTION_PLANE). Default false — today's behavior, so
+            existing consumers are unaffected.
+
+            When true and ep-revision is empty, aap-dev deploys the EP from the
+            prebuilt quay.io/aap/ansible-automation-platform/automation-orchestrator-execution-plane-rhel9:devel
+            image (ensure-ep-from-src no-ops without a staged checkout). When
+            ep-revision is set, the EP is built from that source and this flag is
+            implied true.
+          default: 'false'
+        - name: ep-git-url
+          type: string
+          description: |
+            HTTPS URL of the syntara-execution-plane repository. Required when
+            ep-revision is set; unused (and left empty) otherwise — no repository
+            is baked in as a default. The default Execution Plane source is the
+            prebuilt quay.io/aap image aap-dev deploys when no checkout is staged.
+          default: ''
+        - name: ep-revision
+          type: string
+          description: |
+            Branch, tag, or SHA of syntara-execution-plane to deploy as the
+            operator-managed Execution Plane. Empty (default) deploys no Execution
+            Plane — today's behavior, so existing consumers are unaffected.
+
+            When set, the checkout is cloned to ~/syntara-execution-plane on the
+            VM; aap-dev's ensure-ep-from-src overlays it into src/ and registers it
+            in src/sources.yaml, and AO_EXECUTION_PLANE=true is passed to the
+            aap-dev build and deploy so the operator deploys the EP API, worker,
+            and migration Job.
+          default: ''
+        - name: ep-pr-number
+          type: string
+          description: |
+            GitHub PR number for syntara-execution-plane. Used to fetch the PR head
+            ref so that fork PR head SHAs are available for checkout. Only used
+            when ep-revision is set.
+          default: ''
+        - name: step-types-git-url
+          type: string
+          description: |
+            HTTPS URL of the syntara-step-types repository. When step-types-revision
+            is set, the checkout is cloned to ~/syntara-step-types on the VM and
+            aap-dev's ensure-step-types-from-src builds the script-node workload
+            image from that checkout instead of the Execution Plane test fixture.
+          default: ''
+        - name: step-types-revision
+          type: string
+          description: |
+            Branch, tag, or SHA of syntara-step-types providing the script-node
+            workload image. Empty (default) keeps the EP fixture image, so
+            existing consumers are unaffected.
+          default: ''
+        - name: step-types-pr-number
+          type: string
+          description: |
+            GitHub PR number for syntara-step-types. Used to fetch the PR head
+            ref so that fork PR head SHAs are available for checkout. Only used
+            when step-types-revision is set.
+          default: ''
+        - name: ao-github-app-secret
+          type: string
+          description: |
+            Name of the Kubernetes Secret (produced by the orchestrator-ci-for-konflux-gh-app
+            ExternalSecret) holding GitHub App credentials for cloning syntara-orchestration/syntara.
+            Required keys: orchestrator-ci-for-konflux-gh-app-id,
+            orchestrator-ci-for-konflux-gh-app-install-id,
+            orchestrator-ci-for-konflux-gh-app-private-key.
+        - name: ao-backend-replicas
+          type: string
+          description: |
+            Number of AO backend pod replicas. Passed to aap-dev as AO_BACKEND_REPLICAS, which
+            declares spec.backend.replicas on the AutomationOrchestrator CR before it is rendered,
+            so the backend is deployed at this size instead of being scaled up afterwards.
+            Leave empty to fall back to the operator's own default (2); calling pipelines set the
+            value they need for their test load.
+          default: ''
+        results:
+        - name: ao-url
+          description: External HTTPS URL of the deployed AO backend (host port 17455, mapped from Kind
+            NodePort 30443).
+        - name: ao-worker-url
+          description: External HTTPS URL of the AO worker backend (same NodePort as ao-url; equivalent
+            to the internal myao-backend:8000 used in CI).
+        - name: ao-admin-password
+          description: Bootstrap admin password initialized for the AO instance.
+        - name: ao-host
+          description: IP or hostname of the provisioned VM running the Kind cluster.
+        volumes:
+        - name: kubeconfig-volume
+          secret:
+            secretName: $(params.cluster-access-secret)
+        - name: ssh-credentials-volume
+          secret:
+            secretName: $(params.ssh-credentials-secret)
+        - name: registry-credentials-volume
+          secret:
+            secretName: $(params.registry-credentials-secret)
+        - name: aap-dev-git-credentials-volume
+          secret:
+            secretName: $(params.aap-dev-git-auth-secret)
+        - name: nexus-github-app-volume
+          secret:
+            secretName: $(params.ao-github-app-secret)
+        - name: operator-github-app-volume
+          secret:
+            secretName: $(params.ao-operator-github-app-secret)
+        - name: shared-data
+          emptyDir: {}
+        stepTemplate:
+          image: quay.io/aap-ci/tekton-catalog/task-runner/ansible:0.1@sha256:9f5357ab53e03a1f5074f78afea59c516c4048cb189dc0e5a56688e0f336d151
+          env:
+          - name: KUBECONFIG
+            value: /credentials/kubeconfig
+          - name: AAP_DEV_GIT_URL
+            value: $(params.aap-dev-git-url)
+          - name: AAP_DEV_REVISION
+            value: $(params.aap-dev-revision)
+          - name: AAP_DEV_COMMIT
+            value: $(params.aap-dev-commit)
+          - name: AO_REVISION
+            value: $(params.ao-revision)
+          - name: AO_PR_NUMBER
+            value: $(params.ao-pr-number)
+          - name: AO_OPERATOR_GIT_URL
+            value: $(params.ao-operator-git-url)
+          - name: AO_OPERATOR_REVISION
+            value: $(params.ao-operator-revision)
+          - name: AO_OPERATOR_PR_NUMBER
+            value: $(params.ao-operator-pr-number)
+          - name: ENABLE_EXECUTION_PLANE
+            value: $(params.enable-execution-plane)
+          - name: EP_GIT_URL
+            value: $(params.ep-git-url)
+          - name: EP_REVISION
+            value: $(params.ep-revision)
+          - name: EP_PR_NUMBER
+            value: $(params.ep-pr-number)
+          - name: STEP_TYPES_GIT_URL
+            value: $(params.step-types-git-url)
+          - name: STEP_TYPES_REVISION
+            value: $(params.step-types-revision)
+          - name: STEP_TYPES_PR_NUMBER
+            value: $(params.step-types-pr-number)
+          - name: AO_OPERATOR_BUNDLE_IMAGE
+            value: quay.io/aap/ansible-automation-platform/automation-orchestrator-operator-bundle:devel
+          - name: AO_BACKEND_REPLICAS
+            value: $(params.ao-backend-replicas)
+          - name: SSH_KEY
+            value: /workspace/share/id_rsa
+          volumeMounts:
+          - name: kubeconfig-volume
+            mountPath: /credentials
+          - name: ssh-credentials-volume
+            mountPath: /credentials/ssh
+          - name: registry-credentials-volume
+            mountPath: /credentials/registry
+          - name: aap-dev-git-credentials-volume
+            mountPath: /credentials/aap-dev-git
+          - name: nexus-github-app-volume
+            mountPath: /credentials/nexus-github-app
+          - name: operator-github-app-volume
+            mountPath: /credentials/operator-github-app
+          - name: shared-data
+            mountPath: /workspace/share
+        steps:
+        - name: setup-ssh
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            cp /credentials/ssh/id_rsa /workspace/share/id_rsa
+            chmod 600 /workspace/share/id_rsa
+
+            cat /credentials/ssh/host > /workspace/share/host
+            SSH_USER=$(cat /credentials/ssh/username 2>/dev/null || echo "ec2-user")
+            echo "${SSH_USER}" > /workspace/share/user
+
+            echo "SSH host: $(cat /workspace/share/host)"
+            echo "SSH user: ${SSH_USER}"
+        - name: clone-aap-dev
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            AAP_DEV_GIT_USERNAME=$(cat /credentials/aap-dev-git/username)
+            AAP_DEV_GIT_TOKEN=$(cat /credentials/aap-dev-git/password)
+
+            echo "=== Installing required packages on remote VM ==="
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              sudo dnf install -y git make curl jq ansible-core python3-pip
+            "
+
+            echo "=== Cloning aap-dev at ${AAP_DEV_REVISION}${AAP_DEV_COMMIT:+ (pinned to ${AAP_DEV_COMMIT})} on remote VM ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              AAP_DEV_CLONE_URL=\"${AAP_DEV_GIT_URL/https:\/\//https://${AAP_DEV_GIT_USERNAME}:${AAP_DEV_GIT_TOKEN}@}\"
+              if [ -d ~/aap-dev ]; then
+                echo 'aap-dev already exists, skipping clone'
+              else
+                git clone --branch ${AAP_DEV_REVISION} \"\${AAP_DEV_CLONE_URL}\" ~/aap-dev
+              fi
+              if [ -n '${AAP_DEV_COMMIT}' ]; then
+                echo 'Pinning aap-dev to commit ${AAP_DEV_COMMIT}'
+                git -C ~/aap-dev checkout ${AAP_DEV_COMMIT}
+              fi
+            "
+        - name: set-kernel-limits
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            echo "=== Setting inotify, kernel key, and Podman PIDs limits ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              sudo sysctl fs.inotify.max_user_watches=749973
+              sudo sysctl fs.inotify.max_user_instances=512
+              sudo sysctl kernel.keys.maxkeys=2000
+
+              # Rootless Podman defaults to a 2048 PID limit. Inside Kind,
+              # systemd applies roughly 15% of that limit to pod cgroups,
+              # yielding pids.max=307 and fork failures under the full AO
+              # stack. Raise the limit before deploy-ao creates Kind.
+              mkdir -p \$HOME/.config/containers
+              printf '%s\n' '[containers]' 'pids_limit = 65536' \
+                > \$HOME/.config/containers/containers.conf
+            "
+        - name: login-to-registries
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            QUAY_USERNAME=$(cat /credentials/registry/quay-username 2>/dev/null || echo "")
+            QUAY_TOKEN=$(cat /credentials/registry/quay-token 2>/dev/null || echo "")
+            RH_REGISTRY_USER=$(cat /credentials/registry/rh-registry-username 2>/dev/null || echo "")
+            RH_REGISTRY_TOKEN=$(cat /credentials/registry/rh-registry-token 2>/dev/null || echo "")
+
+            echo "=== Logging in to registries on remote VM ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              if [ -n '${RH_REGISTRY_TOKEN}' ]; then
+                echo '${RH_REGISTRY_TOKEN}' | podman login registry.redhat.io -u '${RH_REGISTRY_USER}' --password-stdin
+              fi
+              if [ -n '${QUAY_TOKEN}' ]; then
+                echo '${QUAY_TOKEN}' | podman login quay.io -u '${QUAY_USERNAME}' --password-stdin
+                echo '${QUAY_TOKEN}' | podman login quay.io/aap -u '${QUAY_USERNAME}' --password-stdin
+              fi
+            "
+        - name: clone-syntara
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            GH_APP_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-id)
+            GH_INSTALL_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-install-id)
+            GH_PRIVATE_KEY=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-private-key)
+
+            echo "=== Generating GitHub App installation token ==="
+
+            KEY_FILE=$(mktemp)
+            chmod 600 "${KEY_FILE}"
+            printf '%s' "${GH_PRIVATE_KEY}" > "${KEY_FILE}"
+
+            NOW=$(date +%s)
+            HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW - 60))" "$((NOW + 540))" "${GH_APP_ID}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" | openssl dgst -sha256 -sign "${KEY_FILE}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            rm -f "${KEY_FILE}"
+
+            JWT="${HEADER}.${PAYLOAD}.${SIG}"
+
+            GH_TOKEN=$(curl -sS -X POST \
+              -H "Authorization: Bearer ${JWT}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/app/installations/${GH_INSTALL_ID}/access_tokens" | jq -r '.token')
+
+            if [ -z "${GH_TOKEN}" ] || [ "${GH_TOKEN}" = "null" ]; then
+              echo "ERROR: Failed to obtain GitHub App installation token" >&2
+              exit 1
+            fi
+
+            echo "=== Cloning syntara at ${AO_REVISION} on remote VM ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              NEXUS_CLONE_URL=\"https://x-access-token:${GH_TOKEN}@github.com/syntara-orchestration/syntara.git\"
+              if [ -d ~/syntara ]; then
+                git -C ~/syntara fetch --all
+              else
+                git clone \"\${NEXUS_CLONE_URL}\" ~/syntara
+              fi
+              if [ -n '${AO_PR_NUMBER}' ]; then
+                git -C ~/syntara fetch origin refs/pull/${AO_PR_NUMBER}/head
+              fi
+              git -C ~/syntara checkout ${AO_REVISION}
+            "
+        - name: clone-operator
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [ -z "${AO_OPERATOR_REVISION}" ]; then
+              echo "=== ao-operator-revision not set; using the prebuilt operator bundle ==="
+              exit 0
+            fi
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            # Kubernetes secret mounts are symlinks; find -type f misses them. The
+            # glob tolerates both secret layouts (suffixed keys on the nexus-org
+            # secret, exact keys on the syntara-org one).
+            _cred() {
+              local dir=/credentials/operator-github-app
+              local suffix=$1
+              local f
+              f=$(find "${dir}" -maxdepth 1 -name "*${suffix}" | head -1)
+              if [[ -z "${f}" || ! -e "${f}" ]]; then
+                echo "ERROR: no *${suffix} in ${dir}" >&2
+                ls -la "${dir}" >&2 || true
+                exit 1
+              fi
+              cat "${f}"
+            }
+            GH_APP_ID=$(_cred -app-id)
+            GH_INSTALL_ID=$(_cred -install-id)
+            GH_PRIVATE_KEY=$(_cred -private-key)
+
+            echo "=== Generating GitHub App installation token ==="
+
+            KEY_FILE=$(mktemp)
+            chmod 600 "${KEY_FILE}"
+            printf '%s' "${GH_PRIVATE_KEY}" > "${KEY_FILE}"
+
+            NOW=$(date +%s)
+            HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW - 60))" "$((NOW + 540))" "${GH_APP_ID}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" | openssl dgst -sha256 -sign "${KEY_FILE}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            rm -f "${KEY_FILE}"
+
+            JWT="${HEADER}.${PAYLOAD}.${SIG}"
+            GH_TOKEN=$(curl -sS -X POST \
+              -H "Authorization: Bearer ${JWT}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/app/installations/${GH_INSTALL_ID}/access_tokens" | jq -r '.token')
+            unset JWT GH_PRIVATE_KEY
+
+            if [ -z "${GH_TOKEN}" ] || [ "${GH_TOKEN}" = "null" ]; then
+              echo "ERROR: Failed to obtain GitHub App installation token" >&2
+              exit 1
+            fi
+
+            echo "=== Cloning automation-orchestrator-operator at ${AO_OPERATOR_REVISION} on remote VM ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              OP_CLONE_URL=\"${AO_OPERATOR_GIT_URL/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}\"
+              if [ -d ~/automation-orchestrator-operator ]; then
+                git -C ~/automation-orchestrator-operator fetch --all
+              else
+                git clone \"\${OP_CLONE_URL}\" ~/automation-orchestrator-operator
+              fi
+              if [ -n '${AO_OPERATOR_PR_NUMBER}' ]; then
+                git -C ~/automation-orchestrator-operator fetch origin refs/pull/${AO_OPERATOR_PR_NUMBER}/head
+              fi
+              git -C ~/automation-orchestrator-operator checkout ${AO_OPERATOR_REVISION}
+            "
+        - name: clone-execution-plane
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [ -z "${EP_REVISION}" ]; then
+              echo "=== ep-revision not set; skipping the Execution Plane clone ==="
+              exit 0
+            fi
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            GH_APP_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-id)
+            GH_INSTALL_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-install-id)
+            GH_PRIVATE_KEY=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-private-key)
+
+            echo "=== Generating GitHub App installation token ==="
+
+            KEY_FILE=$(mktemp)
+            chmod 600 "${KEY_FILE}"
+            printf '%s' "${GH_PRIVATE_KEY}" > "${KEY_FILE}"
+
+            NOW=$(date +%s)
+            HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW - 60))" "$((NOW + 540))" "${GH_APP_ID}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" | openssl dgst -sha256 -sign "${KEY_FILE}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            rm -f "${KEY_FILE}"
+
+            JWT="${HEADER}.${PAYLOAD}.${SIG}"
+            GH_TOKEN=$(curl -sS -X POST \
+              -H "Authorization: Bearer ${JWT}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/app/installations/${GH_INSTALL_ID}/access_tokens" | jq -r '.token')
+            unset JWT GH_PRIVATE_KEY
+
+            if [ -z "${GH_TOKEN}" ] || [ "${GH_TOKEN}" = "null" ]; then
+              echo "ERROR: Failed to obtain GitHub App installation token" >&2
+              exit 1
+            fi
+
+            echo "=== Cloning execution-plane at ${EP_REVISION} on remote VM ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              EP_CLONE_URL=\"${EP_GIT_URL/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}\"
+              if [ -d ~/syntara-execution-plane ]; then
+                git -C ~/syntara-execution-plane fetch --all
+              else
+                git clone \"\${EP_CLONE_URL}\" ~/syntara-execution-plane
+              fi
+              if [ -n '${EP_PR_NUMBER}' ]; then
+                git -C ~/syntara-execution-plane fetch origin refs/pull/${EP_PR_NUMBER}/head
+              fi
+              git -C ~/syntara-execution-plane checkout ${EP_REVISION}
+            "
+        - name: clone-step-types
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [ -z "${STEP_TYPES_REVISION}" ]; then
+              echo "=== step-types-revision not set; skipping the syntara-step-types clone ==="
+              exit 0
+            fi
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            GH_APP_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-id)
+            GH_INSTALL_ID=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-install-id)
+            GH_PRIVATE_KEY=$(cat /credentials/nexus-github-app/orchestrator-ci-for-konflux-gh-app-private-key)
+
+            echo "=== Generating GitHub App installation token ==="
+
+            KEY_FILE=$(mktemp)
+            chmod 600 "${KEY_FILE}"
+            printf '%s' "${GH_PRIVATE_KEY}" > "${KEY_FILE}"
+
+            NOW=$(date +%s)
+            HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW - 60))" "$((NOW + 540))" "${GH_APP_ID}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" | openssl dgst -sha256 -sign "${KEY_FILE}" | base64 | tr -d '=' | tr '+/' '-_' | tr -d '\n')
+            rm -f "${KEY_FILE}"
+
+            JWT="${HEADER}.${PAYLOAD}.${SIG}"
+            GH_TOKEN=$(curl -sS -X POST \
+              -H "Authorization: Bearer ${JWT}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/app/installations/${GH_INSTALL_ID}/access_tokens" | jq -r '.token')
+            unset JWT GH_PRIVATE_KEY
+
+            if [ -z "${GH_TOKEN}" ] || [ "${GH_TOKEN}" = "null" ]; then
+              echo "ERROR: Failed to obtain GitHub App installation token" >&2
+              exit 1
+            fi
+
+            echo "=== Cloning syntara-step-types at ${STEP_TYPES_REVISION} on remote VM ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              ST_CLONE_URL=\"${STEP_TYPES_GIT_URL/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}\"
+              if [ -d ~/syntara-step-types ]; then
+                git -C ~/syntara-step-types fetch --all
+              else
+                git clone \"\${ST_CLONE_URL}\" ~/syntara-step-types
+              fi
+              if [ -n '${STEP_TYPES_PR_NUMBER}' ]; then
+                git -C ~/syntara-step-types fetch origin refs/pull/${STEP_TYPES_PR_NUMBER}/head
+              fi
+              git -C ~/syntara-step-types checkout ${STEP_TYPES_REVISION}
+            "
+        - name: link-ao-sources
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            echo "=== Creating syntara source symlinks in aap-dev ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              rm -f ~/aap-dev/src/nexus ~/aap-dev/src/syntara ~/aap-dev/src/nexus-ui ~/aap-dev/src/syntara-ui
+              mkdir -p ~/aap-dev/src
+              ln -s ~/syntara/backend ~/aap-dev/src/syntara
+              ln -s ~/syntara/frontend ~/aap-dev/src/syntara-ui
+              # aap-dev#1023 only overlays a source when it is named in
+              # src/sources.yaml. Directory/symlink presence is no longer enough.
+              printf '%s\n' \
+                '---' \
+                '- app: ao' \
+                '  sources:' \
+                '    - name: syntara' \
+                '    - name: syntara-ui' \
+                > ~/aap-dev/src/sources.yaml
+            "
+        - name: build-ao
+          timeout: 1h
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            echo "=== Relabeling source files for container builds (SELinux) ==="
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              sudo chcon -R -t container_file_t ~/syntara ~/aap-dev/src
+            "
+
+            echo "=== Building AO images (ao-operator mode) ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              cd ~/aap-dev
+              export AO_OPERATOR_BUNDLE_IMAGE=${AO_OPERATOR_BUNDLE_IMAGE}
+              # AO_EXECUTION_PLANE when ep-revision is set: aap-dev's ensure-ep-from-src
+              # overlays ~/syntara-execution-plane into src/ and the ep image builds from
+              # that checkout; the operator deploys the EP control plane. Empty ep-revision
+              # keeps today's behavior (no EP).
+              # EP enabled when explicitly requested, or when a git source is pinned
+              # (building from source implies the opt-in). With the flag on and no
+              # ep-revision, aap-dev deploys the prebuilt quay.io/aap EP image.
+              export AO_EXECUTION_PLANE='$(if [ "${ENABLE_EXECUTION_PLANE}" = "true" ] || [ -n "${EP_REVISION}" ]; then echo true; else echo false; fi)'
+              make AO_OPERATOR=true SKAFFOLD_CONFIG=\$(pwd)/skaffolding/skaffold-ao-operator.yaml aap-build 2>&1 | tee /tmp/aap-build.log
+              if grep -qE 'Skipping context syntara(-ui)?: directory exists but not configured' /tmp/aap-build.log; then
+                echo 'ERROR: aap-dev skipped overlaying syntara sources (src/sources.yaml is not configured).' >&2
+                exit 1
+              fi
+            "
+        - name: deploy-ao
+          timeout: 30m
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+            QUAY_USERNAME=$(cat /credentials/registry/quay-username 2>/dev/null || echo "")
+            QUAY_TOKEN=$(cat /credentials/registry/quay-token 2>/dev/null || echo "")
+            RH_REGISTRY_USER=$(cat /credentials/registry/rh-registry-username 2>/dev/null || echo "")
+            RH_REGISTRY_TOKEN=$(cat /credentials/registry/rh-registry-token 2>/dev/null || echo "")
+
+            echo "=== Deploying AO via OLM operator (ao-operator mode) ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              cd ~/aap-dev
+              export AO_OPERATOR_BUNDLE_IMAGE=${AO_OPERATOR_BUNDLE_IMAGE}
+              export QUAY_USERNAME='${QUAY_USERNAME}'
+              export QUAY_PASSWORD='${QUAY_TOKEN}'
+              export RHN_USERNAME='${RH_REGISTRY_USER}'
+              export RHN_PASSWORD='${RH_REGISTRY_TOKEN}'
+              export AO_INGRESS_PORT=17455
+              export AO_INGRESS_NODEPORT=30443
+              export AO_BACKEND_REPLICAS='${AO_BACKEND_REPLICAS}'
+              # AO_EXECUTION_PLANE when ep-revision is set: aap-dev's ensure-ep-from-src
+              # overlays ~/syntara-execution-plane into src/ and the ep image builds from
+              # that checkout; the operator deploys the EP control plane. Empty ep-revision
+              # keeps today's behavior (no EP).
+              # EP enabled when explicitly requested, or when a git source is pinned
+              # (building from source implies the opt-in). With the flag on and no
+              # ep-revision, aap-dev deploys the prebuilt quay.io/aap EP image.
+              export AO_EXECUTION_PLANE='$(if [ "${ENABLE_EXECUTION_PLANE}" = "true" ] || [ -n "${EP_REVISION}" ]; then echo true; else echo false; fi)'
+              make AO_OPERATOR=true SKAFFOLD_CONFIG=\$(pwd)/skaffolding/skaffold-ao-operator.yaml aap-deploy
+              mkdir -p \$HOME/aap-dev/.tmp
+              \$HOME/aap-dev/bin/kind export kubeconfig \
+                --name 27-next-ao-operator \
+                --kubeconfig \$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig
+              kubectl --kubeconfig=\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig \
+                config set-context kind-27-next-ao-operator --namespace=aap27-next
+            "
+        - name: wait-for-ao-ready
+          timeout: 15m
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+            AO_KUBECONFIG="\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig"
+
+            echo "=== Waiting for AutomationOrchestrator CR to reach Ready condition ==="
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              export KUBECONFIG=${AO_KUBECONFIG}
+              kubectl wait automationorchestrator/myao \
+                --for=condition=Ready \
+                --timeout=600s
+            "
+        - name: configure-ao
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+            AO_KUBECONFIG="\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig"
+
+            echo "=== Configuring AO for E2E tests ==="
+            # Mirrors the two post-deploy steps in syntara's e2e-ao-operator.yml:
+            #   1. Allow private-IP HTTP requests (worker needs myao-backend and the
+            #      in-cluster httpbin Service that aap-dev deploys for E2E HTTP Request
+            #      tests). Replacing this list with only myao-backend SSRF-blocks
+            #      http://httpbin:8080 ("SSRF blocked: private IP range").
+            #   2. Bump Redis connection pool for E2E concurrency
+            # No memory limits or operator scale-down — the GHA reference workflow does neither.
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              set -euo pipefail
+              export KUBECONFIG=${AO_KUBECONFIG}
+
+              kubectl patch automationorchestrator/myao --type=merge \
+                -p '{\"spec\":{\"workflowHttpRequestAllowedHosts\":[\"myao-backend\",\"httpbin\"]}}'
+              kubectl set env deployment/myao-worker \
+                APP_WORKFLOW_HTTP_REQUEST_ALLOWED_HOSTS='[\"myao-backend\",\"httpbin\"]'
+              kubectl rollout status deployment/myao-worker --timeout=300s
+
+              kubectl set env deployment/myao-backend \
+                APP_CACHE_CONNECTION_POOL_SIZE=50 \
+                APP_SCRIPT_NODES_ENABLED=true \
+                APP_INTEGRATION_URL_ALLOWED_HOSTS='[\"mcp-server\",\"localhost\"]'
+              kubectl set env deployment/myao-worker \
+                APP_CACHE_CONNECTION_POOL_SIZE=50 \
+                APP_SCRIPT_NODES_ENABLED=true
+              kubectl rollout status deployment/myao-backend --timeout=300s
+              kubectl rollout status deployment/myao-worker --timeout=300s
+            "
+        - name: initialize-admin-password
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+            AO_KUBECONFIG="\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig"
+
+            # The operator creates myao-initial-admin-password (key: password) during
+            # the backend DB migration job. Retrieve it instead of generating a new one.
+            # shellcheck disable=SC2029
+            AO_ADMIN_PASSWORD=$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              kubectl --kubeconfig=${AO_KUBECONFIG} get secret myao-initial-admin-password \
+                -n aap27-next \
+                -o jsonpath='{.data.password}' | base64 -d
+            ")
+            printf '%s' "${AO_ADMIN_PASSWORD}" > /workspace/share/ao-admin-password
+        - name: expose-ao-ingress
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            SSH_HOST=$(cat /workspace/share/host)
+            SSH_USER=$(cat /workspace/share/user)
+            SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o BatchMode=yes)
+            AO_ADMIN_PASSWORD=$(cat /workspace/share/ao-admin-password)
+            AO_KUBECONFIG="\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig"
+
+            echo "=== Starting kubectl port-forward for AO ingress on VM ==="
+            # Rootless podman ports aren't on the real host loopback, so the
+            # SSH tunnel can't reach them directly. Port-forward the nginx
+            # ingress controller which serves HTTPS on port 443.
+            # shellcheck disable=SC2029
+            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "
+              export KUBECONFIG=${AO_KUBECONFIG}
+              nohup kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443 --address=0.0.0.0 > /tmp/port-forward.log 2>&1 &
+              sleep 5
+              curl -ksSf https://127.0.0.1:8443/health 2>&1 | head -3 || echo 'Health check failed'
+            "
+
+            AO_URL="https://${SSH_HOST}:8443"
+
+            echo "AO URL: ${AO_URL}"
+            printf '%s' "${AO_URL}" > "$(results.ao-url.path)"
+            printf '%s' "${AO_URL}" > "$(results.ao-worker-url.path)"
+            printf '%s' "${AO_ADMIN_PASSWORD}" > "$(results.ao-admin-password.path)"
+            printf '%s' "${SSH_HOST}" > "$(results.ao-host.path)"
     - name: run-step-types-e2e
       timeout: 15m
       runAfter:
