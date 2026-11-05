@@ -38,7 +38,7 @@ class EPSettings(BaseSettings):
     db_ssl_key: str | None = Field(default=None, validation_alias="EP_DB_SSL_KEY")
 
     node_startup_seconds: int = Field(default=120, validation_alias="EP_NODE_STARTUP_SECONDS", ge=1)
-    node_grace_seconds: int = Field(default=30, validation_alias="EP_NODE_GRACE_SECONDS", ge=1)
+    node_grace_seconds: int = Field(default=5, validation_alias="EP_NODE_GRACE_SECONDS", ge=1)
 
     # Namespace for the default execution target created when a cluster is first
     # provisioned. Namespace is otherwise a per-target placement concern, editable
