@@ -13,6 +13,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.credential import EncryptedCredential
+from execution_plane_client.models.cluster import CLUSTER_FILTERABLE_FIELDS, CLUSTER_SORTABLE_FIELDS
 
 if TYPE_CHECKING:
     type ExecutionTarget = Any
@@ -38,27 +39,9 @@ class Cluster(SQLModel, table=True):
     """A registered control-plane cluster."""
 
     __tablename__ = "clusters"
-    __sortable_fields__: ClassVar[list[str]] = [
-        "id",
-        "created_at",
-        "updated_at",
-        "name",
-        "endpoint",
-        "status",
-        "enabled",
-        "is_default",
-    ]
-    __filterable_fields__: ClassVar[list[str]] = [
-        "id",
-        "created_at",
-        "updated_at",
-        "name",
-        "endpoint",
-        "status",
-        "status_message",
-        "enabled",
-        "is_default",
-    ]
+    # Query metadata sourced from execution_plane_client - single source of truth
+    __sortable_fields__: ClassVar[list[str]] = CLUSTER_SORTABLE_FIELDS
+    __filterable_fields__: ClassVar[list[str]] = CLUSTER_FILTERABLE_FIELDS
     __table_args__ = (
         Index("uq_clusters_default", "is_default", unique=True, postgresql_where=text("is_default = true")),
         {"schema": EP_SCHEMA},
