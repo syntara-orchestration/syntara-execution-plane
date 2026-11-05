@@ -52,6 +52,22 @@ reports cancellation only after the invocation is confirmed stopped. A terminal
 result observed during the race wins. A manager for a shared/warm worker must
 return or quarantine it; it must not delete the worker when one WorkItem ends.
 
+## Worker task ownership
+
+The worker's single `asyncio.TaskGroup` owns the listener, poller, completion
+delivery, resource monitor, drain monitor and its drain tasks, policy reconciler,
+and each WorkItem dispatch. Dispatch slots limit how many items the poller can
+claim; they do not manage task lifetime. An unhandled task failure cancels the
+group, and shutdown waits for the entire group before closing callback clients
+and database stores. Initial drain recovery runs inside this same boundary.
+
+The blocking Kubernetes transport runs in an executor thread. A dispatch signals
+that thread to stop on cancellation or monitoring failure and waits for it to
+finish, including its database callbacks and resource cleanup. Cancelling an
+asyncio Future alone cannot stop the thread. Repeated cancellation does not skip
+this join; graceful shutdown depends on the transport's cooperative cancellation
+and existing network timeouts.
+
 ## Current scheduler limits
 
 `WorkScheduler.claim_and_place_work()` still claims the first active, project-eligible default

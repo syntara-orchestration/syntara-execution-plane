@@ -7,7 +7,7 @@ import os
 import signal
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Self
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
@@ -75,22 +75,24 @@ class _DrainMonitor:
     ) -> None:
         self.events = events
 
-    async def start(self) -> None:
+    async def run(self, _task_group: asyncio.TaskGroup) -> None:
         self.events.append("monitor:start")
-
-    async def stop(self) -> None:
-        self.events.append("monitor:stop")
+        try:
+            await asyncio.sleep(0)
+        finally:
+            self.events.append("monitor:stop")
 
 
 class _ResourceMonitor:
     def __init__(self, _target_store: object, _cluster_store: object, _settings: object, events: list[str]) -> None:
         self.events = events
 
-    async def start(self) -> None:
+    async def run(self) -> None:
         self.events.append("resource-monitor:start")
-
-    async def stop(self) -> None:
-        self.events.append("resource-monitor:stop")
+        try:
+            await asyncio.sleep(0)
+        finally:
+            self.events.append("resource-monitor:stop")
 
 
 class _WorkStore:
@@ -176,101 +178,17 @@ class _CompletionDelivery:
         self.events.append("delivery:stop")
 
 
-@pytest.mark.asyncio
-async def test_run_worker_wires_placement_resolver_to_the_poll_loop(
-    monkeypatch: pytest.MonkeyPatch, worker_engine: SimpleNamespace
-) -> None:
+@pytest.fixture
+def worker_events(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     from execution_plane import worker
 
     events: list[str] = []
-    worker_engine.dispose.side_effect = lambda: events.append("engine:stop")
-    work_service = _StoreContext("work", events)
-    cluster_store = _StoreContext("cluster", events)
-    target_store = _StoreContext("target", events)
-    workload_manager = object()
-    placement_resolver = object()
-    built_with: list[tuple[object, object, WorkerManagerRegistry]] = []
-    poll_calls: list[WorkerManagerRegistry] = []
-
-    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
-    monkeypatch.setattr(WorkStore, "from_engine", Mock(return_value=work_service))
-    monkeypatch.setattr(
-        "execution_plane.worker.ClusterStore.from_engine",
-        Mock(return_value=cluster_store),
-    )
-    monkeypatch.setattr(
-        "execution_plane.worker.ExecutionTargetStore.from_engine",
-        Mock(return_value=target_store),
-    )
-    monkeypatch.setattr(
-        worker,
-        "DrainMonitor",
-        lambda target, cluster, work: _DrainMonitor(target, cluster, work, events),
-    )
-    monkeypatch.setattr(
-        worker,
-        "ResourceMonitor",
-        lambda target, cluster, settings, **_kwargs: _ResourceMonitor(target, cluster, settings, events),
-    )
-    monkeypatch.setattr(worker, "CompletionNotifier", lambda _settings: _CompletionDelivery(SimpleNamespace(), events))
-    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver(events))
-    monkeypatch.setattr(worker, "VanillaK8sWorkerManager", lambda *_args, **_kwargs: workload_manager)
-
-    def build_resolver(cluster: object, target: object, managers: WorkerManagerRegistry) -> object:
-        built_with.append((cluster, target, managers))
-        return placement_resolver
-
-    async def record_poller(
-        _scheduler: object,
-        _progress: object,
-        _target_store: object,
-        managers: WorkerManagerRegistry,
-        _settings: object,
-        _wakeup_event: object,
-    ) -> None:
-        poll_calls.append(managers)
-
-    monkeypatch.setattr(worker, "build_placement_resolver", build_resolver)
-    monkeypatch.setattr(worker, "_listen_loop", _finished_listener)
-    monkeypatch.setattr(worker, "_poll_loop", record_poller)
-    monkeypatch.setattr(worker, "run_orphan_policy_reconciler", _finished_policy_reconciler)
-
-    await worker.run_worker("postgresql+asyncpg://localhost/syntara")
-
-    assert built_with == [(cluster_store, target_store, poll_calls[0])]
-    assert poll_calls[0].get(BackendType.KUBERNETES) is workload_manager
-    assert "resolver:start" in events
-    assert "resolver:stop" in events
-    assert events[-1] == "engine:stop"
-    worker.create_pooled_engine.assert_called_once_with("postgresql+asyncpg://localhost/syntara")
-    worker_engine.dispose.assert_awaited_once()
-    worker.WorkStore.from_engine.assert_called_once_with(worker_engine)
-    worker.ClusterStore.from_engine.assert_called_once_with(worker_engine)
-    worker.ExecutionTargetStore.from_engine.assert_called_once_with(worker_engine)
-
-
-@pytest.mark.asyncio
-async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(
-    monkeypatch: pytest.MonkeyPatch, worker_engine: SimpleNamespace
-) -> None:
-    from execution_plane import worker
-
-    events: list[str] = []
-    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
-
+    monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace(max_concurrent_dispatches=2))
     monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: _StoreContext("work", events))
+    monkeypatch.setattr(worker.ClusterStore, "from_engine", lambda _engine: _StoreContext("cluster", events))
+    monkeypatch.setattr(worker.ExecutionTargetStore, "from_engine", lambda _engine: _StoreContext("target", events))
     monkeypatch.setattr(
-        "execution_plane.worker.ClusterStore.from_engine",
-        lambda _engine: _StoreContext("cluster", events),
-    )
-    monkeypatch.setattr(
-        "execution_plane.worker.ExecutionTargetStore.from_engine",
-        lambda _engine: _StoreContext("target", events),
-    )
-    monkeypatch.setattr(
-        worker,
-        "DrainMonitor",
-        lambda target, cluster, work: _DrainMonitor(target, cluster, work, events),
+        worker, "DrainMonitor", lambda target, cluster, work: _DrainMonitor(target, cluster, work, events)
     )
     monkeypatch.setattr(
         worker,
@@ -278,139 +196,237 @@ async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(
         lambda target, cluster, settings, **_kwargs: _ResourceMonitor(target, cluster, settings, events),
     )
     monkeypatch.setattr(worker, "CompletionNotifier", lambda settings: _CompletionDelivery(settings, events))
-    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver())
+    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver(events))
     monkeypatch.setattr(worker, "VanillaK8sWorkerManager", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(worker, "build_placement_resolver", lambda *_args: object())
     monkeypatch.setattr(worker, "_listen_loop", _finished_listener)
-    monkeypatch.setattr(worker, "_poll_loop", _finished_poller)
     monkeypatch.setattr(worker, "run_orphan_policy_reconciler", _finished_policy_reconciler)
+    return events
 
+
+@pytest.mark.asyncio
+async def test_run_worker_wires_placement_resolver_and_one_task_group(
+    monkeypatch: pytest.MonkeyPatch,
+    worker_events: list[str],
+) -> None:
+    from execution_plane import worker
+
+    placement_resolver = object()
+    built_with: list[tuple[object, object, WorkerManagerRegistry]] = []
+    groups: list[asyncio.TaskGroup] = []
+
+    def build_resolver(cluster, target, managers) -> object:
+        built_with.append((cluster, target, managers))
+        return placement_resolver
+
+    async def record_poller(scheduler, _progress, _target, managers, _settings, _event, task_group) -> None:
+        assert scheduler._placement_resolver is placement_resolver
+        assert managers is built_with[0][2]
+        groups.append(task_group)
+
+    async def record_drainer(_self, task_group) -> None:
+        groups.append(task_group)
+
+    monkeypatch.setattr(worker, "build_placement_resolver", build_resolver)
+    monkeypatch.setattr(worker, "_poll_loop", record_poller)
+    monkeypatch.setattr(_DrainMonitor, "run", record_drainer)
     await worker.run_worker("postgresql+asyncpg://localhost/syntara")
 
-    assert events.index("monitor:start") < events.index("monitor:stop")
-    assert events.index("resource-monitor:start") < events.index("resource-monitor:stop")
-    assert events.index("resource-monitor:stop") < events.index("work:stop")
-    assert events.index("monitor:stop") < events.index("work:stop")
-    worker_engine.dispose.assert_awaited_once()
+    assert len(groups) == 2
+    assert groups[0] is groups[1]
+    assert built_with[0][0].name == "cluster"
+    assert built_with[0][1].name == "target"
+    assert "resolver:stop" in worker_events
 
 
 @pytest.mark.asyncio
 async def test_run_worker_completes_cleanup_after_shutdown_signal(
-    monkeypatch: pytest.MonkeyPatch, worker_engine: SimpleNamespace
+    monkeypatch: pytest.MonkeyPatch,
+    worker_events: list[str],
 ) -> None:
     from execution_plane import worker
     from execution_plane.runtime import run_until_shutdown
 
-    events: list[str] = []
     listener_started = asyncio.Event()
-    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
-    monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: _StoreContext("work", events))
-    monkeypatch.setattr(
-        "execution_plane.worker.ClusterStore.from_engine",
-        lambda _engine: _StoreContext("cluster", events),
-    )
-    monkeypatch.setattr(
-        "execution_plane.worker.ExecutionTargetStore.from_engine",
-        lambda _engine: _StoreContext("target", events),
-    )
-    monkeypatch.setattr(
-        worker,
-        "DrainMonitor",
-        lambda target, cluster, work: _DrainMonitor(target, cluster, work, events),
-    )
-    monkeypatch.setattr(
-        worker,
-        "ResourceMonitor",
-        lambda target, cluster, settings, **_kwargs: _ResourceMonitor(target, cluster, settings, events),
-    )
-    monkeypatch.setattr(worker, "CompletionNotifier", lambda _settings: _CompletionDelivery(SimpleNamespace(), events))
-    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver())
-    monkeypatch.setattr(worker, "VanillaK8sWorkerManager", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(worker, "build_placement_resolver", lambda *_args: object())
 
-    async def blocked_listener(_database_url: str, _wakeup_event: object) -> None:
+    async def blocked_listener(_database_url, _event) -> None:
         listener_started.set()
-        await asyncio.Event().wait()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            worker_events.append("listener:stop")
 
     monkeypatch.setattr(worker, "_listen_loop", blocked_listener)
     monkeypatch.setattr(worker, "_poll_loop", _finished_poller)
-    monkeypatch.setattr(worker, "run_orphan_policy_reconciler", _finished_policy_reconciler)
-
     runner = asyncio.create_task(run_until_shutdown(worker.run_worker("postgresql+asyncpg://localhost/syntara")))
     await asyncio.wait_for(listener_started.wait(), timeout=1)
     os.kill(os.getpid(), signal.SIGTERM)
     await asyncio.wait_for(runner, timeout=1)
 
-    assert "resource-monitor:stop" in events
-    assert "monitor:stop" in events
-    assert "delivery:stop" in events
-    assert "work:stop" in events
-    worker_engine.dispose.assert_awaited_once()
+    for service in ("resource-monitor", "monitor", "listener", "delivery", "resolver"):
+        assert worker_events.index(f"{service}:stop") < worker_events.index("target:stop")
+    assert "work:stop" in worker_events
 
 
 @pytest.mark.asyncio
-async def test_dispatch_task_is_owned_and_released(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("fail_dispatch", [False, True])
+async def test_worker_awaits_dispatch_cleanup_before_closing_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    worker_events: list[str],
+    *,
+    fail_dispatch: bool,
+) -> None:
     from execution_plane import worker
 
-    snapshots: list[int] = []
-    inflight: dict[asyncio.Task[None], None] = {}
-    dispatch_event = asyncio.Event()
-    params = cast(
-        "worker._ProcessItemKwargs",
-        {
-            "item": object(),
-            "work_progress": object(),
-            "target_queries": object(),
-            "worker_managers": object(),
-            "settings": object(),
-        },
-    )
+    started = asyncio.Event()
+    cleaning = asyncio.Event()
+    release_cleanup = asyncio.Event()
 
-    async def fake_process_item(**_kwargs: object) -> None:
-        snapshots.append(len(inflight))
+    class Scheduler:
+        async def claim_and_place_work(self) -> SimpleNamespace | None:
+            return SimpleNamespace(id=uuid4())
 
-    monkeypatch.setattr(worker, "_process_item", fake_process_item)
+    async def process_item(item, *_args: object) -> None:
+        started.set()
+        try:
+            if fail_dispatch:
+                message = "dispatch failed"
+                raise ValueError(message)
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await release_cleanup.wait()
+            worker_events.append(f"dispatch:{item.id}:stop")
 
-    task = worker._start_dispatch_task(params, inflight, dispatch_event, name="test-dispatch")
+    monkeypatch.setattr(worker, "WorkScheduler", lambda *_args: Scheduler())
+    monkeypatch.setattr(worker, "_process_item", process_item)
+    runner = asyncio.create_task(worker.run_worker("postgresql+asyncpg://localhost/syntara"))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        if not fail_dispatch:
+            runner.cancel()
+        await asyncio.wait_for(cleaning.wait(), timeout=1)
+        assert not runner.done()
+        assert not any(
+            event.endswith(":stop")
+            for event in worker_events
+            if event.split(":")[0]
+            in {
+                "work",
+                "cluster",
+                "target",
+                "resolver",
+                "delivery",
+            }
+        )
+    finally:
+        release_cleanup.set()
+        if fail_dispatch:
+            with pytest.raises(ExceptionGroup) as error:
+                await asyncio.wait_for(runner, timeout=1)
+            assert all(isinstance(exc, ValueError) for exc in error.value.exceptions)
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(runner, timeout=1)
 
-    assert task in inflight
-    await task
-
-    assert snapshots == [1], "task should be in inflight while _process_item runs"
-    assert len(inflight) == 0, "task should remove itself on completion"
-    assert dispatch_event.is_set()
+    stopped = [i for i, event in enumerate(worker_events) if event.startswith("dispatch:")]
+    assert stopped
+    assert max(stopped) < worker_events.index("delivery:stop")
+    assert worker_events.index("delivery:stop") < worker_events.index("resolver:stop")
+    assert worker_events.index("resolver:stop") < worker_events.index("target:stop")
 
 
 @pytest.mark.asyncio
-async def test_dispatch_task_is_released_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_worker_cleans_up_tasks_when_drain_startup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    worker_events: list[str],
+) -> None:
     from execution_plane import worker
 
-    inflight: dict[asyncio.Task[None], None] = {}
-    dispatch_event = asyncio.Event()
-    params = cast(
-        "worker._ProcessItemKwargs",
-        {
-            "item": object(),
-            "work_progress": object(),
-            "target_queries": object(),
-            "worker_managers": object(),
-            "settings": object(),
-        },
-    )
+    drain_started = asyncio.Event()
 
-    async def fake_process_item(**_kwargs: object) -> None:
-        msg = "boom"
-        raise ValueError(msg)
+    async def drain() -> None:
+        drain_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            worker_events.append("drain:stop")
 
-    monkeypatch.setattr(worker, "_process_item", fake_process_item)
+    async def failing_start(_self, task_group) -> None:
+        task_group.create_task(drain())
+        await drain_started.wait()
+        message = "initial scan failed"
+        raise RuntimeError(message)
 
-    task = worker._start_dispatch_task(params, inflight, dispatch_event, name="test-dispatch-error")
+    monkeypatch.setattr(_DrainMonitor, "run", failing_start)
+    monkeypatch.setattr(worker, "_poll_loop", _finished_poller)
+    with pytest.raises(ExceptionGroup) as error:
+        await worker.run_worker("postgresql+asyncpg://localhost/syntara")
 
-    with pytest.raises(ValueError, match="boom"):
-        await task
+    assert isinstance(error.value.exceptions[0], RuntimeError)
+    assert worker_events.index("drain:stop") < worker_events.index("delivery:stop")
+    assert worker_events.index("delivery:stop") < worker_events.index("work:stop")
 
-    assert len(inflight) == 0, "task should remove itself even after an error"
-    assert dispatch_event.is_set()
+
+@pytest.mark.asyncio
+async def test_poll_loop_bounds_claims_and_reuses_slots_without_waiting_for_poll_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from execution_plane import worker
+
+    claims: list[int] = []
+    started: asyncio.Queue[int] = asyncio.Queue()
+    gates = [asyncio.Event() for _ in range(3)]
+    active = 0
+    peak = 0
+
+    class Scheduler:
+        async def claim_and_place_work(self) -> SimpleNamespace | None:
+            if len(claims) == 3:
+                return None
+            index = len(claims)
+            claims.append(index)
+            return SimpleNamespace(id=index)
+
+    async def process_item(item, *_args: object) -> None:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        started.put_nowait(item.id)
+        try:
+            await gates[item.id].wait()
+        finally:
+            active -= 1
+
+    async def run() -> None:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(
+                worker._poll_loop(
+                    Scheduler(),
+                    None,
+                    None,
+                    None,
+                    SimpleNamespace(max_concurrent_dispatches=2),
+                    asyncio.Event(),
+                    group,
+                )
+            )
+
+    monkeypatch.setattr(worker, "_process_item", process_item)
+    monkeypatch.setattr(worker, "POLL_INTERVAL_SECONDS", 3600)
+    runner = asyncio.create_task(run())
+    try:
+        assert await asyncio.wait_for(started.get(), timeout=1) == 0
+        assert await asyncio.wait_for(started.get(), timeout=1) == 1
+        assert claims == [0, 1]
+        gates[0].set()
+        assert await asyncio.wait_for(started.get(), timeout=1) == 2
+        assert peak == 2
+    finally:
+        runner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await runner
+    assert active == 0
 
 
 async def _finished_listener(_database_url: str, _wakeup_event: object) -> None:

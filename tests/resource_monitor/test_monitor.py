@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -258,25 +259,22 @@ async def test_disappeared_target_does_not_abort_scan() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stop_cancels_the_loop_without_waiting_for_the_interval() -> None:
+async def test_worker_group_cancels_the_monitor_without_waiting_for_the_interval() -> None:
     cluster = make_cluster()
     target = make_target(cluster)
-    probe = _ScriptedProbe(ProbeResult(healthy=True, skipped=True))
-    monitor, _target_store, _cluster_store = _monitor([target], {cluster.id: cluster}, probe)
-    monitor._interval = 60
-    await monitor.start()
-    await monitor.stop()
-    assert monitor._started is False
+    scanned = asyncio.Event()
 
+    class Probe:
+        async def probe(self, *_args: object) -> ProbeResult:
+            scanned.set()
+            return ProbeResult(healthy=True, skipped=True)
 
-@pytest.mark.asyncio
-async def test_start_is_idempotent() -> None:
-    cluster = make_cluster()
-    target = make_target(cluster)
-    probe = _ScriptedProbe(ProbeResult(healthy=True, skipped=True))
-    monitor, _target_store, _cluster_store = _monitor([target], {cluster.id: cluster}, probe)
-    await monitor.start()
-    first = monitor._task
-    await monitor.start()
-    assert monitor._task is first
-    await monitor.stop()
+    monitor, _target_store, _cluster_store = _monitor([target], {cluster.id: cluster}, Probe())
+    monitor._interval = 3600
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.TaskGroup() as group:
+            task = group.create_task(monitor.run())
+            await asyncio.wait_for(scanned.wait(), timeout=1)
+            raise asyncio.CancelledError
+
+    assert task.cancelled()

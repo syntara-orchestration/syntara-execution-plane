@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from functools import partial
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import-untyped]
 import structlog
@@ -51,16 +50,7 @@ POLL_INTERVAL_SECONDS = 5
 NOTIFY_CHANNEL = "execution_plane_work_items"
 
 
-class _ProcessItemKwargs(TypedDict):
-    item: WorkItem
-    work_progress: WorkStore
-    target_queries: ExecutionTargetStore
-    worker_managers: WorkerManagerRegistry
-    settings: Settings
-
-
 async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinct persistence transitions
-    # Mirrors _ProcessItemKwargs; kept explicit so callers can pass positional args.
     item: WorkItem,
     work_progress: WorkStore,
     target_queries: ExecutionTargetStore,
@@ -173,29 +163,21 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
         logger.exception("Worker outcome needs reconciliation", work_item_id=wi_id, error_type=type(e).__name__)
 
 
-def _start_dispatch_task(
-    params: _ProcessItemKwargs,
-    inflight: dict[asyncio.Task[None], None],
-    dispatch_event: asyncio.Event,
-    *,
-    name: str,
-) -> asyncio.Task[None]:
-    """Start a dispatch task and keep a strong reference until it completes."""
-    task = asyncio.create_task(_process_item(**params), name=name)
-    inflight[task] = None
-    task.add_done_callback(partial(_finish_dispatch_task, inflight=inflight, dispatch_event=dispatch_event))
-    return task
-
-
-def _finish_dispatch_task(
-    task: asyncio.Task[None],
-    *,
-    inflight: dict[asyncio.Task[None], None],
+async def _dispatch_item(
+    item: WorkItem,
+    work_progress: WorkStore,
+    target_queries: ExecutionTargetStore,
+    worker_managers: WorkerManagerRegistry,
+    settings: Settings,
+    slots: asyncio.BoundedSemaphore,
     dispatch_event: asyncio.Event,
 ) -> None:
-    """Release a completed dispatch slot and wake the polling loop."""
-    inflight.pop(task, None)
-    dispatch_event.set()
+    """Release the reserved dispatch slot on completion, failure, or cancellation."""
+    try:
+        await _process_item(item, work_progress, target_queries, worker_managers, settings)
+    finally:
+        slots.release()
+        dispatch_event.set()
 
 
 async def _listen_loop(database_url: str, dispatch_event: asyncio.Event) -> None:
@@ -235,6 +217,7 @@ async def _poll_loop(
     worker_managers: WorkerManagerRegistry,
     settings: Settings,
     dispatch_event: asyncio.Event,
+    task_group: asyncio.TaskGroup,
 ) -> None:
     """Claim work and dispatch items concurrently, bounded by settings.
 
@@ -248,12 +231,12 @@ async def _poll_loop(
         "Execution Plane worker started, polling for work items",
         max_concurrent_dispatches=settings.max_concurrent_dispatches,
     )
-    inflight: dict[asyncio.Task[None], None] = {}
+    slots = asyncio.BoundedSemaphore(settings.max_concurrent_dispatches)
     while True:
         dispatch_event.clear()
 
         # Claim while a dispatch slot is free and work is queued.
-        while len(inflight) < settings.max_concurrent_dispatches:
+        while not slots.locked():
             item = None
             try:
                 item = await work_scheduler.claim_and_place_work()
@@ -262,16 +245,17 @@ async def _poll_loop(
             if item is None:
                 break
             logger.info("Claimed work item", work_item_id=str(item.id))
-            _start_dispatch_task(
-                {
-                    "item": item,
-                    "work_progress": work_progress,
-                    "target_queries": target_queries,
-                    "worker_managers": worker_managers,
-                    "settings": settings,
-                },
-                inflight,
-                dispatch_event,
+            await slots.acquire()
+            task_group.create_task(
+                _dispatch_item(
+                    item,
+                    work_progress,
+                    target_queries,
+                    worker_managers,
+                    settings,
+                    slots,
+                    dispatch_event,
+                ),
                 name=f"ep-dispatch-{item.id}",
             )
 
@@ -284,8 +268,8 @@ async def _poll_loop(
 async def run_worker(database_url: str) -> None:
     """Run processing and callback delivery against the EP-owned database.
 
-    Cancellation closes both the notification listener and the polling task,
-    then disposes the worker-owned engine shared by all stores.
+    One TaskGroup owns service loops, dispatches, and drains. It finishes all
+    task cleanup before the stores and callback clients close.
     """
     settings = get_settings()
     async with contextlib.AsyncExitStack() as resources:
@@ -296,6 +280,7 @@ async def run_worker(database_url: str) -> None:
         target_store = await resources.enter_async_context(ExecutionTargetStore.from_engine(engine))
         credential_resolver = await resources.enter_async_context(CredentialResolver(settings))
         event_delivery = CompletionNotifier(settings)
+        resources.push_async_callback(event_delivery.close)
         worker_managers = WorkerManagerRegistry()
         placement_resolver = build_placement_resolver(cluster_store, target_store, worker_managers)
         work_scheduler = WorkScheduler(work_item_store, placement_resolver)
@@ -318,40 +303,36 @@ async def run_worker(database_url: str) -> None:
             "ExecutionTarget reconciler constructed",
             resolver=type(placement_resolver).__name__,
         )
-        await drain_monitor.start()
-        await resource_monitor.start()
-        try:
-            dispatch_event = asyncio.Event()
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(
-                    _listen_loop(to_asyncpg_url(database_url), dispatch_event),
-                    name="ep-listener",
-                )
-                tg.create_task(
-                    _poll_loop(
-                        work_scheduler,
-                        work_item_store,
-                        target_store,
-                        worker_managers,
-                        settings,
-                        dispatch_event,
-                    ),
-                    name="ep-poll",
-                )
-                tg.create_task(event_delivery.run(work_item_store), name="ep-completion-delivery")
-                tg.create_task(
-                    run_orphan_policy_reconciler(
-                        target_store,
-                        cluster_store,
-                        work_item_store,
-                        credential_resolver,
-                    ),
-                    name="ep-k8s-policy-reconciler",
-                )
-        finally:
-            await resource_monitor.stop()
-            await drain_monitor.stop()
-            await event_delivery.close()
+        dispatch_event = asyncio.Event()
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(drain_monitor.run(tg), name="ep-drain-monitor")
+            tg.create_task(resource_monitor.run(), name="ep-resource-monitor")
+            tg.create_task(
+                _listen_loop(to_asyncpg_url(database_url), dispatch_event),
+                name="ep-listener",
+            )
+            tg.create_task(
+                _poll_loop(
+                    work_scheduler,
+                    work_item_store,
+                    target_store,
+                    worker_managers,
+                    settings,
+                    dispatch_event,
+                    tg,
+                ),
+                name="ep-poll",
+            )
+            tg.create_task(event_delivery.run(work_item_store), name="ep-completion-delivery")
+            tg.create_task(
+                run_orphan_policy_reconciler(
+                    target_store,
+                    cluster_store,
+                    work_item_store,
+                    credential_resolver,
+                ),
+                name="ep-k8s-policy-reconciler",
+            )
 
 
 async def _run() -> None:
