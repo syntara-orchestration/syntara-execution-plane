@@ -29,7 +29,7 @@ from execution_plane.commands.context import EPCommandContext
 from execution_plane.commands.queries import EPResourceQueries
 from execution_plane.commands.registry import build_ep_registry
 from execution_plane.config import get_ep_settings
-from execution_plane.database.engine import create_ep_engine
+from execution_plane.database.engine import create_pooled_engine
 from execution_plane.execution_target.execution_target_store import (
     ClusterNotAvailableError,
     DefaultExecutionTargetError,
@@ -76,7 +76,7 @@ def _extract_filters(request: Request) -> dict[str, str]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open an EP-owned database pool for the HTTP service lifetime."""
     settings = get_ep_settings()
-    engine = create_ep_engine(settings.database_url)
+    engine = create_pooled_engine(settings.database_url)
     app.state.ep_settings = settings
     app.state.ep_engine = engine
     app.state.ep_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

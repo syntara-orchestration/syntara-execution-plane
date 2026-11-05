@@ -20,7 +20,7 @@ async def test_api_lifespan_owns_one_engine() -> None:
 
     engine = AsyncMock(spec=AsyncEngine)
     app = api_main.create_app()
-    with patch.object(api_main, "create_ep_engine", return_value=engine) as create_engine:
+    with patch.object(api_main, "create_pooled_engine", return_value=engine) as create_engine:
         async with api_main.lifespan(app):
             assert app.state.ep_engine is engine
             assert app.state.ep_session_factory.kw["bind"] is engine

@@ -8,10 +8,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import event, text
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
-from sqlalchemy.pool import NullPool
 
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.database.engine import create_ep_engine
+from execution_plane.database.engine import create_pooled_engine, create_unpooled_engine
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.work_item.work_item_store import WorkStore
 
@@ -20,8 +19,8 @@ pytestmark = pytest.mark.integration
 
 async def test_stores_reuse_connections_and_owner_closes_them(migrated_database, monkeypatch):
     monkeypatch.setenv("EP_DB_POOL_SIZE", "1")
-    engine = create_ep_engine(migrated_database)
-    observer = create_ep_engine(migrated_database, poolclass=NullPool)
+    engine = create_pooled_engine(migrated_database)
+    observer = create_unpooled_engine(migrated_database)
     connections_created = []
     event.listen(engine.sync_engine, "connect", lambda *_: connections_created.append(True))
     try:
@@ -56,7 +55,7 @@ async def test_stores_reuse_connections_and_owner_closes_them(migrated_database,
 async def test_pool_waits_without_opening_overflow_and_times_out(integration_database_url, monkeypatch):
     monkeypatch.setenv("EP_DB_POOL_SIZE", "1")
     monkeypatch.setenv("EP_DB_POOL_TIMEOUT", "0.1")
-    engine = create_ep_engine(integration_database_url)
+    engine = create_pooled_engine(integration_database_url)
     waiting = asyncio.Event()
 
     async def borrow() -> int:
@@ -84,8 +83,8 @@ async def test_pool_waits_without_opening_overflow_and_times_out(integration_dat
 
 async def test_pre_ping_replaces_a_terminated_pooled_connection(integration_database_url, monkeypatch):
     monkeypatch.setenv("EP_DB_POOL_SIZE", "1")
-    engine = create_ep_engine(integration_database_url)
-    observer = create_ep_engine(integration_database_url, poolclass=NullPool)
+    engine = create_pooled_engine(integration_database_url)
+    observer = create_unpooled_engine(integration_database_url)
     try:
         async with engine.connect() as connection:
             pid = await connection.scalar(text("SELECT pg_backend_pid()"))

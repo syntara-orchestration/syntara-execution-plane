@@ -28,7 +28,7 @@ def worker_engine(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     from execution_plane import worker
 
     engine = SimpleNamespace(dispose=AsyncMock())
-    monkeypatch.setattr(worker, "create_ep_engine", Mock(return_value=engine))
+    monkeypatch.setattr(worker, "create_pooled_engine", Mock(return_value=engine))
     return engine
 
 
@@ -240,7 +240,7 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(
     assert "resolver:start" in events
     assert "resolver:stop" in events
     assert events[-1] == "engine:stop"
-    worker.create_ep_engine.assert_called_once_with("postgresql+asyncpg://localhost/syntara")
+    worker.create_pooled_engine.assert_called_once_with("postgresql+asyncpg://localhost/syntara")
     worker_engine.dispose.assert_awaited_once()
     worker.WorkStore.from_engine.assert_called_once_with(worker_engine)
     worker.ClusterStore.from_engine.assert_called_once_with(worker_engine)

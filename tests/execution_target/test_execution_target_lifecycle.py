@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Self
 
 import pytest
-from sqlalchemy.pool import NullPool
 
+from execution_plane.database.engine import create_unpooled_engine
 from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     ExecutionTargetNotFoundError,
@@ -550,9 +550,11 @@ async def test_target_store_rejects_deletion_of_an_unknown_target() -> None:
         await commands.request_delete(uuid.uuid4(), uuid.uuid4())
 
 
-def test_store_accepts_a_pool_for_its_owned_engine() -> None:
-    """Callers need to select a pool that matches the store lifecycle."""
-    store = ExecutionTargetStore("postgresql+asyncpg://localhost/syntara", poolclass=NullPool)
-
-    assert store._engine is not None
-    assert isinstance(store._engine.pool, NullPool)
+async def test_store_borrows_an_explicit_unpooled_engine() -> None:
+    """An injected engine remains owned by its caller."""
+    engine = create_unpooled_engine("postgresql+asyncpg://localhost/syntara")
+    try:
+        async with ExecutionTargetStore.from_engine(engine) as store:
+            assert store._engine is engine
+    finally:
+        await engine.dispose()

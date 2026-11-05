@@ -15,7 +15,7 @@ from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.completion_notifier.notifier import CompletionNotifier
 from execution_plane.config import get_ep_settings, to_asyncpg_url
 from execution_plane.credential_resolution.resolver import CredentialResolver
-from execution_plane.database.engine import create_ep_engine
+from execution_plane.database.engine import create_pooled_engine
 from execution_plane.database.ssl import ssl_connect_args_from_env
 from execution_plane.drain_monitor import DrainMonitor
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
@@ -288,7 +288,7 @@ async def run_worker(database_url: str) -> None:
     """
     settings = get_ep_settings()
     async with contextlib.AsyncExitStack() as resources:
-        engine = create_ep_engine(database_url)
+        engine = create_pooled_engine(database_url)
         resources.push_async_callback(engine.dispose)
         work_item_store = await resources.enter_async_context(WorkStore.from_engine(engine))
         cluster_store = await resources.enter_async_context(ClusterStore.from_engine(engine))
