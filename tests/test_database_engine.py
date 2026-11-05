@@ -32,7 +32,8 @@ def test_engine_applies_pool_bounds_and_ssl(monkeypatch: pytest.MonkeyPatch, *, 
     )
 
 
-async def test_unpooled_engine_uses_null_pool() -> None:
+async def test_unpooled_engine_uses_null_pool_without_service_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EP_DATABASE_URL", raising=False)
     engine = engine_module.create_unpooled_engine("postgresql+asyncpg://localhost/test")
     try:
         assert isinstance(engine.pool, NullPool)
