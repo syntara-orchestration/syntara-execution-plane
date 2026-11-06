@@ -90,10 +90,10 @@ class ClusterStore(StoreBase):
         async with self._session_context() as session:
             try:
                 session.add(cluster)
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def get(self, cluster_id: uuid.UUID) -> Cluster | None:
@@ -191,10 +191,10 @@ class ClusterStore(StoreBase):
                     cluster.labels = merge_user_labels(cluster.labels, labels)
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def set_default(self, cluster_id: uuid.UUID, updated_by: uuid.UUID) -> Cluster:
@@ -221,13 +221,13 @@ class ClusterStore(StoreBase):
                     cluster.is_default = True
                     cluster.updated_by = updated_by
                     cluster.updated_at = now
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except IntegrityError as exc:
-                await session.rollback()
+                await self._rollback(session)
                 raise DefaultClusterError from exc
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def ensure_default(self, cluster_id: uuid.UUID, updated_by: uuid.UUID) -> Cluster:
@@ -247,10 +247,10 @@ class ClusterStore(StoreBase):
                     cluster.is_default = True
                     cluster.updated_by = updated_by
                     cluster.updated_at = datetime.now(UTC)
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def reactivate(
@@ -282,10 +282,10 @@ class ClusterStore(StoreBase):
                     cluster.labels = merge_user_labels(cluster.labels, labels)
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def record_discovery_state(
@@ -308,10 +308,10 @@ class ClusterStore(StoreBase):
                 cluster.status_message = status_message
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def mark_drain_failed(
@@ -331,10 +331,10 @@ class ClusterStore(StoreBase):
                 cluster.status_message = status_message
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def request_delete(self, cluster_id: uuid.UUID, updated_by: uuid.UUID) -> Cluster:
@@ -359,10 +359,10 @@ class ClusterStore(StoreBase):
                     target.status = TargetStatus.DRAINING
                     target.updated_by = updated_by
                     target.updated_at = now
-                await session.commit()
+                await self._commit(session)
                 return self._without_secret(cluster)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     async def finalize_delete(self, cluster_id: uuid.UUID) -> None:
@@ -380,9 +380,9 @@ class ClusterStore(StoreBase):
                 if result.scalars().all():
                     return
                 await session.delete(cluster)
-                await session.commit()
+                await self._commit(session)
             except Exception:
-                await session.rollback()
+                await self._rollback(session)
                 raise
 
     @staticmethod
