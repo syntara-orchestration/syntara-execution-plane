@@ -50,6 +50,20 @@ spec:
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
       value: feat/ANSTRAT-1803
+    # TEMPORARY PIN: aap-dev carrying two deploy-ao reliability fixes
+    # (ansible/aap-dev#1167 + #1168):
+    #   - statusCheckDeadlineSeconds: 600 on the ao-operator deployer, so a
+    #     slow cold-start image pull no longer fails the deploy while sibling
+    #     pods pull the same image fine
+    #   - AAP_SKIP_BUILD: the deploy step stops rebuilding the whole image
+    #     set that the build step just pushed (~8 minutes of redundant
+    #     builds and pushes churning the disk shared with etcd and the local
+    #     registry, right before the deploy)
+    # The skip is the default on the deploy-ao VMs (Konflux layout detected
+    # in aap-dev), so no task-side change is needed. Drop this pin once
+    # ansible/aap-dev#1167 + #1168 lands on main.
+    - name: aap-dev-revision
+      value: goneri/deploy-skaffold-cache-fix
   pipelineRef:
     resolver: bundles
     params:
