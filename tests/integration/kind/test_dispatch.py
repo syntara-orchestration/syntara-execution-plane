@@ -636,7 +636,7 @@ async def test_work_item_timeout_reaches_terminal_status(
     timeout never actually preempted the step and the script simply ran to its end.
     """
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-timeout"
 
     async with (
