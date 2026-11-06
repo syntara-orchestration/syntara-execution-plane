@@ -69,8 +69,6 @@ spec:
     value: goneri/e2e-dispatch
   - name: pipeline-github-pr-number
     value: '20'
-  - name: aap-dev-git-url
-    value: https://github.com/goneri/aap-dev.git
   - name: aap-dev-revision
     value: goneri/step-types-node-image
   - name: ao-revision
