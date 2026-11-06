@@ -2,12 +2,31 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from execution_plane_client.models.shared import EPListParams
+from execution_plane_client.models.shared import _SORT_PATTERN, EPListParams, ResourcesResponse
+
+# Work item query metadata - single source of truth for EP and client
+WORK_ITEM_FILTERABLE_FIELDS = [
+    "id",
+    "execution_target_id",
+    "status",
+    "created_at",
+    "claimed_at",
+    "completed_at",
+    "resource_cleanup_status",
+    "resource_cleanup_error",
+]
+
+WORK_ITEM_SORTABLE_FIELDS = [
+    "created_at",
+    "status",
+    "resource_cleanup_status",
+    "id",
+]
 
 
 class WorkItemStatus(StrEnum):
@@ -24,44 +43,39 @@ class WorkItemStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-class WorkItemListParams(EPListParams):
-    """Work-item query controls and documented filter fields."""
-
-    id: str | None = Field(default=None, description="Work UUID; id[in]=uuid1,uuid2 for membership")
-    status: str | None = Field(default=None, description="Work status; supports eq and in")
-    created_at: str | None = Field(
-        default=None, description="Creation time; supports eq, in, gt, gte, lt, lte, and isnull"
-    )
-    claimed_at: str | None = Field(default=None, description="Claim time; supports ranges and isnull")
-    completed_at: str | None = Field(default=None, description="Completion time; supports ranges and isnull")
-    resource_cleanup_status: str | None = Field(default=None, description="Cleanup status; supports eq and in")
-    resource_cleanup_error: str | None = Field(
-        default=None, description="Cleanup error; supports text operators and isnull"
-    )
-    sort: Literal[
-        "created_at",
-        "-created_at",
-        "status",
-        "-status",
-        "resource_cleanup_status",
-        "-resource_cleanup_status",
-        "id",
-        "-id",
-    ] = Field(default="-created_at", description="Work-item sort field; newest first by default.")
-
-
 class WorkItemRead(BaseModel):
     """Safe work-item representation; excludes credentials and persistence internals."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    status: WorkItemStatus
-    result: dict[str, Any] | None
-    result_omitted: bool = False
-    result_size_bytes: int | None = None
-    created_at: datetime
-    claimed_at: datetime | None
-    completed_at: datetime | None
-    resource_cleanup_status: str
-    resource_cleanup_error: str | None
+    id: UUID = Field(description="Work item unique identifier")
+    status: WorkItemStatus = Field(description="Work item lifecycle status")
+    result: dict[str, Any] | None = Field(default=None, description="Work execution result payload")
+    result_omitted: bool = Field(default=False, description="Whether result was omitted due to size")
+    result_size_bytes: int | None = Field(default=None, description="Size of the result in bytes")
+    created_at: datetime = Field(description="Creation timestamp")
+    claimed_at: datetime | None = Field(default=None, description="Claim timestamp")
+    completed_at: datetime | None = Field(default=None, description="Completion timestamp")
+    resource_cleanup_status: str = Field(description="Resource cleanup status")
+    resource_cleanup_error: str | None = Field(default=None, description="Resource cleanup error details")
+
+
+class WorkItemListParams(EPListParams):
+    """Query parameters for listing work items."""
+
+    id: str | None = Field(default=None, description="Filter by id")
+    execution_target_id: str | None = Field(default=None, description="Filter by execution_target_id")
+    status: str | None = Field(default=None, description="Filter by status")
+    created_at: str | None = Field(default=None, description="Filter by created_at")
+    claimed_at: str | None = Field(default=None, description="Filter by claimed_at")
+    completed_at: str | None = Field(default=None, description="Filter by completed_at")
+    resource_cleanup_status: str | None = Field(default=None, description="Filter by resource_cleanup_status")
+    resource_cleanup_error: str | None = Field(default=None, description="Filter by resource_cleanup_error")
+
+    sort: Annotated[str, StringConstraints(pattern=_SORT_PATTERN)] = Field(
+        default="-created_at", description="Sort field; prefix with '-' for descending order."
+    )
+
+
+class WorkItemListResponse(ResourcesResponse[WorkItemRead]):
+    """Paginated list response for work items."""

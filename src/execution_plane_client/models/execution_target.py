@@ -10,13 +10,40 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic.json_schema import SkipJsonSchema
 
 from execution_plane_client.commands.targets import KubernetesPlacement as CommandKubernetesPlacement
-from execution_plane_client.models.shared import EPListParams
+from execution_plane_client.models.shared import EPListParams, ResourcesResponse
 
 _LABEL_NAME = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 _TOLERATION_EFFECTS = {"", "NoSchedule", "PreferNoSchedule", "NoExecute"}
 _MAX_LABEL_NAME_LENGTH = 63
 _MAX_DNS_SUBDOMAIN_LENGTH = 253
+
+# Execution target query metadata - single source of truth for EP and client
+EXECUTION_TARGET_FILTERABLE_FIELDS = [
+    "id",
+    "created_at",
+    "name",
+    "endpoint",
+    "status",
+    "backend_type",
+    "cluster_id",
+    "enabled",
+    "is_default",
+    "last_ran_at",
+    "status_message",
+]
+
+EXECUTION_TARGET_SORTABLE_FIELDS = [
+    "id",
+    "created_at",
+    "name",
+    "endpoint",
+    "status",
+    "backend_type",
+    "cluster_id",
+    "enabled",
+    "is_default",
+]
 
 
 class BackendType(StrEnum):
@@ -118,62 +145,44 @@ ExecutionTargetPlacement = Annotated[
 ]
 
 
-class ExecutionTargetListParams(EPListParams):
-    """Execution-target query controls and documented filter fields."""
-
-    id: str | None = Field(default=None, description="Target UUID; id[in]=uuid1,uuid2 for membership")
-    cluster_id: str | None = Field(default=None, description="Physical cluster UUID; supports eq and in")
-    name: str | None = Field(default=None, description="Name; supports eq, in, contains, and starts_with")
-    endpoint: str | None = Field(default=None, description="Endpoint; supports eq, in, contains, and starts_with")
-    status: str | None = Field(default=None, description="Target status; supports eq and in")
-    backend_type: str | None = Field(default=None, description="Backend type; supports eq and in")
-    enabled: str | None = Field(default=None, description="Boolean; supports eq, in, and isnull")
-    is_default: str | None = Field(default=None, description="Boolean; supports eq, in, and isnull")
-    created_at: str | None = Field(
-        default=None, description="Creation time; supports eq, in, gt, gte, lt, lte, and isnull"
-    )
-    last_ran_at: str | None = Field(default=None, description="Last run time; supports ranges and isnull")
-    status_message: str | None = Field(default=None, description="Status message; supports text operators and isnull")
-    sort: Literal[
-        "id",
-        "-id",
-        "created_at",
-        "-created_at",
-        "name",
-        "-name",
-        "endpoint",
-        "-endpoint",
-        "status",
-        "-status",
-        "backend_type",
-        "-backend_type",
-        "cluster_id",
-        "-cluster_id",
-        "enabled",
-        "-enabled",
-        "is_default",
-        "-is_default",
-    ] = Field(default="created_at", description="Execution-target sort field; oldest first by default.")
-
-
 class ExecutionTargetRead(BaseModel):
     """Safe execution-target representation without management credentials."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    cluster_id: UUID
-    name: str
-    backend_type: BackendType
-    endpoint: str
-    placement: ExecutionTargetPlacement
-    status: TargetStatus
-    enabled: bool
-    is_default: bool
-    status_message: str | None
-    labels: dict[str, str]
-    created_at: datetime
-    last_ran_at: datetime | None
+    id: UUID = Field(description="Execution target unique identifier")
+    cluster_id: UUID = Field(description="Parent cluster identifier")
+    name: str = Field(description="Execution target name")
+    backend_type: BackendType = Field(description="Backend execution platform type")
+    endpoint: str = Field(description="Execution target API endpoint URL")
+    placement: ExecutionTargetPlacement = Field(description="Platform-specific placement configuration")
+    status: TargetStatus = Field(description="Execution target lifecycle status")
+    enabled: bool = Field(description="Whether the target is enabled for use")
+    is_default: bool = Field(description="Whether this is the default target for the cluster")
+    status_message: str | None = Field(default=None, description="Human-readable status message or error details")
+    labels: dict[str, str] = Field(description="Key-value labels for the target")
+    created_at: datetime = Field(description="Creation timestamp")
+    last_ran_at: datetime | None = Field(default=None, description="Last execution timestamp")
+
+
+class ExecutionTargetListParams(EPListParams):
+    """Query parameters for listing execution targets."""
+
+    id: str | None = Field(default=None, description="Filter by id")
+    cluster_id: str | None = Field(default=None, description="Filter by cluster_id")
+    name: str | None = Field(default=None, description="Filter by name")
+    backend_type: str | None = Field(default=None, description="Filter by backend_type")
+    endpoint: str | None = Field(default=None, description="Filter by endpoint")
+    status: str | None = Field(default=None, description="Filter by status")
+    enabled: str | None = Field(default=None, description="Filter by enabled")
+    is_default: str | None = Field(default=None, description="Filter by is_default")
+    status_message: str | None = Field(default=None, description="Filter by status_message")
+    created_at: str | None = Field(default=None, description="Filter by created_at")
+    last_ran_at: str | None = Field(default=None, description="Filter by last_ran_at")
+
+
+class ExecutionTargetListResponse(ResourcesResponse[ExecutionTargetRead]):
+    """Paginated list response for execution targets."""
 
 
 class KubernetesTargetPlacement(CommandKubernetesPlacement):

@@ -86,6 +86,7 @@ INVALID_REQUESTS = [
     "unknown=foo",
     "client_id=other",
     "credential_ref=00000000-0000-0000-0000-000000000000",
+    "execution_target_id=not-a-uuid",
     "payload[contains]=secret",
     "sort=credential_ref",
     "sort=unknown",
@@ -191,6 +192,9 @@ SPECIAL_REQUESTS = [
     ("/v1/work-items", "claimed_at[isnull]=true", [0, 2, 4]),
     ("/v1/work-items", "claimed_at[isnull]=false", [1, 3, 5]),
     ("/v1/work-items", "completed_at[isnull]=true", list(range(6))),
+    ("/v1/work-items", "execution_target_id[isnull]=true", list(range(6))),
+    ("/v1/work-items", "execution_target_id[isnull]=false", []),
+    ("/v1/work-items", "execution_target_id={unknown}", []),
     ("/v1/work-items", "status=not-a-status", None),
     ("/v1/work-items", "labels[env]=prod", None),
     ("/v1/clusters", "name=alpha", [0]),
@@ -253,16 +257,25 @@ async def test_get_list_rejects_invalid_typed_sort_cursor(list_api, field, sort_
 
 
 async def test_get_openapi_documents_list_filters_and_sort_fields(list_api):
+    """OpenAPI documents simple filter fields matching syntara pattern.
+
+    Bracket operators (id[in], created_at[gt], etc.) still work functionally but
+    are not documented in the OpenAPI spec, matching syntara's credential endpoint.
+    """
     response = await list_api.client.get("/openapi.json")
     assert response.status_code == 200
     parameters = response.json()["paths"][list_api.path]["get"]["parameters"]
     by_name = {parameter["name"]: parameter for parameter in parameters}
-    assert {"id", "created_at", "status", "limit", "cursor", "include_total"} <= by_name.keys()
-    assert "in" in by_name["id"]["description"]
-    assert "gte" in by_name["created_at"]["description"]
+    assert {"id", "created_at", "status", "limit", "cursor", "include_total", "sort"} <= by_name.keys()
+    # Simple "Filter by X" descriptions, no bracket operator documentation
+    assert by_name["id"]["description"] == "Filter by id"
+    assert by_name["created_at"]["description"] == "Filter by created_at"
+    # Bracket operators not documented in OpenAPI
     assert "id[in]" not in by_name
     assert "created_at[gte]" not in by_name
-    assert set(by_name["sort"]["schema"]["enum"]) == {
-        f"{prefix}{field}" for field in SORT_FIELDS[list_api.path] for prefix in ("", "-")
-    }
-    assert ("labels[key]" in by_name) == (list_api.path != "/v1/work-items")
+    # Sort is a string with default, validated server-side (no enum)
+    assert by_name["sort"]["schema"]["type"] == "string"
+    assert "default" in by_name["sort"]["schema"]
+    assert "enum" not in by_name["sort"]["schema"]  # Server-side validation like syntara
+    # Label filtering works functionally but not documented in OpenAPI (like bracket operators)
+    assert "labels[key]" not in by_name  # Server-side only, not in spec

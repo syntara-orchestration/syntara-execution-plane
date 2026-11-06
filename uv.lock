@@ -602,7 +602,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "syntara-plugin-contracts", specifier = "==0.1.0a2" },
+    { name = "syntara-plugin-contracts", specifier = "==0.1.0a3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 
@@ -1815,18 +1815,19 @@ wheels = [
 
 [[package]]
 name = "syntara-plugin-contracts"
-version = "0.1.0a2"
+version = "0.1.0a3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "jsonschema" },
     { name = "protobuf" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "referencing" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d2/61/f7e37d0fc8a737facad3d89abb2421e9eb7728d1c782ca105f5947ba0e61/syntara_plugin_contracts-0.1.0a2.tar.gz", hash = "sha256:e3aaabf4ddef6bf730ce8f3c2c212f4b0e0f8bc6a75a7d9291153f0084c49373", size = 82059, upload-time = "2026-11-02T21:09:35.23Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/3c/b223c0b7afb8458e78623eccf309effd4957091877fcf8e52bb7924afccc/syntara_plugin_contracts-0.1.0a3.tar.gz", hash = "sha256:9a3279d607435dc9194b16759ef7016a94f4b81f5dd7cbe904c44c411e97cdb3", size = 95985, upload-time = "2026-11-05T20:17:09.938Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/f1/03eb0dd67c7eece62d48716e178f1072a571e22f7a82290abfb462efc0ff/syntara_plugin_contracts-0.1.0a2-py3-none-any.whl", hash = "sha256:a6436506323fac6d96ef40b95504e9e9f1be2977aa52124756c46633de64dcf6", size = 121678, upload-time = "2026-11-02T21:09:33.943Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/85/e0cdc97dd145bb276a419a1029a1493fefed0430a8c1226e91cee100566e/syntara_plugin_contracts-0.1.0a3-py3-none-any.whl", hash = "sha256:5292444409af8072b62503f36917b4cf9a6d8fb1ca01e20250a01436f3608fc8", size = 137830, upload-time = "2026-11-05T20:17:08.438Z" },
 ]
 
 [[package]]
