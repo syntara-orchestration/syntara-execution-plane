@@ -37,6 +37,7 @@ def test_api_main_configures_a_bounded_graceful_shutdown(monkeypatch: pytest.Mon
         api_tls_key_path=None,
         api_tls_client_ca_path=None,
         api_graceful_shutdown_seconds=7,
+        log_level="INFO",
     )
     captured_options: dict[str, Any] = {}
 
@@ -46,3 +47,25 @@ def test_api_main_configures_a_bounded_graceful_shutdown(monkeypatch: pytest.Mon
     api_main.main()
 
     assert captured_options["timeout_graceful_shutdown"] == 7
+
+
+def test_api_main_starts_and_stops_logging(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    settings = SimpleNamespace(
+        api_host="127.0.0.1",
+        api_port=8001,
+        api_tls_cert_path=None,
+        api_tls_key_path=None,
+        api_tls_client_ca_path=None,
+        api_graceful_shutdown_seconds=7,
+        log_level="INFO",
+    )
+
+    monkeypatch.setattr(api_main, "get_ep_settings", lambda: settings)
+    monkeypatch.setattr(api_main, "start_loggers", lambda: events.append("start"))
+    monkeypatch.setattr(api_main, "stop_loggers", lambda: events.append("stop"))
+    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_options: events.append("serve"))
+
+    api_main.main()
+
+    assert events == ["start", "serve", "stop"]

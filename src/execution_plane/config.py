@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import re
+import socket
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
-from pydantic import AliasChoices, Field, computed_field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -16,6 +19,10 @@ from execution_plane.database.ssl import strip_unsupported_asyncpg_ssl_query
 _AES_256_KEY_BYTES = 32
 _VALID_SSL_MODES = frozenset({"disable", "allow", "prefer", "require", "verify-ca", "verify-full"})
 _SSL_MODES_REQUIRING_CLIENT_CERTS = frozenset({"require", "verify-ca", "verify-full"})
+_VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"})
+_SVC_DNS_RE = re.compile(
+    r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?\.svc(?:\.cluster\.local)?$"
+)
 
 
 def to_asyncpg_url(database_url: str) -> str:
@@ -66,6 +73,24 @@ class EPSettings(BaseSettings):
         validation_alias=AliasChoices("EP_SERVICE_JWT_AUDIENCE", "SERVICE_JWT_AUDIENCE"),
     )
     ao_client_id: str = Field(default="syntara-orchestration", validation_alias="EP_AO_CLIENT_ID")
+    log_level: str = Field(default="INFO", validation_alias="EP_LOG_LEVEL")
+    log_output_format: str = Field(default="json", validation_alias="EP_LOG_OUTPUT_FORMAT")
+    otel_enabled: bool = Field(default=False, validation_alias="EP_OTEL_ENABLED")
+    otel_service_name: str = Field(default="execution-plane", validation_alias="EP_OTEL_SERVICE_NAME", min_length=1)
+    otel_service_instance_id: str = Field(
+        default_factory=socket.gethostname,
+        validation_alias="EP_OTEL_SERVICE_INSTANCE_ID",
+        min_length=1,
+    )
+    otel_endpoint: str = Field(
+        default="http://localhost:4318/v1/logs",
+        validation_alias="EP_OTEL_ENDPOINT",
+    )
+    otel_api_key: SecretStr | None = Field(default=None, validation_alias="EP_OTEL_API_KEY")
+    otel_auth_header_name: str = Field(default="Authorization", validation_alias="EP_OTEL_AUTH_HEADER_NAME")
+    otel_ca_cert_file: str | None = Field(default=None, validation_alias="EP_OTEL_CA_CERT_FILE")
+    otel_client_cert_file: str | None = Field(default=None, validation_alias="EP_OTEL_CLIENT_CERT_FILE")
+    otel_client_key_file: str | None = Field(default=None, validation_alias="EP_OTEL_CLIENT_KEY_FILE")
     api_host: str = Field(default="127.0.0.1", validation_alias="EP_API_HOST")
     api_port: int = Field(default=8001, validation_alias="EP_API_PORT")
     api_graceful_shutdown_seconds: int = Field(
@@ -158,6 +183,43 @@ class EPSettings(BaseSettings):
             return None
         return value
 
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        """Accept only standard Python logging level names."""
+        normalized = value.upper()
+        if normalized not in _VALID_LOG_LEVELS:
+            msg = f"Invalid EP_LOG_LEVEL '{value}'. Must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}"
+            raise ValueError(msg)
+        return normalized
+
+    @field_validator("log_output_format")
+    @classmethod
+    def validate_log_output_format(cls, value: str) -> str:
+        """Accept only structured JSON or plain local text output."""
+        normalized = value.lower()
+        if normalized not in {"json", "text"}:
+            msg = "EP_LOG_OUTPUT_FORMAT must be 'json' or 'text'"
+            raise ValueError(msg)
+        return normalized
+
+    @field_validator("otel_endpoint")
+    @classmethod
+    def validate_otel_endpoint(cls, value: str) -> str:
+        """Require HTTPS except for loopback or Kubernetes service collectors."""
+        parsed = urlparse(value)
+        if parsed.scheme == "https":
+            return value
+        if parsed.scheme == "http" and (
+            parsed.hostname in {"localhost", "127.0.0.1", "::1"} or _SVC_DNS_RE.match(parsed.hostname or "")
+        ):
+            return value
+        msg = (
+            "Remote OTLP endpoints must use HTTPS; HTTP is allowed only for loopback "
+            "or <service>.<namespace>.svc[.cluster.local] collectors"
+        )
+        raise ValueError(msg)
+
     @model_validator(mode="after")
     def validate_ssl_fields(self) -> EPSettings:
         """Reject incomplete TLS combinations before the first connection."""
@@ -183,6 +245,16 @@ class EPSettings(BaseSettings):
         """Keep each probe shorter than the scan interval so scans cannot overlap on a timeout."""
         if self.resource_monitor_probe_timeout_seconds >= self.resource_monitor_interval_seconds:
             msg = "EP_RESOURCE_MONITOR_PROBE_TIMEOUT_SECONDS must be shorter than EP_RESOURCE_MONITOR_INTERVAL_SECONDS"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_otel_fields(self) -> EPSettings:
+        """Reject incomplete OTEL credentials and certificate material."""
+        if (self.otel_client_cert_file is None) != (self.otel_client_key_file is None):
+            missing = "EP_OTEL_CLIENT_KEY_FILE" if self.otel_client_cert_file else "EP_OTEL_CLIENT_CERT_FILE"
+            configured = "EP_OTEL_CLIENT_CERT_FILE" if self.otel_client_cert_file else "EP_OTEL_CLIENT_KEY_FILE"
+            msg = f"{configured} requires {missing}"
             raise ValueError(msg)
         return self
 

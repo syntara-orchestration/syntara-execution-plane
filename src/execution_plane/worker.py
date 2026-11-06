@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -24,6 +23,7 @@ from execution_plane.execution_target_reconciler.adapters import (
 )
 from execution_plane.execution_target_reconciler.exceptions import UnknownBackendTypeError
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
+from execution_plane.logging.lifecycle import start_loggers, stop_loggers
 from execution_plane.resource_monitor.monitor import ResourceMonitor
 from execution_plane.runtime import run_until_shutdown
 from execution_plane.work_item.work_item_store import WorkStore
@@ -360,18 +360,11 @@ async def _run() -> None:
 
 def main() -> None:
     """Entry point for the execution-plane-worker CLI command."""
-    logging.basicConfig(level=logging.INFO)
-    structlog.configure(
-        processors=[
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
-            structlog.dev.ConsoleRenderer(),
-        ],
-        wrapper_class=structlog.stdlib.BoundLogger,
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-    )
-    asyncio.run(run_until_shutdown(_run()))
+    start_loggers()
+    try:
+        asyncio.run(run_until_shutdown(_run()))
+    finally:
+        stop_loggers()
 
 
 if __name__ == "__main__":

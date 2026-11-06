@@ -19,6 +19,8 @@ from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
 
 
@@ -423,10 +425,36 @@ async def _finished_policy_reconciler(*_args: object) -> None:
     return None
 
 
-async def test_run_worker_disposes_engine_if_store_setup_fails(monkeypatch, worker_engine):
+@pytest.mark.asyncio
+async def test_run_worker_disposes_engine_if_store_setup_fails(
+    monkeypatch: pytest.MonkeyPatch, worker_engine: SimpleNamespace
+) -> None:
     from execution_plane import worker
 
     monkeypatch.setattr(WorkStore, "from_engine", Mock(side_effect=RuntimeError("store setup failed")))
     with pytest.raises(RuntimeError, match="store setup failed"):
         await worker.run_worker("postgresql+asyncpg://localhost/syntara")
     worker_engine.dispose.assert_awaited_once()
+
+
+def test_worker_main_starts_and_stops_logging(monkeypatch: pytest.MonkeyPatch) -> None:
+    from execution_plane import worker
+
+    events: list[str] = []
+    monkeypatch.setattr(worker, "start_loggers", lambda: events.append("start"))
+    monkeypatch.setattr(worker, "stop_loggers", lambda: events.append("stop"))
+
+    async def fake_run() -> None:
+        return None
+
+    async def fake_run_until_shutdown(target: Coroutine[None, None, None]) -> None:
+        events.append("run")
+        await target
+
+    monkeypatch.setattr(worker, "_run", fake_run)
+
+    monkeypatch.setattr(worker, "run_until_shutdown", fake_run_until_shutdown)
+
+    worker.main()
+
+    assert events == ["start", "run", "stop"]
