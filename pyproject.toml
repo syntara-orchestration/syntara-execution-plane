@@ -26,7 +26,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "sqlmodel>=0.0.22",
     "structlog>=24.0.0",
-    "syntara-plugin-contracts==0.1.0a2",
+    "syntara-plugin-contracts==0.1.0a3",
     "uvicorn[standard]>=0.34.0",
 ]
 
