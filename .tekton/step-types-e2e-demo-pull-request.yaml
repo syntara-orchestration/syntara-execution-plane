@@ -71,8 +71,13 @@ spec:
     value: '20'
   - name: aap-dev-revision
     value: goneri/step-types-node-image
+  # AO: the ANSTRAT-1803 line plus syntara#1202 (draft) — the configurable
+  # script step revision (APP_SCRIPT_STEP_REVISION_ID) so AO requests the
+  # plugin image's real step identity; fetched via refs/pull/1202/head.
   - name: ao-revision
-    value: feat/ANSTRAT-1803
+    value: 6cfd794b82aa4846ee88878795956d16c8eee43f
+  - name: ao-pr-number
+    value: '1202'
   - name: ep-git-url
     value: '{{source_url}}'
   - name: ep-revision
