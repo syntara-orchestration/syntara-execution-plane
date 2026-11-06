@@ -49,30 +49,9 @@ class ResourceMonitor:
         self._success_threshold = settings.resource_monitor_success_threshold
         self._failures: dict[uuid.UUID, int] = {}
         self._successes: dict[uuid.UUID, int] = {}
-        self._task: asyncio.Task[None] | None = None
-        self._started = False
 
-    async def start(self) -> None:
-        """Start the periodic probe loop. The first scan runs immediately."""
-        if self._started:
-            return
-        self._started = True
-        try:
-            self._task = asyncio.create_task(self._monitor_loop(), name="ep-resource-monitor")
-        except Exception:
-            self._started = False
-            raise
-
-    async def stop(self) -> None:
-        """Cancel the probe loop before stores are disposed."""
-        if self._task is not None:
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-            self._task = None
-        self._started = False
-
-    async def _monitor_loop(self) -> None:
-        """Scan all targets, then sleep. One scan failure does not stop the loop."""
+    async def run(self) -> None:
+        """Scan immediately, then periodically, within the worker's TaskGroup."""
         while True:
             try:
                 await self.scan()

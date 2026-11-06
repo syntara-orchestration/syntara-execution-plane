@@ -10,6 +10,8 @@ No dependency on the main syntara package.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import threading
 from dataclasses import dataclass
 from functools import partial
@@ -44,6 +46,7 @@ if TYPE_CHECKING:
 logger = structlog.stdlib.get_logger(__name__)
 
 CLUSTER_CREDENTIAL_RESOLUTION_FAILED = "Cluster credential could not be resolved"
+CLAIM_REFRESH_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -191,8 +194,18 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             loop=loop,
         )
         on_resource = partial(self._record_resource_state, work_item, loop=loop)
-        transport_task = self._start_transport(context, cancelled, on_result, on_resource)
-        return await self._monitor_transport(work_item, transport_task, cancelled)
+        transport = self._start_transport(context, cancelled, on_result, on_resource)
+        try:
+            return await self._monitor_transport(work_item, transport, cancelled)
+        finally:
+            # A thread cannot be cancelled by cancelling its asyncio Future. Keep
+            # the Future alive and join the thread while its database callbacks
+            # can still use the worker's stores, even on repeated cancellation.
+            cancelled.set()
+            while not transport.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({transport})
+            transport.exception()  # Retrieve any cleanup failure without replacing the original error.
 
     def _start_transport(
         self,
@@ -200,10 +213,12 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         cancelled: threading.Event,
         on_result: Callable[[dict[str, Any]], None],
         on_resource: Callable[[str, str | None, str, str | None], None],
-    ) -> asyncio.Task[dict[str, Any]]:
-        """Start the cold-start Job in a worker thread."""
-        return asyncio.create_task(
-            asyncio.to_thread(
+    ) -> asyncio.Future[dict[str, Any]]:
+        """Submit blocking transport work without creating a detached asyncio task."""
+        return asyncio.get_running_loop().run_in_executor(
+            None,
+            contextvars.copy_context().run,
+            partial(
                 run_job,
                 target=context.target_config,
                 image=context.image,
@@ -221,18 +236,18 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 tolerations=context.target_config["tolerations"],
                 allowed_egress_cidrs=self._settings.workload_allowed_egress_cidrs,
                 forbidden_egress_cidrs=self._settings.workload_forbidden_egress_cidrs,
-            )
+            ),
         )
 
     async def _monitor_transport(
         self,
         work_item: WorkItem,
-        transport_task: asyncio.Task[dict[str, Any]],
+        transport: asyncio.Future[dict[str, Any]],
         cancelled: threading.Event,
     ) -> dict[str, Any]:
         """Poll claim cancellation while the transport thread runs."""
-        while not transport_task.done():
-            done, _pending = await asyncio.wait({transport_task}, timeout=5)
+        while not transport.done():
+            done, _pending = await asyncio.wait({transport}, timeout=CLAIM_REFRESH_SECONDS)
             if not done:
                 cancellation_requested = await self._work_progress.refresh_claim(
                     work_item.id,
@@ -242,7 +257,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 if cancellation_requested is not False:
                     cancelled.set()
         try:
-            return await transport_task
+            return await transport
         except TransportError as exc:
             self._translate_transport_error(exc)
 

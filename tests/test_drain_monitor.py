@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +14,18 @@ from execution_plane.drain_monitor import DrainMonitor
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import ExecutionTarget, TargetStatus
 from execution_plane_client.models.execution_target import KubernetesPlacement
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+
+@asynccontextmanager
+async def _worker_tasks() -> AsyncIterator[asyncio.TaskGroup]:
+    with suppress(asyncio.CancelledError):
+        async with asyncio.TaskGroup() as group:
+            yield group
+            raise asyncio.CancelledError
+
 
 _DATABASE_UNAVAILABLE = "database unavailable"
 _TEMPORARY_FAILURE = "temporary failure"
@@ -111,106 +125,106 @@ class _WorkStore:
 @pytest.mark.asyncio
 async def test_monitor_recovers_and_finalizes_persisted_target_and_cluster_drains() -> None:
     cluster = _cluster()
-    targets = [_target(cluster_id=cluster.id, is_default=True)]
-    target_id = targets[0].id
+    targets = [_target(cluster_id=cluster.id, is_default=True), _target()]
+    target_ids = [target.id for target in targets]
     target_store = _TargetStore(targets)
     cluster_store = _ClusterStore([cluster])
-
     monitor = DrainMonitor(target_store, cluster_store, _WorkStore(drained=True), poll_interval=0)  # type: ignore[arg-type]
 
-    await monitor.start()
-    await monitor.wait_for_idle()
+    async with _worker_tasks() as group:
+        await monitor._scan_draining(group)
+        await asyncio.gather(*monitor._tasks.values())
 
-    assert target_store.finalized == [target_id]
+    assert set(target_store.finalized) == set(target_ids)
     assert cluster_store.finalized == [cluster.id]
-    await monitor.stop()
 
 
 @pytest.mark.asyncio
-async def test_monitor_stop_cancels_a_waiting_drain_task() -> None:
+async def test_worker_group_cancels_monitor_and_waiting_drains() -> None:
     target = _target()
     target_store = _TargetStore([target])
-    cluster_store = _ClusterStore([])
-    gate = asyncio.Event()
-
-    async def is_drained(_target_id: uuid.UUID) -> bool:
-        await gate.wait()
-        return True
+    started = asyncio.Event()
+    stopped = asyncio.Event()
 
     class WaitingWorkStore:
-        async def is_target_drained(self, target_id: uuid.UUID) -> bool:
-            return await is_drained(target_id)
+        async def is_target_drained(self, _target_id) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
 
     monitor = DrainMonitor(
         target_store,  # type: ignore[arg-type]
-        cluster_store,  # type: ignore[arg-type]
+        _ClusterStore([]),  # type: ignore[arg-type]
         WaitingWorkStore(),  # type: ignore[arg-type]
-        poll_interval=0,
-        monitor_interval=60,
+        monitor_interval=3600,
     )
-    await monitor.start()
-    await monitor.stop()
+    async with _worker_tasks() as group:
+        task = group.create_task(monitor.run(group))
+        await asyncio.wait_for(started.wait(), timeout=1)
 
+    assert task.cancelled()
+    assert stopped.is_set()
     assert target_store.finalized == []
+    assert all(task.done() for task in monitor._tasks.values())
 
 
 @pytest.mark.asyncio
 async def test_monitor_polls_for_newly_persisted_target_drains() -> None:
     target = _target()
     target_store = _TargetStore([])
-    cluster_store = _ClusterStore([])
     monitor = DrainMonitor(
         target_store,  # type: ignore[arg-type]
-        cluster_store,  # type: ignore[arg-type]
+        _ClusterStore([]),  # type: ignore[arg-type]
         _WorkStore(drained=True),  # type: ignore[arg-type]
         poll_interval=0,
         monitor_interval=0,
     )
-
-    await monitor.start()
-    target_store.targets.append(target)
-    for _ in range(100):
-        if target.id in target_store.finalized:
-            break
-        await asyncio.sleep(0)
-    await monitor.stop()
+    async with _worker_tasks() as group:
+        await monitor._scan_draining(group)
+        group.create_task(monitor._monitor_loop(group))
+        target_store.targets.append(target)
+        for _ in range(100):
+            if target.id in target_store.finalized:
+                break
+            await asyncio.sleep(0)
 
     assert target_store.finalized == [target.id]
 
 
 @pytest.mark.asyncio
-async def test_monitor_start_is_idempotent() -> None:
+async def test_initial_scan_failure_cancels_already_scheduled_drains() -> None:
+    target = _target()
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    class WaitingWorkStore:
+        async def is_target_drained(self, _target_id) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
     monitor = DrainMonitor(
-        _TargetStore([]),  # type: ignore[arg-type]
+        _TargetStore([target]),  # type: ignore[arg-type]
         _ClusterStore([]),  # type: ignore[arg-type]
-        _WorkStore(drained=True),  # type: ignore[arg-type]
-        monitor_interval=60,
+        WaitingWorkStore(),  # type: ignore[arg-type]
     )
 
-    await monitor.start()
-    monitor_task = monitor._monitor_task
-    await monitor.start()
+    async def failing_scan(group) -> None:
+        monitor._schedule_target(target.id, target.updated_by, group)
+        await started.wait()
+        raise RuntimeError(_DATABASE_UNAVAILABLE)
 
-    assert monitor._monitor_task is monitor_task
-    await monitor.stop()
+    monitor._scan_draining = failing_scan  # type: ignore[method-assign]
+    with pytest.raises(ExceptionGroup) as error:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(monitor.run(group))
 
-
-@pytest.mark.asyncio
-async def test_monitor_resets_started_state_when_initial_scan_fails() -> None:
-    class FailingClusterStore(_ClusterStore):
-        async def list(self, **_: object) -> list[Cluster]:
-            raise RuntimeError(_DATABASE_UNAVAILABLE)
-
-    monitor = DrainMonitor(
-        _TargetStore([]),  # type: ignore[arg-type]
-        FailingClusterStore([]),  # type: ignore[arg-type]
-        _WorkStore(drained=True),  # type: ignore[arg-type]
-    )
-
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        await monitor.start()
-
-    assert monitor._started is False
+    assert isinstance(error.value.exceptions[0], RuntimeError)
+    assert stopped.is_set()
 
 
 @pytest.mark.asyncio
@@ -223,47 +237,35 @@ async def test_monitor_cancels_individual_target_drain_when_cluster_drain_is_sch
         _WorkStore(drained=False),  # type: ignore[arg-type]
         monitor_interval=60,
     )
-
-    monitor._schedule_target(target.id, uuid.uuid4())
-    target_task = monitor._tasks[target.id]
-    await monitor._schedule_cluster(cluster.id, uuid.uuid4())
-
-    assert target_task.cancelled() or target_task.done()
-    await monitor.stop()
+    async with _worker_tasks() as group:
+        monitor._schedule_target(target.id, uuid.uuid4(), group)
+        target_task = monitor._tasks[target.id]
+        await monitor._schedule_cluster(cluster.id, uuid.uuid4(), group)
+        assert target_task.cancelled()
+        assert cluster.id in monitor._tasks
 
 
 @pytest.mark.asyncio
-async def test_monitor_ignores_duplicate_cluster_schedule() -> None:
+@pytest.mark.parametrize("cluster_drain", [False, True])
+async def test_monitor_ignores_duplicate_schedule(*, cluster_drain: bool) -> None:
     cluster = _cluster()
+    target = _target(cluster_id=cluster.id)
     monitor = DrainMonitor(
-        _TargetStore([]),  # type: ignore[arg-type]
+        _TargetStore([target]),  # type: ignore[arg-type]
         _ClusterStore([cluster]),  # type: ignore[arg-type]
         _WorkStore(drained=False),  # type: ignore[arg-type]
     )
-
-    await monitor._schedule_cluster(cluster.id, uuid.uuid4())
-    first_task = monitor._tasks[cluster.id]
-    await monitor._schedule_cluster(cluster.id, uuid.uuid4())
-
-    assert monitor._tasks[cluster.id] is first_task
-    await monitor.stop()
-
-
-@pytest.mark.asyncio
-async def test_monitor_ignores_duplicate_target_schedule() -> None:
-    target = _target()
-    monitor = DrainMonitor(
-        _TargetStore([target]),  # type: ignore[arg-type]
-        _ClusterStore([]),  # type: ignore[arg-type]
-        _WorkStore(drained=False),  # type: ignore[arg-type]
-    )
-
-    monitor._schedule_target(target.id, uuid.uuid4())
-    first_task = monitor._tasks[target.id]
-    monitor._schedule_target(target.id, uuid.uuid4())
-
-    assert monitor._tasks[target.id] is first_task
-    await monitor.stop()
+    async with _worker_tasks() as group:
+        if cluster_drain:
+            await monitor._schedule_cluster(cluster.id, uuid.uuid4(), group)
+            first = monitor._tasks[cluster.id]
+            await monitor._schedule_cluster(cluster.id, uuid.uuid4(), group)
+            assert monitor._tasks[cluster.id] is first
+        else:
+            monitor._schedule_target(target.id, uuid.uuid4(), group)
+            first = monitor._tasks[target.id]
+            monitor._schedule_target(target.id, uuid.uuid4(), group)
+            assert monitor._tasks[target.id] is first
 
 
 @pytest.mark.asyncio
@@ -272,21 +274,24 @@ async def test_monitor_logs_and_continues_after_a_scan_failure() -> None:
         _TargetStore([]),  # type: ignore[arg-type]
         _ClusterStore([]),  # type: ignore[arg-type]
         _WorkStore(drained=True),  # type: ignore[arg-type]
-        monitor_interval=0.001,
+        monitor_interval=0,
     )
+    retried = asyncio.Event()
     calls = 0
 
-    async def failing_scan() -> None:
+    async def failing_scan(_group) -> None:
         nonlocal calls
         calls += 1
+        if calls > 1:
+            retried.set()
         raise RuntimeError(_TEMPORARY_FAILURE)
 
-    await monitor.start()
     monitor._scan_draining = failing_scan  # type: ignore[method-assign]
-    await asyncio.sleep(0.01)
-    await monitor.stop()
+    async with _worker_tasks() as group:
+        group.create_task(monitor._monitor_loop(group))
+        await asyncio.wait_for(retried.wait(), timeout=1)
 
-    assert calls > 0
+    assert calls > 1
 
 
 @pytest.mark.asyncio
@@ -298,14 +303,14 @@ async def test_monitor_propagates_scan_cancellation() -> None:
         monitor_interval=0,
     )
 
-    async def cancelled_scan() -> None:
+    async def cancelled_scan(_group) -> None:
         raise asyncio.CancelledError
 
     monitor._scan_draining = cancelled_scan  # type: ignore[method-assign]
-    task = asyncio.create_task(monitor._monitor_loop())
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    async with asyncio.TaskGroup() as group:
+        task = group.create_task(monitor._monitor_loop(group))
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 @pytest.mark.asyncio

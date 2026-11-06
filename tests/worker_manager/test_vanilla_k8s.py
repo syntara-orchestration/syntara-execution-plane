@@ -88,3 +88,87 @@ async def test_execute_submission_aborts_when_cancellation_wins(
         await manager.dispatch(work_item)
 
     assert error.value.execution_started is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["shutdown", "callback_in_progress", "claim_refresh"])
+async def test_dispatch_joins_transport_and_database_callbacks_before_exiting(  # noqa: C901, PLR0915 - Shutdown races cross the thread and event loop.
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    import asyncio
+    import threading
+
+    settings = Settings()
+    resolver = CredentialResolver(settings)
+    resources = vanilla_k8s_resources()
+    transport_started = asyncio.Event()
+    callback_started = asyncio.Event()
+    release_callback = asyncio.Event()
+    transport_finished = threading.Event()
+    events: list[str] = []
+    loop = asyncio.get_running_loop()
+    message = "claim refresh failed"
+
+    class WorkStore(WorkStoreStub):
+        async def refresh_claim(self, *_args: object, **_kwargs: object) -> bool:
+            raise RuntimeError(message)
+
+        async def update_backend_resource(self, *_args: object, **_kwargs: object) -> None:
+            callback_started.set()
+            await release_callback.wait()
+            events.append("database callback finished")
+
+    async def resolve(_credential_ref: UUID, **_kwargs: object) -> str:
+        return "resolved-token"
+
+    def run_job(
+        *,
+        cancelled: threading.Event,
+        on_resource: Callable[[str, str | None, str, str | None], None],
+        **_kwargs: object,
+    ) -> dict[str, Any]:
+        try:
+            loop.call_soon_threadsafe(transport_started.set)
+            if failure != "callback_in_progress":
+                assert cancelled.wait(timeout=2), "dispatch must signal transport cancellation"
+            on_resource("attempt", "uid", "deleted", None)
+            assert cancelled.wait(timeout=2)
+            events.append("transport finished")
+            transport_error = "transport stopped"
+            raise TransportError(transport_error, submitted=True)
+        finally:
+            transport_finished.set()
+
+    monkeypatch.setattr(resolver, "resolve", resolve)
+    monkeypatch.setattr(manager_module, "run_job", run_job)
+    if failure == "claim_refresh":
+        monkeypatch.setattr(manager_module, "CLAIM_REFRESH_SECONDS", 0.01)
+    manager = vanilla_k8s_manager(settings, resolver, resources, WorkStore())
+    dispatch = asyncio.create_task(manager.dispatch(resources[2]))
+    try:
+        await asyncio.wait_for(transport_started.wait(), timeout=1)
+        if failure == "callback_in_progress":
+            await asyncio.wait_for(callback_started.wait(), timeout=1)
+        if failure != "claim_refresh":
+            dispatch.cancel()
+        await asyncio.wait_for(callback_started.wait(), timeout=1)
+        assert not dispatch.done()
+        assert not transport_finished.is_set()
+        if failure != "claim_refresh":
+            # Repeated shutdown must not interrupt the join or cancel the DB callback.
+            dispatch.cancel()
+            await asyncio.sleep(0)
+            assert not dispatch.done()
+    finally:
+        release_callback.set()
+        if failure == "claim_refresh":
+            with pytest.raises(RuntimeError, match=message):
+                await asyncio.wait_for(dispatch, timeout=2)
+        else:
+            dispatch.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(dispatch, timeout=2)
+
+    assert transport_finished.is_set()
+    assert events == ["database callback finished", "transport finished"]

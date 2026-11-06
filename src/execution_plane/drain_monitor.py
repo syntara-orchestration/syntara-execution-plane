@@ -39,29 +39,24 @@ class DrainMonitor:
         self._poll_interval = poll_interval
         self._monitor_interval = monitor_interval
         self._tasks: dict[uuid.UUID, asyncio.Task[None]] = {}
-        self._monitor_task: asyncio.Task[None] | None = None
-        self._started = False
 
-    async def start(self) -> None:
-        """Recover persisted draining resources and start their monitor tasks."""
-        if self._started:
-            return
-        self._started = True
-        try:
-            await self._scan_draining()
-            self._monitor_task = asyncio.create_task(self._monitor_loop(), name="ep-drain-monitor")
-        except Exception:
-            self._started = False
-            raise
+    async def run(self, task_group: asyncio.TaskGroup) -> None:
+        """Recover and monitor drains, scheduling them in the worker's TaskGroup."""
+        await self._scan_draining(task_group)
+        await self._monitor_loop(task_group)
 
-    def _schedule_target(self, target_id: uuid.UUID, updated_by: uuid.UUID) -> None:
+    def _schedule_target(self, target_id: uuid.UUID, updated_by: uuid.UUID, task_group: asyncio.TaskGroup) -> None:
         """Schedule an individual target drain if one is not already running."""
         task = self._tasks.get(target_id)
         if task is not None and not task.done():
             return
-        self._tasks[target_id] = asyncio.create_task(self._drain_target(target_id, updated_by))
+        self._tasks[target_id] = task_group.create_task(
+            self._drain_target(target_id, updated_by), name=f"ep-drain-target-{target_id}"
+        )
 
-    async def _schedule_cluster(self, cluster_id: uuid.UUID, updated_by: uuid.UUID) -> None:
+    async def _schedule_cluster(
+        self, cluster_id: uuid.UUID, updated_by: uuid.UUID, task_group: asyncio.TaskGroup
+    ) -> None:
         """Schedule Cluster draining and coordinate its target finalizations."""
         task = self._tasks.get(cluster_id)
         if task is not None and not task.done():
@@ -72,49 +67,31 @@ class DrainMonitor:
             if target_task is not None and not target_task.done():
                 target_task.cancel()
                 await asyncio.gather(target_task, return_exceptions=True)
-        self._tasks[cluster_id] = asyncio.create_task(self._drain_cluster(cluster_id, updated_by))
+        self._tasks[cluster_id] = task_group.create_task(
+            self._drain_cluster(cluster_id, updated_by), name=f"ep-drain-cluster-{cluster_id}"
+        )
 
-    async def wait_for_idle(self) -> None:
-        """Wait for currently scheduled drain tasks, primarily for controlled shutdown/tests."""
-        tasks = list(self._tasks.values())
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def stop(self) -> None:
-        """Cancel and await every task before stores are disposed."""
-        if self._monitor_task is not None:
-            self._monitor_task.cancel()
-            await asyncio.gather(self._monitor_task, return_exceptions=True)
-            self._monitor_task = None
-        tasks = list(self._tasks.values())
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self._tasks.clear()
-        self._started = False
-
-    async def _monitor_loop(self) -> None:
+    async def _monitor_loop(self, task_group: asyncio.TaskGroup) -> None:
         """Poll persisted drain state so API requests are observed by the worker."""
         while True:
             await asyncio.sleep(self._monitor_interval)
             try:
-                await self._scan_draining()
+                await self._scan_draining(task_group)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Drain monitor scan failed")
 
-    async def _scan_draining(self) -> None:
+    async def _scan_draining(self, task_group: asyncio.TaskGroup) -> None:
         """Schedule workers for all persisted draining resources."""
         clusters = await self._cluster_lifecycle.list(status=ClusterStatus.DRAINING)
         cluster_ids = {cluster.id for cluster in clusters}
         for cluster in clusters:
-            await self._schedule_cluster(cluster.id, cluster.updated_by)
+            await self._schedule_cluster(cluster.id, cluster.updated_by, task_group)
         targets = await self._target_drain.list(status=TargetStatus.DRAINING)
         for target in targets:
             if target.cluster_id not in cluster_ids:
-                self._schedule_target(target.id, target.updated_by)
+                self._schedule_target(target.id, target.updated_by, task_group)
 
     async def _drain_target(self, target_id: uuid.UUID, updated_by: uuid.UUID) -> None:
         try:
