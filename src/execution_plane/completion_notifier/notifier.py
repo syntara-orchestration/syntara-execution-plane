@@ -16,7 +16,7 @@ from execution_plane_client.models.work_item import WorkItemStatus
 from execution_plane_client.protocol import ResourceReference
 
 if TYPE_CHECKING:
-    from execution_plane.config.base import EPSettings
+    from execution_plane.config.settings import Settings
     from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
 
@@ -29,7 +29,7 @@ MAX_RETRY_SECONDS = 300
 class CompletionNotifier:
     """Send committed work-item completions to a fixed, operator-configured AO URL."""
 
-    def __init__(self, settings: EPSettings) -> None:
+    def __init__(self, settings: Settings) -> None:
         """Prepare the completion notification client from EP-owned identity and endpoint settings."""
         self._local_id = settings.service_jwt_audience
         self._client = CallbackHTTPClient(

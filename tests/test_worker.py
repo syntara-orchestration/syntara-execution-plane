@@ -192,7 +192,7 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(
     built_with: list[tuple[object, object, WorkerManagerRegistry]] = []
     poll_calls: list[WorkerManagerRegistry] = []
 
-    monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
     monkeypatch.setattr(WorkStore, "from_engine", Mock(return_value=work_service))
     monkeypatch.setattr(
         "execution_plane.worker.ClusterStore.from_engine",
@@ -256,7 +256,7 @@ async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(
     from execution_plane import worker
 
     events: list[str] = []
-    monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
 
     monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: _StoreContext("work", events))
     monkeypatch.setattr(
@@ -303,7 +303,7 @@ async def test_run_worker_completes_cleanup_after_shutdown_signal(
 
     events: list[str] = []
     listener_started = asyncio.Event()
-    monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
     monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: _StoreContext("work", events))
     monkeypatch.setattr(
         "execution_plane.worker.ClusterStore.from_engine",

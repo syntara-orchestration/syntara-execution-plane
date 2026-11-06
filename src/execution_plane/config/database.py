@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 from sqlalchemy.engine import make_url
 
@@ -31,6 +31,12 @@ class DatabaseSettings(BaseSettings):
     db_ssl_root_cert: str | None = Field(default=None, validation_alias="EP_DB_SSL_ROOT_CERT")
     db_ssl_cert: str | None = Field(default=None, validation_alias="EP_DB_SSL_CERT")
     db_ssl_key: str | None = Field(default=None, validation_alias="EP_DB_SSL_KEY")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def database_url_asyncpg(self) -> str:
+        """asyncpg-compatible URL (strips the +asyncpg SQLAlchemy driver suffix)."""
+        return to_asyncpg_url(self.database_url)
 
     @field_validator("db_ssl_mode")
     @classmethod

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from execution_plane.cluster.cluster_store import ClusterStore
-    from execution_plane.config.base import EPSettings
+    from execution_plane.config.settings import Settings
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
@@ -113,7 +113,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         target_credentials: ExecutionTargetStore,
         cluster_credentials: ClusterStore,
         work_progress: WorkStore,
-        settings: EPSettings,
+        settings: Settings,
         credential_resolver: CredentialResolver | None = None,
     ) -> None:
         """Bind this backend to EP-owned stores and cold-start settings."""

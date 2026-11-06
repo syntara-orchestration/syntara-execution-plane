@@ -23,7 +23,7 @@ import pytest
 from kubernetes.client import ApiException, BatchV1Api, CoreV1Api, V1Job, V1Pod, V1PodSpec
 
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.config.base import EPSettings, get_ep_settings
+from execution_plane.config.settings import Settings, get_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
@@ -164,7 +164,7 @@ async def _work_service(
     database_url: str,
     cluster_store: ClusterStore,
     target_store: ExecutionTargetStore,
-    settings: EPSettings,
+    settings: Settings,
     credential_resolver: CredentialResolver,
 ) -> AsyncIterator[_WorkFixture]:
     worker_managers = WorkerManagerRegistry()
@@ -326,7 +326,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
     assigns its target, and _process_item() drives the cold-start pod lifecycle.
     """
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-dispatch"
 
     async with (
@@ -383,7 +383,7 @@ async def test_work_item_dispatch_teardown_does_not_wait_out_the_grace_period(
     regressed (stale node image or SDK pin).
     """
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings().model_copy(update={"node_grace_seconds": _SIGTERM_PROBE_GRACE_SECONDS})
+    settings = get_settings().model_copy(update={"node_grace_seconds": _SIGTERM_PROBE_GRACE_SECONDS})
     client_id = "ep-it-dispatch"
 
     async with (
@@ -436,7 +436,7 @@ async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_po
 ) -> None:
     """AAP-97337: configured node selectors must reach the dispatched PodSpec."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-node-selector"
 
     async with (
@@ -536,7 +536,7 @@ async def test_work_item_cancel_reaches_cancelled(
 ) -> None:
     """AAP-95962: cancel a running script work item and confirm it reaches CANCELLED."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-cancel"
 
     async with (
@@ -630,7 +630,7 @@ async def test_multiple_work_items_dispatch_concurrently(
     dispatches work items in parallel rather than one at a time.
     """
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-parallel"
 
     async with (
@@ -685,7 +685,7 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
 ) -> None:
     """Cancel after external dispatch but before Execute reaches CANCELLED safely."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-cancel-before-running"
     original_execution_start_callback = VanillaK8sWorkerManager.execution_start_callback
     execute_release = threading.Event()

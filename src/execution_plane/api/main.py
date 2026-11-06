@@ -27,7 +27,7 @@ from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.commands.queries import EPResourceQueries
 from execution_plane.commands.registry import build_ep_registry
-from execution_plane.config.base import get_ep_settings
+from execution_plane.config.settings import get_settings
 from execution_plane.database.engine import create_pooled_engine
 from execution_plane.execution_target.execution_target_store import (
     ClusterNotAvailableError,
@@ -77,7 +77,7 @@ def _extract_filters(request: Request) -> dict[str, str]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open an EP-owned database pool for the HTTP service lifetime."""
     start_loggers()
-    settings = get_ep_settings()
+    settings = get_settings()
     engine = create_pooled_engine(settings.database_url)
     app.state.ep_settings = settings
     app.state.ep_engine = engine
@@ -167,7 +167,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             if (
                 message.scope.client_id != identity.client_id
                 or message.source_id != identity.client_id
-                or message.destination_id != get_ep_settings().service_jwt_audience
+                or message.destination_id != get_settings().service_jwt_audience
                 or message.command.command_type not in identity.scopes
             ):
                 raise HTTPException(status_code=403, detail="Command is not authorized")
@@ -307,7 +307,7 @@ app = create_app()
 
 def main() -> None:
     """Run the standalone HTTP server with optional service-owned TLS."""
-    settings = get_ep_settings()
+    settings = get_settings()
     start_loggers()
     try:
         uvicorn.run(

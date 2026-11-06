@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 import pytest
 from syntara_plugin.runtime import ContainerResult
 
-from execution_plane.config.base import EPSettings
+from execution_plane.config.settings import Settings
 from execution_plane.credential_resolution.resolver import CredentialResolver
 from execution_plane.worker_manager.vanilla_k8s import manager as manager_module
 from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError
@@ -27,7 +27,7 @@ from tests.worker_manager.factories import (
 async def test_dispatch_marks_running_at_the_execute_submission_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = EPSettings()
+    settings = Settings()
     resolver = CredentialResolver(settings)
     resources = vanilla_k8s_resources()
     work_store = WorkStoreStub()
@@ -62,7 +62,7 @@ async def test_dispatch_marks_running_at_the_execute_submission_boundary(
 async def test_execute_submission_aborts_when_cancellation_wins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = EPSettings()
+    settings = Settings()
     resolver = CredentialResolver(settings)
     resources = vanilla_k8s_resources()
     work_store = WorkStoreStub(running_result=False)

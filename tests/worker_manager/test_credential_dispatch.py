@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import pytest
 from syntara_plugin.runtime import ContainerResult
 
-from execution_plane.config.base import EPSettings
+from execution_plane.config.settings import Settings
 from execution_plane.credential_resolution.resolver import (
     CredentialResolutionUnavailableError,
     CredentialResolver,
@@ -24,7 +24,7 @@ from tests.worker_manager.factories import vanilla_k8s_manager, vanilla_k8s_reso
 async def test_dispatch_resolves_the_cluster_reference_and_passes_the_token_to_kubernetes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = EPSettings()
+    settings = Settings()
     resolver = CredentialResolver(settings)
     resources = vanilla_k8s_resources()
     cluster, target, work_item = resources
@@ -62,7 +62,7 @@ async def test_dispatch_resolves_the_cluster_reference_and_passes_the_token_to_k
 async def test_dispatch_maps_credential_resolution_failure_to_a_retryable_pre_execution_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = EPSettings()
+    settings = Settings()
     resolver = CredentialResolver(settings)
 
     async def resolve(_credential_ref: UUID, **_kwargs: object) -> str:

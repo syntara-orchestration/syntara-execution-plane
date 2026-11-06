@@ -13,7 +13,7 @@ from execution_plane_client.commands.credentials import CredentialResolve
 from execution_plane_client.commands.results import CredentialResolveCommandResult, TransportReceipt
 
 if TYPE_CHECKING:
-    from execution_plane.config.base import EPSettings
+    from execution_plane.config.settings import Settings
 
 
 CREDENTIAL_RESOLUTION_FAILED = "Credential resolution failed"
@@ -39,7 +39,7 @@ class CredentialResolutionInvalidError(CredentialResolutionError):
 class CredentialResolver:
     """Construct and dispatch a typed `credential.resolve` command."""
 
-    def __init__(self, settings: EPSettings, client: CallbackHTTPClient | None = None) -> None:
+    def __init__(self, settings: Settings, client: CallbackHTTPClient | None = None) -> None:
         """Use EP's callback identity and a reusable mTLS HTTP client."""
         self._settings = settings
         self._client = client or CallbackHTTPClient(

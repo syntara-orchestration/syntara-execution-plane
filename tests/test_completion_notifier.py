@@ -11,7 +11,7 @@ import pytest
 from execution_plane import callback_client as callback_client_module
 from execution_plane.callback_client import CallbackHTTPClient
 from execution_plane.completion_notifier import notifier as event_delivery
-from execution_plane.config.base import EPSettings
+from execution_plane.config.settings import Settings
 
 
 def test_completion_notification_client_loads_identity_into_ca_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -21,7 +21,7 @@ def test_completion_notification_client_loads_identity_into_ca_context(monkeypat
     client_factory = MagicMock()
     monkeypatch.setattr(callback_client_module.ssl, "create_default_context", context_factory)
     monkeypatch.setattr(callback_client_module.httpx, "AsyncClient", client_factory)
-    settings = EPSettings(
+    settings = Settings(
         EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test",
         EP_COMPLETION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands",
         EP_CALLBACK_CA_CERT_PATH="/secrets/ca.pem",
@@ -65,7 +65,7 @@ async def test_completion_retries_correlate_with_work_item(lose_first_acknowledg
             raise httpx.ReadError(error, request=request)
         return httpx.Response(202, json={"received": True, "message_id": str(envelope.message_id)})
 
-    settings = EPSettings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands")
+    settings = Settings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands")
     delivery = event_delivery.CompletionNotifier(settings)
     await delivery.close()
     callback_client = CallbackHTTPClient(url=settings.completion_callback_url)
@@ -110,7 +110,7 @@ async def test_wrong_completion_receipt_is_retried():
 
     from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 
-    delivery = event_delivery.CompletionNotifier(EPSettings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands"))
+    delivery = event_delivery.CompletionNotifier(Settings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands"))
     await delivery.close()
     callback_client = CallbackHTTPClient(url="https://ao.test/v1/commands")
     await callback_client.close()
@@ -146,7 +146,7 @@ async def test_unconfigured_completion_notification_is_retained():
     from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 
     delivery = event_delivery.CompletionNotifier(
-        EPSettings(EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test")
+        Settings(EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test")
     )
     item = WorkItem(
         id=uuid4(),
@@ -180,7 +180,7 @@ async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pyt
 
     monkeypatch.setattr(event_delivery, "DELIVERY_POLL_SECONDS", 0)
     delivery = event_delivery.CompletionNotifier(
-        EPSettings(
+        Settings(
             EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test",
             EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands",
         )

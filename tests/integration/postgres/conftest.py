@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from execution_plane.config.base import get_ep_settings
+from execution_plane.config.settings import get_settings
 from tests.integration.postgres.list_support import PATHS, list_http_client, ordered_ids, seed_list_dataset
 
 
@@ -21,13 +21,13 @@ async def list_datasets(migrated_database):
     try:
         with pytest.MonkeyPatch.context() as env:
             env.setenv("EP_DATABASE_URL", migrated_database)
-            get_ep_settings.cache_clear()
+            get_settings.cache_clear()
             async with sessions() as session:
                 datasets = {path: await seed_list_dataset(session, path, migrated_database) for path in PATHS}
                 await session.commit()
         return datasets
     finally:
-        get_ep_settings.cache_clear()
+        get_settings.cache_clear()
         await engine.dispose()
 
 
