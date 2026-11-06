@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 from tests.integration.postgres.list_support import PATHS, list_http_client, ordered_ids, seed_list_dataset
 
 

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 import pytest
 from syntara_plugin.runtime import ContainerResult
 
-from execution_plane.config import EPSettings
+from execution_plane.config.base import EPSettings
 from execution_plane.credential_resolution.resolver import CredentialResolver
 from execution_plane.worker_manager.vanilla_k8s import manager as manager_module
 from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError

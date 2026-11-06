@@ -13,7 +13,7 @@ from execution_plane_client.commands.credentials import CredentialResolve
 from execution_plane_client.commands.results import CredentialResolveCommandResult, TransportReceipt
 
 if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
+    from execution_plane.config.base import EPSettings
 
 
 CREDENTIAL_RESOLUTION_FAILED = "Credential resolution failed"

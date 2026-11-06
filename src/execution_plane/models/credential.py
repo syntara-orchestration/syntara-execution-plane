@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import String
 from sqlalchemy.types import TypeDecorator
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 
 _PREFIX = "epv1:"
 _ASSOCIATED_DATA = b"syntara-execution-plane-credential-v1"

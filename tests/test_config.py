@@ -3,7 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
-from execution_plane.config import EPSettings, to_asyncpg_url
+from execution_plane.config.base import EPSettings
+from execution_plane.config.database import to_asyncpg_url
 
 
 def test_to_asyncpg_url_normalizes_postgresql_driver_variants() -> None:
@@ -22,7 +23,7 @@ def test_to_asyncpg_url_normalizes_postgresql_driver_variants() -> None:
 
 
 def test_ep_settings_has_cold_start_and_network_defaults() -> None:
-    settings = EPSettings()
+    settings = EPSettings()  # type: ignore[call-arg]
     assert settings.node_startup_seconds == 120
     assert settings.node_grace_seconds == 30
     assert settings.api_graceful_shutdown_seconds == 20
@@ -38,11 +39,11 @@ def test_resource_monitor_timeout_must_be_shorter_than_interval(monkeypatch: pyt
     monkeypatch.setenv("EP_RESOURCE_MONITOR_INTERVAL_SECONDS", "5")
     monkeypatch.setenv("EP_RESOURCE_MONITOR_PROBE_TIMEOUT_SECONDS", "5")
     with pytest.raises(ValidationError, match="shorter than"):
-        EPSettings()
+        EPSettings()  # type: ignore[call-arg]
 
 
 def test_database_pool_defaults() -> None:
-    settings = EPSettings()
+    settings = EPSettings()  # type: ignore[call-arg]
     assert settings.db_pool_size == 5
     assert settings.db_pool_max_overflow == 0
     assert settings.db_pool_timeout == 30.0
@@ -63,4 +64,4 @@ def test_database_pool_defaults() -> None:
 def test_database_pool_requires_finite_bounds(monkeypatch: pytest.MonkeyPatch, variable: str, value: str) -> None:
     monkeypatch.setenv(variable, value)
     with pytest.raises(ValidationError):
-        EPSettings()
+        EPSettings()  # type: ignore[call-arg]

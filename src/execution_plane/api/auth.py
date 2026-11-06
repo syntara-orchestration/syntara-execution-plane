@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from execution_plane.config import EPSettings, get_ep_settings
+from execution_plane.config.base import EPSettings, get_ep_settings
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

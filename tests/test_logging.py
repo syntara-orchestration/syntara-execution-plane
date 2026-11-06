@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import SecretStr
 
-from execution_plane.config import EPSettings, get_ep_settings
+from execution_plane.config.base import EPSettings, get_ep_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

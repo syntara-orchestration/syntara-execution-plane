@@ -4,7 +4,7 @@ from collections.abc import Generator
 
 import pytest
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 
 
 @pytest.fixture(autouse=True)

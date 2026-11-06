@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from execution_plane.callback_client import CallbackHTTPClient
-from execution_plane.config import EPSettings
+from execution_plane.config.base import EPSettings
 from execution_plane.credential_resolution import resolver as resolver_module
 from execution_plane.credential_resolution.resolver import (
     CredentialResolutionMismatchError,

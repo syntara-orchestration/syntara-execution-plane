@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import pytest
 from syntara_plugin.runtime import ContainerResult
 
-from execution_plane.config import EPSettings
+from execution_plane.config.base import EPSettings
 from execution_plane.credential_resolution.resolver import (
     CredentialResolutionUnavailableError,
     CredentialResolver,

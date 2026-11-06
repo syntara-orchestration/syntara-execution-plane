@@ -15,7 +15,7 @@ from execution_plane_client.models.execution_target import TargetStatus
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
-    from execution_plane.config import EPSettings
+    from execution_plane.config.base import EPSettings
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget

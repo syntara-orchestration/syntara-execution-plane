@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from execution_plane.config import EPSettings, get_ep_settings
+from execution_plane.config.base import EPSettings, get_ep_settings
 from execution_plane.models.cluster import Cluster, ClusterStatus, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
 from execution_plane_client.models.execution_target import KubernetesPlacement, RHELPlacement

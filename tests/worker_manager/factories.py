@@ -13,7 +13,7 @@ from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerM
 from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
+    from execution_plane.config.base import EPSettings
     from execution_plane.credential_resolution.resolver import CredentialResolver
 
 

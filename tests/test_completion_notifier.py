@@ -11,7 +11,7 @@ import pytest
 from execution_plane import callback_client as callback_client_module
 from execution_plane.callback_client import CallbackHTTPClient
 from execution_plane.completion_notifier import notifier as event_delivery
-from execution_plane.config import EPSettings
+from execution_plane.config.base import EPSettings
 
 
 def test_completion_notification_client_loads_identity_into_ca_context(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -11,7 +11,7 @@ from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDisc
 from execution_plane.cluster.cluster_store import ClusterStore, DefaultClusterError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.labels import user_labels
 from execution_plane.models.cluster import Cluster

@@ -12,7 +12,8 @@ import structlog
 
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.completion_notifier.notifier import CompletionNotifier
-from execution_plane.config import get_ep_settings, to_asyncpg_url
+from execution_plane.config.base import get_ep_settings
+from execution_plane.config.database import to_asyncpg_url
 from execution_plane.credential_resolution.resolver import CredentialResolver
 from execution_plane.database.engine import create_pooled_engine
 from execution_plane.database.ssl import ssl_connect_args_from_env
@@ -41,7 +42,7 @@ from execution_plane_client.models.execution_target import BackendType
 from execution_plane_client.models.work_item import WorkItemStatus
 
 if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
+    from execution_plane.config.base import EPSettings
     from execution_plane.models.work_item import WorkItem
 
 logger = structlog.stdlib.get_logger(__name__)

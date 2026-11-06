@@ -27,7 +27,7 @@ from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.commands.queries import EPResourceQueries
 from execution_plane.commands.registry import build_ep_registry
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 from execution_plane.database.engine import create_pooled_engine
 from execution_plane.execution_target.execution_target_store import (
     ClusterNotAvailableError,

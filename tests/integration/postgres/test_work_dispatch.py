@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from execution_plane import worker as worker_module
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
 from execution_plane.models.cluster import Cluster, ClusterStatus

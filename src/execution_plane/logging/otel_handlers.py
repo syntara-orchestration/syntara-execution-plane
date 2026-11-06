@@ -10,7 +10,7 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 
 logger = structlog.stdlib.get_logger(__name__)
 

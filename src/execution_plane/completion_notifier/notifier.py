@@ -16,7 +16,7 @@ from execution_plane_client.models.work_item import WorkItemStatus
 from execution_plane_client.protocol import ResourceReference
 
 if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
+    from execution_plane.config.base import EPSettings
     from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
 

@@ -12,7 +12,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from execution_plane.config import EPSettings, to_asyncpg_url
+from execution_plane.config.base import EPSettings
+from execution_plane.config.database import to_asyncpg_url
 from execution_plane.database.ssl import (
     build_ssl_connect_args,
     ssl_connect_args_from_env,

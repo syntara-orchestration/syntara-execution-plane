@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from structlog.processors import JSONRenderer
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.base import get_ep_settings
 from execution_plane.logging.otel_handlers import create_otel_handler
 
 if TYPE_CHECKING:

@@ -23,7 +23,7 @@ import pytest
 from kubernetes.client import ApiException, BatchV1Api, CoreV1Api, V1Job, V1Pod, V1PodSpec
 
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.config import EPSettings, get_ep_settings
+from execution_plane.config.base import EPSettings, get_ep_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
