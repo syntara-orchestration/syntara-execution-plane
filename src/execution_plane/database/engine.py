@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.settings import get_settings
 from execution_plane.database.ssl import ssl_connect_args_from_env, strip_unsupported_asyncpg_ssl_query
 
 
@@ -20,7 +20,7 @@ def create_pooled_engine(database_url: str) -> AsyncEngine:
     The caller owns disposal. EP_DB_POOL_* settings govern connection capacity
     and acquisition waiting, independently of WorkItem runtime.
     """
-    settings = get_ep_settings()
+    settings = get_settings()
     return create_async_engine(
         strip_unsupported_asyncpg_ssl_query(database_url),
         connect_args=ssl_connect_args_from_env(),

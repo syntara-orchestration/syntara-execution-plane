@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.config import get_ep_settings
+from execution_plane.config.settings import get_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.types import IneligibilityReason, ResolveOutcome, WorkRequirements
@@ -36,7 +36,7 @@ async def test_resource_monitor_excludes_a_missing_namespace_on_kind(
 ) -> None:
     """Probe the live Kind API: a missing namespace becomes DEGRADED and HEALTH-ineligible."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings().model_copy(
+    settings = get_settings().model_copy(
         update={
             "resource_monitor_interval_seconds": 5.0,
             "resource_monitor_probe_timeout_seconds": 3.0,

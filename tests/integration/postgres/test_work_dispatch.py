@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from execution_plane import worker as worker_module
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.config import get_ep_settings
+from execution_plane.config.settings import get_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
 from execution_plane.models.cluster import Cluster, ClusterStatus
@@ -88,7 +88,7 @@ async def _process(engine, item_id) -> WorkItem:
     store = WorkStore.from_engine(engine)
     target_store = ExecutionTargetStore.from_engine(engine)
     cluster_store = ClusterStore.from_engine(engine)
-    settings = get_ep_settings()
+    settings = get_settings()
     registry = WorkerManagerRegistry()
     registry.register(
         BackendType.KUBERNETES,

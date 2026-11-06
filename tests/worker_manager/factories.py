@@ -13,7 +13,7 @@ from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerM
 from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
+    from execution_plane.config.settings import Settings
     from execution_plane.credential_resolution.resolver import CredentialResolver
 
 
@@ -114,7 +114,7 @@ def vanilla_k8s_resources() -> tuple[Cluster, ExecutionTarget, WorkItem]:
 
 
 def vanilla_k8s_manager(
-    settings: EPSettings,
+    settings: Settings,
     resolver: CredentialResolver,
     resources: tuple[Cluster, ExecutionTarget, WorkItem],
     work_store: WorkStoreStub | None = None,

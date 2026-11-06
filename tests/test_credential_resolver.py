@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from execution_plane.callback_client import CallbackHTTPClient
-from execution_plane.config import EPSettings
+from execution_plane.config.settings import Settings
 from execution_plane.credential_resolution import resolver as resolver_module
 from execution_plane.credential_resolution.resolver import (
     CredentialResolutionMismatchError,
@@ -26,7 +26,7 @@ def test_credential_resolver_uses_dedicated_callback_settings(monkeypatch: pytes
             captured_kwargs.update(kwargs)
 
     monkeypatch.setattr(resolver_module, "CallbackHTTPClient", RecordingCallbackClient)
-    settings = EPSettings(
+    settings = Settings(
         EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands",
         EP_CREDENTIAL_RESOLUTION_CALLBACK_CA_CERT_PATH="/secrets/credential-ca.pem",
         EP_CREDENTIAL_RESOLUTION_CALLBACK_CERT_PATH="/secrets/ep-credentials.crt",
@@ -57,7 +57,7 @@ async def test_credential_resolver_context_manager_closes_callback_client() -> N
 
     callback_client = ClosingCallbackClient()
     resolver = CredentialResolver(
-        EPSettings(EP_DATABASE_URL="postgresql+asyncpg://localhost/ep"),
+        Settings(EP_DATABASE_URL="postgresql+asyncpg://localhost/ep"),
         client=callback_client,
     )
 
@@ -91,9 +91,7 @@ async def test_credential_resolver_posts_command_and_returns_correlated_value():
             },
         )
 
-    settings = EPSettings(
-        EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands"
-    )
+    settings = Settings(EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands")
     callback_client = CallbackHTTPClient(url=settings.credential_resolution_callback_url)
     await callback_client.close()
     callback_client._client = httpx.AsyncClient(transport=httpx.MockTransport(receive))
@@ -117,9 +115,7 @@ async def test_credential_resolver_posts_command_and_returns_correlated_value():
 @pytest.mark.asyncio
 async def test_credential_resolver_rejects_an_unrelated_response():
     credential_ref = uuid4()
-    settings = EPSettings(
-        EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands"
-    )
+    settings = Settings(EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands")
     callback_client = CallbackHTTPClient(url=settings.credential_resolution_callback_url)
     await callback_client.close()
     callback_client._client = httpx.AsyncClient(

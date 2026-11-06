@@ -11,7 +11,7 @@ from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDisc
 from execution_plane.cluster.cluster_store import ClusterStore, DefaultClusterError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
-from execution_plane.config import get_ep_settings
+from execution_plane.config.settings import get_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.labels import user_labels
 from execution_plane.models.cluster import Cluster
@@ -113,7 +113,7 @@ async def _provision_cluster(command: ClusterRegister, context: EPCommandContext
         command.name,
         command.endpoint,
         command.credential_ref,
-        KubernetesPlacement(namespace=get_ep_settings().default_workload_namespace),
+        KubernetesPlacement(namespace=get_settings().default_workload_namespace),
         SYSTEM_ACTOR_ID,
         desired_labels,
         source_client_id=context.client_id,

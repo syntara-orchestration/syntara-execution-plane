@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from structlog.processors import JSONRenderer
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.settings import get_settings
 from execution_plane.logging.otel_handlers import create_otel_handler
 
 if TYPE_CHECKING:
@@ -80,7 +80,7 @@ def build_json_formatter() -> Formatter:
 
 def build_execution_plane_formatter() -> Formatter:
     """Build the configured local log formatter."""
-    settings = get_ep_settings()
+    settings = get_settings()
     if settings.log_output_format == "text":
         return build_text_formatter()
     return build_json_formatter()
@@ -113,7 +113,7 @@ def build_uvicorn_logging_config(log_level: str) -> dict[str, Any]:
 
 def configure_app_logging() -> None:
     """Configure root stdout logging and optional OTLP emission."""
-    settings = get_ep_settings()
+    settings = get_settings()
     handler = logging.StreamHandler()
     handler.setFormatter(build_execution_plane_formatter())
 

@@ -10,14 +10,14 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.settings import get_settings
 
 logger = structlog.stdlib.get_logger(__name__)
 
 
 def create_otel_handler() -> logging.Handler | None:
     """Create a root OTLP logging handler when OTEL is enabled."""
-    if not get_ep_settings().otel_enabled:
+    if not get_settings().otel_enabled:
         return None
 
     exporter = create_otlp_exporter()
@@ -29,7 +29,7 @@ def create_otel_handler() -> logging.Handler | None:
 
 def create_otlp_exporter() -> OTLPLogExporter:
     """Create an authenticated OTLP HTTP log exporter."""
-    settings = get_ep_settings()
+    settings = get_settings()
     headers = None
     if settings.otel_api_key is not None:
         headers = {
@@ -51,7 +51,7 @@ def create_otlp_exporter() -> OTLPLogExporter:
 
 def create_otel_resource() -> Resource:
     """Create OTEL resource attributes identifying this Execution Plane instance."""
-    settings = get_ep_settings()
+    settings = get_settings()
     return Resource.create(
         {
             "service.name": settings.otel_service_name,

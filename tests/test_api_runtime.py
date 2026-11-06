@@ -41,7 +41,7 @@ def test_api_main_configures_a_bounded_graceful_shutdown(monkeypatch: pytest.Mon
     )
     captured_options: dict[str, Any] = {}
 
-    monkeypatch.setattr(api_main, "get_ep_settings", lambda: settings)
+    monkeypatch.setattr(api_main, "get_settings", lambda: settings)
     monkeypatch.setattr(uvicorn, "run", lambda _app, **options: captured_options.update(options))
 
     api_main.main()
@@ -61,7 +61,7 @@ def test_api_main_starts_and_stops_logging(monkeypatch: pytest.MonkeyPatch) -> N
         log_level="INFO",
     )
 
-    monkeypatch.setattr(api_main, "get_ep_settings", lambda: settings)
+    monkeypatch.setattr(api_main, "get_settings", lambda: settings)
     monkeypatch.setattr(api_main, "start_loggers", lambda: events.append("start"))
     monkeypatch.setattr(api_main, "stop_loggers", lambda: events.append("stop"))
     monkeypatch.setattr(uvicorn, "run", lambda *_args, **_options: events.append("serve"))

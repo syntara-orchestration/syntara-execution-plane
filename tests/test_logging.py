@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import SecretStr
 
-from execution_plane.config import EPSettings, get_ep_settings
+from execution_plane.config.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -26,9 +26,9 @@ def isolated_root_logger(monkeypatch: pytest.MonkeyPatch) -> Iterator[logging.Lo
     logging.getLogger().setLevel(original_level)
 
 
-def settings(**overrides: object) -> EPSettings:
+def settings(**overrides: object) -> Settings:
     """Build EP settings with defaults suitable for logging tests."""
-    return get_ep_settings().model_copy(
+    return get_settings().model_copy(
         update={
             "otel_endpoint": "https://collector.example.test/v1/logs",
             "otel_service_name": "execution-plane-test",
@@ -38,7 +38,7 @@ def settings(**overrides: object) -> EPSettings:
 
 
 def test_otel_settings_default_to_disabled() -> None:
-    model = EPSettings.model_validate(
+    model = Settings.model_validate(
         {
             "EP_DATABASE_URL": "postgresql+asyncpg://localhost/execution_plane",
             "EP_CREDENTIAL_ENCRYPTION_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -61,7 +61,7 @@ def test_otel_settings_require_complete_mtls_material() -> None:
         "EP_OTEL_CLIENT_CERT_FILE": "/certs/client.crt",
     }
     with pytest.raises(ValueError, match="EP_OTEL_CLIENT_CERT_FILE requires EP_OTEL_CLIENT_KEY_FILE"):
-        EPSettings.model_validate(
+        Settings.model_validate(
             values,
         )
 
@@ -72,7 +72,7 @@ def test_local_logging_is_structured_and_has_no_otel_handler_when_disabled(
 ) -> None:
     from execution_plane.logging.logging import configure_app_logging
 
-    monkeypatch.setattr("execution_plane.logging.logging.get_ep_settings", lambda: settings())
+    monkeypatch.setattr("execution_plane.logging.logging.get_settings", lambda: settings())
     configure_app_logging()
 
     assert [type(handler) for handler in isolated_root_logger.handlers] == [logging.StreamHandler]
@@ -94,7 +94,7 @@ def test_enabled_logging_attaches_one_otel_handler_to_root(
         "execution_plane.logging.logging.create_otel_handler",
         lambda: otel_handler,
     )
-    monkeypatch.setattr("execution_plane.logging.logging.get_ep_settings", lambda: settings(otel_enabled=True))
+    monkeypatch.setattr("execution_plane.logging.logging.get_settings", lambda: settings(otel_enabled=True))
     configure_app_logging()
 
     assert len(isolated_root_logger.handlers) == 2
@@ -113,7 +113,7 @@ def test_otel_exporter_uses_bearer_and_certificate_settings(
         otel_client_cert_file="/certs/client.crt",
         otel_client_key_file="/certs/client.key",
     )
-    monkeypatch.setattr("execution_plane.logging.otel_handlers.get_ep_settings", lambda: model)
+    monkeypatch.setattr("execution_plane.logging.otel_handlers.get_settings", lambda: model)
     with patch("execution_plane.logging.otel_handlers.OTLPLogExporter") as exporter_class:
         create_otlp_exporter()
 
@@ -130,7 +130,7 @@ def test_otel_resource_identifies_service_instance(monkeypatch: pytest.MonkeyPat
     from execution_plane.logging.otel_handlers import create_otel_resource
 
     model = settings(otel_service_instance_id="ep-pod-123")
-    monkeypatch.setattr("execution_plane.logging.otel_handlers.get_ep_settings", lambda: model)
+    monkeypatch.setattr("execution_plane.logging.otel_handlers.get_settings", lambda: model)
     resource = create_otel_resource()
 
     assert resource.attributes["service.name"] == "execution-plane-test"
@@ -150,7 +150,7 @@ def test_lifecycle_configures_flushes_and_removes_logging(
         "execution_plane.logging.logging.create_otel_handler",
         lambda: otel_handler,
     )
-    monkeypatch.setattr("execution_plane.logging.logging.get_ep_settings", lambda: settings(otel_enabled=True))
+    monkeypatch.setattr("execution_plane.logging.logging.get_settings", lambda: settings(otel_enabled=True))
 
     lifecycle.start_loggers()
     assert otel_handler in isolated_root_logger.handlers
@@ -183,5 +183,5 @@ def test_create_otel_handler_is_disabled_when_otel_is_false(
 ) -> None:
     from execution_plane.logging.otel_handlers import create_otel_handler
 
-    monkeypatch.setattr("execution_plane.logging.otel_handlers.get_ep_settings", lambda: settings())
+    monkeypatch.setattr("execution_plane.logging.otel_handlers.get_settings", lambda: settings())
     assert create_otel_handler() is None

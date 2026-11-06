@@ -12,7 +12,8 @@ import structlog
 
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.completion_notifier.notifier import CompletionNotifier
-from execution_plane.config import get_ep_settings, to_asyncpg_url
+from execution_plane.config.database import to_asyncpg_url
+from execution_plane.config.settings import get_settings
 from execution_plane.credential_resolution.resolver import CredentialResolver
 from execution_plane.database.engine import create_pooled_engine
 from execution_plane.database.ssl import ssl_connect_args_from_env
@@ -41,7 +42,7 @@ from execution_plane_client.models.execution_target import BackendType
 from execution_plane_client.models.work_item import WorkItemStatus
 
 if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
+    from execution_plane.config.settings import Settings
     from execution_plane.models.work_item import WorkItem
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -55,7 +56,7 @@ class _ProcessItemKwargs(TypedDict):
     work_progress: WorkStore
     target_queries: ExecutionTargetStore
     worker_managers: WorkerManagerRegistry
-    settings: EPSettings
+    settings: Settings
 
 
 async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinct persistence transitions
@@ -64,7 +65,7 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
     work_progress: WorkStore,
     target_queries: ExecutionTargetStore,
     worker_managers: WorkerManagerRegistry,
-    settings: EPSettings,
+    settings: Settings,
 ) -> None:
     """Dispatch through the selected WorkerManager and persist safe terminal states."""
     wi_id = str(item.id)
@@ -232,7 +233,7 @@ async def _poll_loop(
     work_progress: WorkStore,
     target_queries: ExecutionTargetStore,
     worker_managers: WorkerManagerRegistry,
-    settings: EPSettings,
+    settings: Settings,
     dispatch_event: asyncio.Event,
 ) -> None:
     """Claim work and dispatch items concurrently, bounded by settings.
@@ -286,7 +287,7 @@ async def run_worker(database_url: str) -> None:
     Cancellation closes both the notification listener and the polling task,
     then disposes the worker-owned engine shared by all stores.
     """
-    settings = get_ep_settings()
+    settings = get_settings()
     async with contextlib.AsyncExitStack() as resources:
         engine = create_pooled_engine(database_url)
         resources.push_async_callback(engine.dispose)
@@ -354,7 +355,7 @@ async def run_worker(database_url: str) -> None:
 
 
 async def _run() -> None:
-    settings = get_ep_settings()
+    settings = get_settings()
     await run_worker(settings.database_url)
 
 
