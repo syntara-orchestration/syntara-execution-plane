@@ -68,6 +68,7 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests that require a real PostgreSQL database and/or Kubernetes cluster",
     "e2e: live AO+EP stack (Konflux Kind or local demo)",
+    "perf: performance tests; require a dedicated kind cluster plus EP_TEST_DATABASE_URL, EP_PERF_API_URL, EP_PERF_NAMESPACE, EP_PERF_CREDENTIAL_ENCRYPTION_KEY, EP_NODE_IMAGE, EP_AO_JWT_PRIVATE_KEY_FILE, and EP_API_CA_FILE (for https); set EP_PERF_REQUIRED=1 so missing prerequisites fail instead of skip",
 ]
 
 [tool.ruff]
