@@ -99,7 +99,7 @@ async def test_dispatch_joins_transport_and_database_callbacks_before_exiting(  
     import asyncio
     import threading
 
-    settings = EPSettings()
+    settings = Settings()
     resolver = CredentialResolver(settings)
     resources = vanilla_k8s_resources()
     transport_started = asyncio.Event()

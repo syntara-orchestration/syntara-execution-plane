@@ -183,7 +183,7 @@ def worker_events(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     from execution_plane import worker
 
     events: list[str] = []
-    monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace(max_concurrent_dispatches=2))
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(max_concurrent_dispatches=2))
     monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: _StoreContext("work", events))
     monkeypatch.setattr(worker.ClusterStore, "from_engine", lambda _engine: _StoreContext("cluster", events))
     monkeypatch.setattr(worker.ExecutionTargetStore, "from_engine", lambda _engine: _StoreContext("target", events))
