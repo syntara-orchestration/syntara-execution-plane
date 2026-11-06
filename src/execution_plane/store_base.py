@@ -7,13 +7,11 @@ from typing import TYPE_CHECKING, Self
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from execution_plane.database.engine import create_ep_engine
+from execution_plane.database.engine import create_pooled_engine
 from execution_plane.store_errors import StoreConfigurationError, StoreSessionError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
-
-    from sqlalchemy.pool import Pool
 
 
 class StoreBase:
@@ -22,12 +20,14 @@ class StoreBase:
     def __init__(
         self,
         database_url: str | None = None,
-        poolclass: type[Pool] | None = None,
         *,
         engine: AsyncEngine | None = None,
         session: AsyncSession | None = None,
     ) -> None:
-        """Create a store backed by a borrowed session, URL, or engine."""
+        """Borrow a session or engine, or own a pooled engine created from a URL.
+
+        Ordinary worker logic must borrow the worker's shared pooled engine.
+        """
         self._session = session
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._engine: AsyncEngine | None = None
@@ -41,7 +41,7 @@ class StoreBase:
         else:
             if database_url is None:
                 raise StoreConfigurationError
-            self._engine = create_ep_engine(database_url, poolclass=poolclass)
+            self._engine = create_pooled_engine(database_url)
             self._owns_engine = True
 
         self._session_factory = async_sessionmaker(self._engine, class_=AsyncSession, expire_on_commit=False)
@@ -74,9 +74,9 @@ class StoreBase:
         return cls(engine=engine)
 
     @classmethod
-    def from_database_url(cls, database_url: str, poolclass: type[Pool] | None = None) -> Self:
-        """Create a store that owns an engine created from a database URL."""
-        return cls(database_url, poolclass=poolclass)
+    def from_database_url(cls, database_url: str) -> Self:
+        """Create a store owning a pooled engine; worker logic must borrow its shared engine."""
+        return cls(database_url)
 
     async def __aenter__(self) -> Self:
         """Return this store for use as an async context manager."""

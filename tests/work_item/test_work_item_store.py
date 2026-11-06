@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.pool import NullPool
 
+from execution_plane.database.engine import create_unpooled_engine
 from execution_plane.models.cluster import Cluster, ClusterType
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
 from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
@@ -267,13 +267,14 @@ async def test_uncertain_dispatch_records_reconciliation_completion_notification
 
 
 @pytest.mark.asyncio
-async def test_accepts_engine_options() -> None:
-    """Store callers can select a pool appropriate for their lifecycle."""
-    store = WorkStore("postgresql+asyncpg://localhost/syntara", poolclass=NullPool)
-
-    assert store._engine is not None
-    assert isinstance(store._engine.pool, NullPool)
-    await store.close()
+async def test_accepts_explicit_unpooled_engine() -> None:
+    """Callers can explicitly supply an unpooled engine and own its disposal."""
+    engine = create_unpooled_engine("postgresql+asyncpg://localhost/syntara")
+    try:
+        async with WorkStore.from_engine(engine) as store:
+            assert store._engine is engine
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

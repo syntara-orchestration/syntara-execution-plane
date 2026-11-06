@@ -8,6 +8,7 @@ import signal
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Self, cast
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -19,6 +20,16 @@ from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelled
 
 if TYPE_CHECKING:
     from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
+
+
+@pytest.fixture
+def worker_engine(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Use an inert process-owned engine in worker wiring tests."""
+    from execution_plane import worker
+
+    engine = SimpleNamespace(dispose=AsyncMock())
+    monkeypatch.setattr(worker, "create_pooled_engine", Mock(return_value=engine))
+    return engine
 
 
 class _StoreContext:
@@ -164,10 +175,13 @@ class _CompletionDelivery:
 
 
 @pytest.mark.asyncio
-async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_worker_wires_placement_resolver_to_the_poll_loop(
+    monkeypatch: pytest.MonkeyPatch, worker_engine: SimpleNamespace
+) -> None:
     from execution_plane import worker
 
     events: list[str] = []
+    worker_engine.dispose.side_effect = lambda: events.append("engine:stop")
     work_service = _StoreContext("work", events)
     cluster_store = _StoreContext("cluster", events)
     target_store = _StoreContext("target", events)
@@ -177,14 +191,14 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch:
     poll_calls: list[WorkerManagerRegistry] = []
 
     monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace())
-    monkeypatch.setattr(WorkStore, "from_database_url", lambda _url: work_service)
+    monkeypatch.setattr(WorkStore, "from_engine", Mock(return_value=work_service))
     monkeypatch.setattr(
-        "execution_plane.worker.ClusterStore.from_database_url",
-        lambda _url: cluster_store,
+        "execution_plane.worker.ClusterStore.from_engine",
+        Mock(return_value=cluster_store),
     )
     monkeypatch.setattr(
-        "execution_plane.worker.ExecutionTargetStore.from_database_url",
-        lambda _url: target_store,
+        "execution_plane.worker.ExecutionTargetStore.from_engine",
+        Mock(return_value=target_store),
     )
     monkeypatch.setattr(
         worker,
@@ -225,23 +239,31 @@ async def test_run_worker_wires_placement_resolver_to_the_poll_loop(monkeypatch:
     assert poll_calls[0].get(BackendType.KUBERNETES) is workload_manager
     assert "resolver:start" in events
     assert "resolver:stop" in events
+    assert events[-1] == "engine:stop"
+    worker.create_pooled_engine.assert_called_once_with("postgresql+asyncpg://localhost/syntara")
+    worker_engine.dispose.assert_awaited_once()
+    worker.WorkStore.from_engine.assert_called_once_with(worker_engine)
+    worker.ClusterStore.from_engine.assert_called_once_with(worker_engine)
+    worker.ExecutionTargetStore.from_engine.assert_called_once_with(worker_engine)
 
 
 @pytest.mark.asyncio
-async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(
+    monkeypatch: pytest.MonkeyPatch, worker_engine: SimpleNamespace
+) -> None:
     from execution_plane import worker
 
     events: list[str] = []
     monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace())
 
-    monkeypatch.setattr(WorkStore, "from_database_url", lambda _url: _StoreContext("work", events))
+    monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: _StoreContext("work", events))
     monkeypatch.setattr(
-        "execution_plane.worker.ClusterStore.from_database_url",
-        lambda _url: _StoreContext("cluster", events),
+        "execution_plane.worker.ClusterStore.from_engine",
+        lambda _engine: _StoreContext("cluster", events),
     )
     monkeypatch.setattr(
-        "execution_plane.worker.ExecutionTargetStore.from_database_url",
-        lambda _url: _StoreContext("target", events),
+        "execution_plane.worker.ExecutionTargetStore.from_engine",
+        lambda _engine: _StoreContext("target", events),
     )
     monkeypatch.setattr(
         worker,
@@ -267,24 +289,27 @@ async def test_run_worker_owns_drain_monitor_for_the_worker_lifetime(monkeypatch
     assert events.index("resource-monitor:start") < events.index("resource-monitor:stop")
     assert events.index("resource-monitor:stop") < events.index("work:stop")
     assert events.index("monitor:stop") < events.index("work:stop")
+    worker_engine.dispose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_run_worker_completes_cleanup_after_shutdown_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_worker_completes_cleanup_after_shutdown_signal(
+    monkeypatch: pytest.MonkeyPatch, worker_engine: SimpleNamespace
+) -> None:
     from execution_plane import worker
     from execution_plane.runtime import run_until_shutdown
 
     events: list[str] = []
     listener_started = asyncio.Event()
     monkeypatch.setattr(worker, "get_ep_settings", lambda: SimpleNamespace())
-    monkeypatch.setattr(WorkStore, "from_database_url", lambda _url: _StoreContext("work", events))
+    monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: _StoreContext("work", events))
     monkeypatch.setattr(
-        "execution_plane.worker.ClusterStore.from_database_url",
-        lambda _url: _StoreContext("cluster", events),
+        "execution_plane.worker.ClusterStore.from_engine",
+        lambda _engine: _StoreContext("cluster", events),
     )
     monkeypatch.setattr(
-        "execution_plane.worker.ExecutionTargetStore.from_database_url",
-        lambda _url: _StoreContext("target", events),
+        "execution_plane.worker.ExecutionTargetStore.from_engine",
+        lambda _engine: _StoreContext("target", events),
     )
     monkeypatch.setattr(
         worker,
@@ -318,6 +343,7 @@ async def test_run_worker_completes_cleanup_after_shutdown_signal(monkeypatch: p
     assert "monitor:stop" in events
     assert "delivery:stop" in events
     assert "work:stop" in events
+    worker_engine.dispose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -395,3 +421,12 @@ async def _finished_poller(*_args: object) -> None:
 
 async def _finished_policy_reconciler(*_args: object) -> None:
     return None
+
+
+async def test_run_worker_disposes_engine_if_store_setup_fails(monkeypatch, worker_engine):
+    from execution_plane import worker
+
+    monkeypatch.setattr(WorkStore, "from_engine", Mock(side_effect=RuntimeError("store setup failed")))
+    with pytest.raises(RuntimeError, match="store setup failed"):
+        await worker.run_worker("postgresql+asyncpg://localhost/syntara")
+    worker_engine.dispose.assert_awaited_once()
