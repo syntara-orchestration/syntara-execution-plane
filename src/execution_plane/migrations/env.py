@@ -9,8 +9,8 @@ each other's tables.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-from logging.config import fileConfig
 from typing import TYPE_CHECKING
 
 from alembic import context
@@ -19,6 +19,7 @@ from sqlmodel import SQLModel
 
 from execution_plane.database.engine import create_unpooled_engine
 from execution_plane.database.ssl import strip_unsupported_asyncpg_ssl_query
+from execution_plane.logging.logging import build_json_formatter
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
@@ -33,8 +34,20 @@ EP_SCHEMA = "execution_plane"
 
 config = context.config
 
+
+def configure_structured_migration_logging() -> None:
+    """Route Alembic and SQLAlchemy logs through EP's structured formatter."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(build_json_formatter())
+    root_logger = logging.getLogger()
+    root_logger.handlers[:] = [handler]
+    root_logger.setLevel(logging.INFO)
+    logging.getLogger("alembic").setLevel(logging.INFO)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
+
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name, disable_existing_loggers=False)
+    configure_structured_migration_logging()
 
 target_metadata = SQLModel.metadata
 

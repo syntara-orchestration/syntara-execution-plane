@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import ssl
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
@@ -35,6 +34,8 @@ from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     TargetNotEligibleForDefaultError,
 )
+from execution_plane.logging.lifecycle import start_loggers, stop_loggers
+from execution_plane.logging.logging import build_uvicorn_logging_config
 from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNotFoundError
 from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.commands.results import TransportReceipt
@@ -75,6 +76,7 @@ def _extract_filters(request: Request) -> dict[str, str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open an EP-owned database pool for the HTTP service lifetime."""
+    start_loggers()
     settings = get_ep_settings()
     engine = create_pooled_engine(settings.database_url)
     app.state.ep_settings = settings
@@ -84,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await engine.dispose()
+        stop_loggers()
 
 
 def strict_json(data: bytes) -> object:
@@ -304,15 +307,19 @@ app = create_app()
 
 def main() -> None:
     """Run the standalone HTTP server with optional service-owned TLS."""
-    logging.basicConfig(level=logging.INFO)
     settings = get_ep_settings()
-    uvicorn.run(
-        "execution_plane.api.main:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        ssl_certfile=settings.api_tls_cert_path,
-        ssl_keyfile=settings.api_tls_key_path,
-        ssl_ca_certs=settings.api_tls_client_ca_path,
-        ssl_cert_reqs=ssl.CERT_OPTIONAL if settings.api_tls_client_ca_path else ssl.CERT_NONE,
-        timeout_graceful_shutdown=settings.api_graceful_shutdown_seconds,
-    )
+    start_loggers()
+    try:
+        uvicorn.run(
+            "execution_plane.api.main:app",
+            host=settings.api_host,
+            port=settings.api_port,
+            ssl_certfile=settings.api_tls_cert_path,
+            ssl_keyfile=settings.api_tls_key_path,
+            ssl_ca_certs=settings.api_tls_client_ca_path,
+            ssl_cert_reqs=ssl.CERT_OPTIONAL if settings.api_tls_client_ca_path else ssl.CERT_NONE,
+            timeout_graceful_shutdown=settings.api_graceful_shutdown_seconds,
+            log_config=build_uvicorn_logging_config(settings.log_level),
+        )
+    finally:
+        stop_loggers()
