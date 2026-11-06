@@ -51,6 +51,11 @@ _DISPATCH_CLEANUP_TIMEOUT_SECONDS = 30
 # Retryable transport errors leave items pending for a later claim; drain
 # a few stale items before giving up on claiming the one just dispatched.
 _DISPATCH_CLAIM_ATTEMPTS = 8
+# The SIGTERM regression probe forces a grace period far above any healthy
+# dispatch duration: a node that honors SIGTERM finishes its Job-deletion
+# teardown in seconds, while one that ignores it survives until the grace
+# SIGKILL and pays the full window (see the test using it).
+_SIGTERM_PROBE_GRACE_SECONDS = 90
 
 
 async def _read_job(batch_api: BatchV1Api, job_name: str, namespace: str) -> V1Job | None:
@@ -354,6 +359,71 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
     assert final_item is not None
     assert final_item.status is WorkItemStatus.COMPLETED, (
         f"Expected COMPLETED but got {final_item.status}; result={final_item.result}"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_work_item_dispatch_teardown_does_not_wait_out_the_grace_period(
+    ep_cluster: Cluster,
+    integration_credential_resolver: CredentialResolver,
+) -> None:
+    """Assert the node exits on SIGTERM instead of surviving to the grace SIGKILL.
+
+    The workload image's Python process runs as PID 1 in its container, and the
+    kernel ignores unhandled signals for PID 1. Before the SDK fix pinned in
+    this branch (syntara-plugin-sdk#44), the node survived the transport's
+    Job-deletion SIGTERM until the SIGKILL at ``terminationGracePeriodSeconds``
+    — so every dispatch waited out the full grace period during cleanup, even
+    though the workload itself finishes in seconds.
+
+    This test forces a grace period far above any healthy dispatch duration.
+    A dispatch cycle that completes well inside that window proves the node
+    shut down cooperatively; a cycle at or above it means SIGTERM handling
+    regressed (stale node image or SDK pin).
+    """
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_ep_settings().model_copy(update={"node_grace_seconds": _SIGTERM_PROBE_GRACE_SECONDS})
+    client_id = "ep-it-dispatch"
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+        ) as work:
+            dispatched = await _dispatch_item(
+                work,
+                work.worker_managers,
+                client_id=client_id,
+                payload=build_payload(
+                    language="bash",
+                    code="echo ep-integration-sigterm-ok",
+                    timeout_seconds=120,
+                    environment={},
+                    image=_NODE_IMAGE,
+                ),
+            )
+            assigned = dispatched.assigned
+
+            started = time.monotonic()
+            final_item = await _process_until_terminal(assigned, work, target_store, settings, client_id=client_id)
+            duration = time.monotonic() - started
+
+    assert final_item is not None
+    assert final_item.status is WorkItemStatus.COMPLETED, (
+        f"Expected COMPLETED but got {final_item.status}; result={final_item.result}"
+    )
+    assert duration < _SIGTERM_PROBE_GRACE_SECONDS, (
+        f"Dispatch took {duration:.1f}s with a {_SIGTERM_PROBE_GRACE_SECONDS}s grace period: "
+        "the node did not exit on SIGTERM and the teardown waited out the grace window. "
+        "The node image probably predates the SIGTERM fix (stale SDK pin in "
+        "tests/fixtures/sdk_script/Containerfile, or a stale image loaded into the cluster)."
     )
 
 
