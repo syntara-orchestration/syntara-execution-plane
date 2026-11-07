@@ -7,8 +7,12 @@ from typing import TypedDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDiscoveryMechanism
-from execution_plane.cluster.cluster_store import ClusterStore, DefaultClusterError
+from execution_plane.cluster.cluster_registrar import (
+    ClusterRegistrar,
+    DefaultTargetProvisioningError,
+    NoopDiscoveryMechanism,
+)
+from execution_plane.cluster.cluster_store import DEFAULT_ADVISORY_LOCK, ClusterStore, DefaultClusterError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.config.settings import get_settings
@@ -50,9 +54,9 @@ def _validated_payload[T: CommandPayload](payload: CommandPayload, expected: typ
     return payload
 
 
-async def _advisory_lock(session: AsyncSession, client_id: str, resource_id: uuid.UUID) -> None:
+async def _advisory_lock(session: AsyncSession, resource_id: uuid.UUID) -> None:
     """Acquire a per-cluster advisory lock for the duration of the transaction."""
-    digest = hashlib.sha256(f"cluster:{client_id}:{resource_id}".encode()).digest()
+    digest = hashlib.sha256(f"cluster:{resource_id}".encode()).digest()
     await session.execute(select(func.pg_advisory_xact_lock(int.from_bytes(digest[:8], signed=True))))
 
 
@@ -96,30 +100,46 @@ async def _provision_cluster(command: ClusterRegister, context: EPCommandContext
 
     The id is the caller's physical Cluster UUID (shared with its AO Integration).
     Reapplying the same id is a safe upsert; a id owned by another client is rejected.
+    Ownership checks and provisioning share one connection and resource lock.
     """
     desired_labels = user_labels(command.labels)
-    cluster_store, _, registrar = _build_stores(context)
     sessions = async_sessionmaker(context.engine, expire_on_commit=False)
+    failure: Exception | None = None
+    cluster: Cluster | None = None
 
     # Serialise concurrent requests for the same id and reject cross-client adoption.
     async with sessions.begin() as session:
-        await _advisory_lock(session, context.client_id, command.resource_id)
+        await _advisory_lock(session, command.resource_id)
+        cluster_store = ClusterStore.from_transaction(session)
+        target_store = ExecutionTargetStore.from_transaction(session)
+        registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism(), transaction=session)
         existing = await cluster_store.get(command.resource_id)
         if existing is not None and existing.source_client_id != context.client_id:
             raise ProtocolConflict
 
-    cluster = await registrar.provision(
-        command.resource_id,
-        command.name,
-        command.endpoint,
-        command.credential_ref,
-        KubernetesPlacement(namespace=get_settings().default_workload_namespace),
-        SYSTEM_ACTOR_ID,
-        desired_labels,
-        source_client_id=context.client_id,
-        is_default=command.is_default,
-        ca_certificate=command.ca_certificate,
-    )
+        # Default selection takes this lock before locking Cluster rows. Match
+        # that order before provisioning writes retain row locks until commit.
+        await session.execute(select(func.pg_advisory_xact_lock(DEFAULT_ADVISORY_LOCK)))
+        try:
+            cluster = await registrar.provision(
+                command.resource_id,
+                command.name,
+                command.endpoint,
+                command.credential_ref,
+                KubernetesPlacement(namespace=get_settings().default_workload_namespace),
+                SYSTEM_ACTOR_ID,
+                desired_labels,
+                source_client_id=context.client_id,
+                is_default=command.is_default,
+                ca_certificate=command.ca_certificate,
+            )
+        except DefaultTargetProvisioningError as exc:
+            # Commit the durable ERROR state before reporting the original failure.
+            failure = exc.error
+    if failure is not None:
+        raise failure
+    if cluster is None:
+        raise RuntimeError("Cluster provisioning returned no cluster")  # noqa: TRY003, EM101
     return _cluster_result(cluster)
 
 

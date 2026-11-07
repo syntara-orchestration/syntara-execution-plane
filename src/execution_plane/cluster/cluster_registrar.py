@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
@@ -12,6 +13,8 @@ from execution_plane_client.models.execution_target import BackendType
 
 if TYPE_CHECKING:
     import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from execution_plane.cluster.cluster_store import ClusterStore
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
@@ -83,6 +86,15 @@ class NoopDiscoveryMechanism:
         return DiscoveryResult.failed("No discovery mechanism is configured")
 
 
+class DefaultTargetProvisioningError(Exception):
+    """A target failed; the caller must commit the recorded Cluster ERROR state."""
+
+    def __init__(self, error: Exception) -> None:
+        """Retain the original failure for reporting after the caller commits."""
+        self.error = error
+        super().__init__(str(error))
+
+
 class ClusterRegistrar:
     """Coordinate Cluster persistence, discovery, and default-target lifecycle."""
 
@@ -91,11 +103,19 @@ class ClusterRegistrar:
         store: ClusterStore,
         execution_targets: ExecutionTargetStore,
         discovery: DiscoveryMechanism,
+        *,
+        transaction: AsyncSession | None = None,
     ) -> None:
-        """Use Cluster and ExecutionTarget stores for persistence and registration."""
+        """Use stores for persistence, optionally borrowing their shared transaction.
+
+        When supplied, both stores must borrow ``transaction``. A default-target
+        failure raises DefaultTargetProvisioningError after recording ERROR;
+        the transaction owner commits that state before reporting the failure.
+        """
         self._store = store
         self._execution_targets = execution_targets
         self._discovery = discovery
+        self._transaction = transaction
 
     async def register(
         self,
@@ -214,21 +234,26 @@ class ClusterRegistrar:
             ca_certificate=ca_certificate,
         )
         try:
-            target = await self._execution_targets.create(
-                cluster_id=cluster.id,
-                name=name,
-                backend_type=BackendType.KUBERNETES,
-                endpoint=endpoint,
-                credential_ref=credential_ref,
-                placement=placement,
-                is_default=True,
-                created_by=created_by,
-            )
-            await self._execution_targets.activate(target.id, created_by)
-        except Exception:
+            # A failed flush aborts the transaction unless target creation is
+            # isolated, preventing the caller from recording the Cluster error.
+            async with self._transaction.begin_nested() if self._transaction is not None else nullcontext():
+                target = await self._execution_targets.create(
+                    cluster_id=cluster.id,
+                    name=name,
+                    backend_type=BackendType.KUBERNETES,
+                    endpoint=endpoint,
+                    credential_ref=credential_ref,
+                    placement=placement,
+                    is_default=True,
+                    created_by=created_by,
+                )
+                await self._execution_targets.activate(target.id, created_by)
+        except Exception as exc:
             await self._store.record_discovery_state(
                 cluster.id, ClusterStatus.ERROR, "default target creation failed", created_by
             )
+            if self._transaction is not None:
+                raise DefaultTargetProvisioningError(exc) from exc
             raise
         await self._store.record_discovery_state(cluster.id, ClusterStatus.ACTIVE, None, created_by)
         if is_default:

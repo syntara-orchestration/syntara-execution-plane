@@ -98,8 +98,10 @@ async def test_cluster_register_cleanses_internal_labels(monkeypatch: pytest.Mon
     mock_registrar.provision = AsyncMock(return_value=provisioned)
     mock_store = AsyncMock()
     mock_store.get = AsyncMock(return_value=None)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
+    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_transaction", lambda _e: mock_store)
+    monkeypatch.setattr(
+        "execution_plane.commands.clusters.ExecutionTargetStore.from_transaction", lambda _e: AsyncMock()
+    )
     monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
 
     payload = ClusterRegister(
@@ -127,8 +129,10 @@ async def test_cluster_register_returns_cluster_id_in_receipt(monkeypatch: pytes
     mock_registrar.provision = AsyncMock(return_value=cluster)
     mock_store = AsyncMock()
     mock_store.get = AsyncMock(return_value=None)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
+    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_transaction", lambda _e: mock_store)
+    monkeypatch.setattr(
+        "execution_plane.commands.clusters.ExecutionTargetStore.from_transaction", lambda _e: AsyncMock()
+    )
     monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
 
     payload = ClusterRegister(
@@ -155,8 +159,10 @@ async def test_cluster_register_upserts_when_resource_id_already_owned(monkeypat
     session = _Session(cluster)
     mock_store = AsyncMock()
     mock_store.get = AsyncMock(return_value=cluster)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
+    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_transaction", lambda _e: mock_store)
+    monkeypatch.setattr(
+        "execution_plane.commands.clusters.ExecutionTargetStore.from_transaction", lambda _e: AsyncMock()
+    )
     mock_registrar = AsyncMock()
     mock_registrar.provision = AsyncMock(return_value=cluster)
     monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
@@ -184,8 +190,10 @@ async def test_cluster_register_rejects_resource_id_owned_by_another_client(monk
     session = _Session(cluster)
     mock_store = AsyncMock()
     mock_store.get = AsyncMock(return_value=cluster)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
+    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_transaction", lambda _e: mock_store)
+    monkeypatch.setattr(
+        "execution_plane.commands.clusters.ExecutionTargetStore.from_transaction", lambda _e: AsyncMock()
+    )
     mock_registrar = AsyncMock()
     monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
 
@@ -223,8 +231,10 @@ async def test_cluster_provision_passes_is_default_to_registrar(
     mock_registrar.provision = AsyncMock(return_value=cluster)
     mock_store = AsyncMock()
     mock_store.get = AsyncMock(return_value=None)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
+    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_transaction", lambda _e: mock_store)
+    monkeypatch.setattr(
+        "execution_plane.commands.clusters.ExecutionTargetStore.from_transaction", lambda _e: AsyncMock()
+    )
     monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
 
     payload = payload_class(
