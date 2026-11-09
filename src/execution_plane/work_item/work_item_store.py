@@ -45,6 +45,16 @@ _COMPLETION_NOTIFICATION_CLAIM_SECONDS = 30
 class WorkStore(StoreBase):
     """Persist work item lifecycle transitions and own database resources."""
 
+    async def check_ready(self) -> None:
+        """Verify database connectivity and work_items readability.
+
+        Raises on any database error. Used by the execution-plane-healthz
+        readiness probe (AAP-93327); deliberately schema-aware through the
+        ORM model so it works regardless of the connection's search_path.
+        """
+        async with self._session_context() as session:
+            await session.execute(select(col(WorkItem.id)).limit(0))
+
     async def dispatch(
         self,
         client_id: str,

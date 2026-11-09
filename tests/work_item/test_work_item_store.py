@@ -1238,3 +1238,27 @@ async def test_reconciliation_preserves_initialized_completion_notification(stat
     after = {key: value for key, value in item.model_dump().items() if key.startswith("completion_notification_")}
     assert after == before
     await store.close()
+
+
+async def test_check_ready_executes_bounded_work_items_select_without_commit() -> None:
+    session = _Session()
+    store = WorkStore.from_session(session)  # type: ignore[arg-type]
+
+    await store.check_ready()
+
+    session.execute.assert_awaited_once()
+    statement = session.execute.await_args.args[0]
+    compiled = statement.compile(compile_kwargs={"literal_binds": True})
+    assert "FROM execution_plane.work_items" in str(compiled)
+    assert statement._limit == 0
+    assert session.commits == 0
+    assert session.rollbacks == 0
+
+
+async def test_check_ready_propagates_database_errors() -> None:
+    session = _Session()
+    session.execute = AsyncMock(side_effect=RuntimeError("connection refused"))
+    store = WorkStore.from_session(session)  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        await store.check_ready()
