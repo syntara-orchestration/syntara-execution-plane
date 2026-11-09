@@ -45,6 +45,7 @@ only-include = [
 [project.scripts]
 execution-plane-worker = "execution_plane.worker:main"
 execution-plane-api = "execution_plane.api.main:main"
+execution-plane-healthz = "execution_plane.healthz:main"
 
 [project.urls]
 Repository = "https://github.com/syntara-orchestration/syntara-execution-plane"
