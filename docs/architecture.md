@@ -39,7 +39,7 @@ flowchart TB
         Placement[Target placement]
         WorkerManager[Worker manager]
         CredentialResolver[Credential resolver]
-        CompletionOutbox[Completion outbox]
+        CompletionNotifier[Completion notifier]
         ResourceMonitor[Resource monitor]
     end
 
@@ -62,8 +62,8 @@ flowchart TB
     WorkerManager --> KubernetesAPI
     WorkerManager --> PluginWorkload
     CredentialResolver --> CredentialSource
-    WorkerManager --> CompletionOutbox
-    CompletionOutbox --> CompletionSink
+    WorkerManager --> CompletionNotifier
+    CompletionNotifier --> CompletionSink
     ResourceMonitor --> CredentialResolver
     ResourceMonitor --> KubernetesAPI
     KubernetesAPI --> NetworkPolicy
@@ -89,7 +89,7 @@ flowchart TB
         ResourceMonitor[Resource monitor]
         DrainMonitor[Drain monitor]
         PolicyReconciler[Orphan policy reconciler]
-        CompletionOutbox[Completion outbox]
+        CompletionNotifier[Completion notifier]
     end
 
     AO -- "HTTPS + service JWT" --> Ingress
@@ -100,8 +100,8 @@ flowchart TB
     WorkerManager -- "in-process reference" --> CredentialResolver
     CredentialResolver -- "HTTPS + deployment-configured mTLS" --> AO
     WorkerManager -- "HTTPS + bearer token" --> Kube
-    WorkerManager -- "in-process handoff" --> CompletionOutbox
-    CompletionOutbox -- "HTTPS + deployment-configured mTLS" --> AO
+    WorkerManager -- "in-process handoff" --> CompletionNotifier
+    CompletionNotifier -- "HTTPS + deployment-configured mTLS" --> AO
     ResourceMonitor -- "in-process reference" --> CredentialResolver
     ResourceMonitor -- "HTTPS + bearer token" --> Kube
     ResourceMonitor -- "SQL / TLS" --> DB
@@ -116,7 +116,7 @@ flowchart TB
 | --- | --- |
 | AO | User authorization, workflow orchestration, user-facing workflow state, integration configuration, credential resolution, and the command that requests work. |
 | EP | Durable work state, target and cluster bindings, placement decisions, execution attempts, result persistence, completion delivery, and execution diagnostics. |
-| PostgreSQL | Durable state for work, targets, clusters, attempts, and completion delivery. |
+| PostgreSQL | Durable state for work, targets, clusters, attempts, and inline completion-delivery state on work items. |
 | Kubernetes | Workload scheduling, pod lifecycle, namespace isolation, network policy enforcement, and API-mediated access to the workload. |
 | Plugin workload | The workload ABI, execution semantics, progress and result events, and cooperative cancellation. |
 | Plugin SDK | The versioned gRPC contract and generated bindings shared by EP and workload images. |
@@ -222,16 +222,16 @@ sequenceDiagram
 ```mermaid
 flowchart TB
     Start([Terminal result received]) --> Persist[Commit result and status]
-    Persist --> Outbox[Create or mark pending completion event]
-    Outbox --> Send[Send callback to AO]
+    Persist --> Notification[Mark completion notification pending on WorkItem]
+    Notification --> Send[Send callback to AO]
     Send --> Receipt{Valid receipt?}
     Receipt -- yes --> Delivered[Mark delivered]
     Receipt -- no --> Retry[Schedule bounded retry]
     Retry --> Send
 
     Ambiguous([Result lost after Execute may have started]) --> Fence[Stop claim lease and mark reconciliation required]
-    Fence --> UnknownOutbox[Emit outcome_unknown completion]
-    UnknownOutbox --> Investigate[Operator investigation and explicit new request]
+    Fence --> UnknownNotification[Mark outcome_unknown completion notification]
+    UnknownNotification --> Investigate[Operator investigation and explicit new request]
     PreExecute([Failure before Execute submitted]) --> Requeue[Requeue with backoff]
 ```
 
@@ -330,7 +330,7 @@ stateDiagram-v2
 | Workload network | Per-attempt NetworkPolicy, ingress denied, DNS permitted, operator-configured egress allow and deny ranges. |
 | Workload ABI | Pinned plugin SDK contract, Health/Execute/Cancel semantics, one invocation per execution attempt, progress and terminal events on a bounded gRPC stream. |
 | Result safety | Result committed before resource cleanup, claim-owner and claim-generation fencing, no automatic rerun after Execute may have started. |
-| Completion delivery | Durable outbox, at-least-once delivery, exponential backoff with jitter, receipt validation. |
+| Completion delivery | Durable WorkItems-table state, at-least-once delivery, exponential backoff with jitter, receipt validation. |
 | Credential handling | Opaque references only in durable state, short-lived resolution through AO, no raw credential logging or API exposure. |
 | Logging and diagnostics | Structured logs, bounded Kubernetes response bodies, sanitized work-item errors, no raw credentials or private payloads in results. |
 | Image provenance | Image reference is caller-supplied; EP does not independently enforce registry policy or digest pinning. |
