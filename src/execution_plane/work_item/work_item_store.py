@@ -53,7 +53,7 @@ class WorkStore(StoreBase):
         ORM model so it works regardless of the connection's search_path.
         """
         async with self._session_context() as session:
-            await session.execute(select(WorkItem.id).limit(0))
+            await session.execute(select(col(WorkItem.id)).limit(0))
 
     async def dispatch(
         self,
