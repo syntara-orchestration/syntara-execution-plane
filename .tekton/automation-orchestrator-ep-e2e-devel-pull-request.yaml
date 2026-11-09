@@ -50,6 +50,18 @@ spec:
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
       value: feat/ANSTRAT-1803
+    # VALIDATION PIN (AAP-93327, throwaway PR): build the operator from the
+    # branch carrying the EP worker readiness probe, so the deployed stack
+    # pairs it with this PR's head — which carries the execution-plane-healthz
+    # CLI the probe execs (this branch is based on
+    # goneri/aap-93327-healthz, syntara-execution-plane#171).
+    # Drop this PR once #171 and automation-orchestrator-operator#1715 merge.
+    - name: ao-operator-git-url
+      value: https://github.com/automation-nexus/automation-orchestrator-operator.git
+    - name: ao-operator-revision
+      value: goneri/aap-93327-ep-worker-readiness
+    - name: ao-operator-pr-number
+      value: '1715'
   pipelineRef:
     resolver: bundles
     params:
