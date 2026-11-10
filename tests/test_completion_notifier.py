@@ -95,7 +95,7 @@ async def test_completion_retries_correlate_with_work_item(lose_first_acknowledg
         assert body.command.command_type == "work.execute.completed"
         assert body.command.parent_command_id == item.id
         assert body.command.occurred_at == item.completed_at
-        assert body.command.payload["status"] == "succeeded"
+        assert body.command.payload["status"] == "completed"
         assert body.command.payload["result"] == {"stdout": "done"}
     assert service.record_completion_notification_delivery.await_count == (1 if lose_first_acknowledgement else 2)
     assert service.record_completion_notification_attempt.await_count == int(lose_first_acknowledgement)

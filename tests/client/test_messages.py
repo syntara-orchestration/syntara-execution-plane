@@ -37,7 +37,12 @@ CLUSTER = {
                 },
             },
         ),
-        (control, "Completion", "work.execute.completed", {"status": "succeeded", "result": {"stdout": "done"}}),
+        (
+            control,
+            "Completion",
+            "work.execute.completed",
+            {"status": control.CompletionStatus.COMPLETED, "result": {"stdout": "done"}},
+        ),
         (control, "CancelCommand", "command.cancel", {"target_command_id": RESOURCE_ID}),
         (clusters, "ClusterRegister", "cluster.register", CLUSTER),
         (clusters, "ClusterProvision", "cluster.provision", CLUSTER),
@@ -96,7 +101,10 @@ def test_completion_preserves_explicit_identity_and_time_across_reconstruction()
     command_id, parent_id = uuid4(), uuid4()
     occurred_at = datetime(2026, 10, 14, 10, tzinfo=timezone(timedelta(hours=1)))
     messages = [
-        control.Completion(status="succeeded", result={"stdout": "x" * (600 * 1024)}).to_message(
+        control.Completion(
+            status=control.CompletionStatus.COMPLETED,
+            result={"stdout": "x" * (600 * 1024)},
+        ).to_message(
             source_id="ep",
             destination_id="ao",
             client_id="ao",

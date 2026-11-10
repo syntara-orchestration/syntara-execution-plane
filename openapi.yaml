@@ -1303,13 +1303,7 @@ components:
     Completion:
       properties:
         status:
-          type: string
-          enum:
-          - succeeded
-          - failed
-          - cancelled
-          - outcome_unknown
-          title: Status
+          $ref: '#/components/schemas/CompletionStatus'
         result:
           additionalProperties: true
           type: object
@@ -1330,6 +1324,15 @@ components:
       title: Completion
       description: Terminal or uncertain work outcome delivered to the initiating
         client.
+    CompletionStatus:
+      type: string
+      enum:
+      - completed
+      - failed
+      - cancelled
+      - reconciliation_required
+      title: CompletionStatus
+      description: Work-item states that can be reported by a completion command.
     ClientKubernetesPlacement:
       properties:
         type:
