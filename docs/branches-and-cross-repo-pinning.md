@@ -70,7 +70,27 @@ pipeline treats its own repository as the thing under test:
 - **In stubs hosted in other repositories** (syntara's `ao-api-tests`,
   syntara-step-types' `step-types-e2e`), `ep-revision` selects the EP that
   gets deployed alongside the component under test: the stub's default
-  (`devel`) or a pinned branch for co-testing.
+  (`devel`) or a pinned branch for co-testing. A concrete example from
+  syntara's own history
+  ([`.tekton/automation-orchestrator-api-tests-devel-pull-request.yaml` at
+  `6de8af2`](https://github.com/syntara-orchestration/syntara/blob/6de8af2238b9931e49a55170b4cf02b392b1e93b/.tekton/automation-orchestrator-api-tests-devel-pull-request.yaml#L57-L60))
+  shows all three roles at once:
+
+  ```yaml
+  - name: ao-revision
+    value: '{{revision}}'          # syntara's own PR head: the component under test
+  - name: ao-operator-revision
+    value: AAP-90779-ep-from-source  # operator built from source (pattern 2)
+    # (+ ao-operator-git-url)
+  - name: ep-revision
+    value: v0.1.7                   # the EP pinned to a release *tag*
+  ```
+
+  The mirror of this repository's stubs: the hosting repo's PR head is the
+  component under test, and the other stack members are pinned around it.
+  Note that a pin can be a branch, a tag, or a SHA — a released tag like
+  `v0.1.7` is the right choice when the co-test needs a known-good EP
+  rather than a moving branch.
 - **In the `deploy-ao` task itself**, an empty `ep-revision` means "no EP
   path at all" — every EP step is skipped — unless the
   `ENABLE_EXECUTION_PLANE` flag is set, in which case aap-dev deploys the
