@@ -2,7 +2,6 @@
 
 from execution_plane.commands.clusters import (
     ClusterDeleteCommandHandler,
-    ClusterProvisionCommandHandler,
     ClusterRegisterCommandHandler,
     ClusterUpdateCommandHandler,
 )
@@ -20,7 +19,6 @@ def test_each_resource_command_has_a_dedicated_handler() -> None:
 
     expected_handlers = {
         "cluster.register": ClusterRegisterCommandHandler,
-        "cluster.provision": ClusterProvisionCommandHandler,
         "cluster.update": ClusterUpdateCommandHandler,
         "cluster.delete": ClusterDeleteCommandHandler,
         "execution_target.register": TargetRegisterCommandHandler,
@@ -32,3 +30,15 @@ def test_each_resource_command_has_a_dedicated_handler() -> None:
     for command_type, handler_type in expected_handlers.items():
         handler = registry.get(command_type, 1)
         assert type(handler) is handler_type
+
+
+def test_provision_command_is_removed_without_an_alias() -> None:
+    import pytest
+
+    from execution_plane_client.catalog import CommandCatalog
+    from execution_plane_client.errors import UnsupportedCommand
+
+    with pytest.raises(UnsupportedCommand):
+        CommandCatalog().definition("cluster.provision", 1)
+    with pytest.raises(UnsupportedCommand):
+        build_ep_registry().get("cluster.provision", 1)

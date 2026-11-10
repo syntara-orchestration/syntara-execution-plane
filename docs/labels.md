@@ -73,7 +73,7 @@ not interchangeable.
 |---|---|
 | **Label** | A `key → string value` advertised on a Cluster or ExecutionTarget. Extra labels on the target are allowed and do not rank it. |
 | **Selector** | A `key → string value` required by a work item. Every requested key must exist on the target with that exact value. |
-| **Natural label** | Written by provisioning / discovery from facts about the target (cluster type, cluster identity, observed region). |
+| **Natural label** | Written from explicit configuration and known facts about the target (cluster type, cluster identity, observed region). |
 | **User label** | Written by an administrator (or later a designer-facing control) to express intent the platform cannot infer. |
 | **Reserved key** | A key the EP itself interprets. Default routing does **not** use a label; it uses `ExecutionTarget.is_default`. |
 
@@ -100,7 +100,7 @@ requires the reconciler to understand live infrastructure.
 ## How labels get onto an ExecutionTarget
 
 An ExecutionTarget (and its Cluster) only matches work if someone has
-written the corresponding keys. Discovery cannot invent meaning from
+written the corresponding keys. Registration cannot invent meaning from
 an unlabeled host or cluster object.
 
 ### Natural labels (preferred for facts)

@@ -22,7 +22,7 @@ def _validator(document, name="MessageEnvelope") -> Draft202012Validator:
     )
 
 
-@pytest.mark.parametrize("kind", ["cluster.register", "cluster.provision"])
+@pytest.mark.parametrize("kind", ["cluster.register"])
 def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(kind) -> None:
     payload = {
         "resource_id": str(uuid4()),
@@ -123,7 +123,6 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
         "work.execute": "WorkExecute",
         "command.cancel": "CancelCommand",
         "cluster.register": "ClusterRegister",
-        "cluster.provision": "ClusterProvision",
         "cluster.update": "ClusterUpdate",
         "cluster.delete": "ClusterDelete",
         "execution_target.register": "TargetRegister",

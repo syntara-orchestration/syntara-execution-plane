@@ -32,12 +32,7 @@ async def test_concurrent_default_promotions_leave_exactly_one_default(migrated_
                 uuid4(),
                 actor_id,
             )
-            cluster = await cluster_store.record_discovery_state(
-                cluster.id,
-                ClusterStatus.ACTIVE,
-                None,
-                actor_id,
-            )
+            cluster = await cluster_store.activate(cluster.id, actor_id)
             assert cluster.status is ClusterStatus.ACTIVE
 
             target_ids = []

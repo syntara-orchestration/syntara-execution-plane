@@ -1,4 +1,4 @@
-"""Cluster commands provision and manage clusters, addressed by a caller-supplied id."""
+"""Cluster commands register and manage clusters, addressed by a caller-supplied id."""
 
 import hashlib
 import uuid
@@ -7,24 +7,19 @@ from typing import TypedDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from execution_plane.cluster.cluster_registrar import ClusterRegistrar, NoopDiscoveryMechanism
-from execution_plane.cluster.cluster_store import ClusterStore, DefaultClusterError
+from execution_plane.cluster.cluster_store import DEFAULT_ADVISORY_LOCK, ClusterStore, DefaultClusterError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
-from execution_plane.config.settings import get_settings
-from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.labels import user_labels
-from execution_plane.models.cluster import Cluster
+from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.clusters import (
     ClusterDelete,
-    ClusterProvision,
     ClusterRegister,
     ClusterUpdate,
 )
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
-from execution_plane_client.models.execution_target import KubernetesPlacement
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
 
 
@@ -50,9 +45,9 @@ def _validated_payload[T: CommandPayload](payload: CommandPayload, expected: typ
     return payload
 
 
-async def _advisory_lock(session: AsyncSession, client_id: str, resource_id: uuid.UUID) -> None:
+async def _advisory_lock(session: AsyncSession, resource_id: uuid.UUID) -> None:
     """Acquire a per-cluster advisory lock for the duration of the transaction."""
-    digest = hashlib.sha256(f"cluster:{client_id}:{resource_id}".encode()).digest()
+    digest = hashlib.sha256(f"cluster:{resource_id}".encode()).digest()
     await session.execute(select(func.pg_advisory_xact_lock(int.from_bytes(digest[:8], signed=True))))
 
 
@@ -60,67 +55,57 @@ def _cluster_result(cluster: Cluster) -> HandlingResult:
     return HandlingResult(ResourceReference(kind="cluster", resource_id=cluster.id))
 
 
-def _build_stores(context: EPCommandContext) -> tuple[ClusterStore, ExecutionTargetStore, ClusterRegistrar]:
-    cluster_store = ClusterStore.from_engine(context.engine)
-    target_store = ExecutionTargetStore.from_engine(context.engine)
-    registrar = ClusterRegistrar(cluster_store, target_store, NoopDiscoveryMechanism())
-    return cluster_store, target_store, registrar
-
-
 class ClusterRegisterCommandHandler:
-    """Provision or idempotently update a Cluster directly from install-time desired state."""
+    """Register a Cluster independently of its ExecutionTargets."""
 
     async def handle(
         self, message: MessageEnvelope, payload: CommandPayload, context: EPCommandContext
     ) -> HandlingResult:
-        """Provision the cluster and default target synchronously."""
+        """Atomically upsert caller-owned cluster configuration without creating targets."""
         del message
         command = _validated_payload(payload, ClusterRegister)
-        return await _provision_cluster(command, context)
-
-
-class ClusterProvisionCommandHandler:
-    """Provision a Cluster and its default target synchronously."""
-
-    async def handle(
-        self, message: MessageEnvelope, payload: CommandPayload, context: EPCommandContext
-    ) -> HandlingResult:
-        """Provision the cluster and default target synchronously."""
-        del message
-        command = _validated_payload(payload, ClusterProvision)
-        return await _provision_cluster(command, context)
-
-
-async def _provision_cluster(command: ClusterRegister, context: EPCommandContext) -> HandlingResult:
-    """Idempotently create or update the cluster at its caller-supplied id.
-
-    The id is the caller's physical Cluster UUID (shared with its AO Integration).
-    Reapplying the same id is a safe upsert; a id owned by another client is rejected.
-    """
-    desired_labels = user_labels(command.labels)
-    cluster_store, _, registrar = _build_stores(context)
-    sessions = async_sessionmaker(context.engine, expire_on_commit=False)
-
-    # Serialise concurrent requests for the same id and reject cross-client adoption.
-    async with sessions.begin() as session:
-        await _advisory_lock(session, context.client_id, command.resource_id)
-        existing = await cluster_store.get(command.resource_id)
-        if existing is not None and existing.source_client_id != context.client_id:
-            raise ProtocolConflict
-
-    cluster = await registrar.provision(
-        command.resource_id,
-        command.name,
-        command.endpoint,
-        command.credential_ref,
-        KubernetesPlacement(namespace=get_settings().default_workload_namespace),
-        SYSTEM_ACTOR_ID,
-        desired_labels,
-        source_client_id=context.client_id,
-        is_default=command.is_default,
-        ca_certificate=command.ca_certificate,
-    )
-    return _cluster_result(cluster)
+        sessions = async_sessionmaker(context.engine, expire_on_commit=False)
+        async with sessions.begin() as session:
+            await _advisory_lock(session, command.resource_id)
+            # Default selection also locks Cluster rows. Take its lock before any
+            # row lock so registration follows the same order as set_default.
+            await session.execute(select(func.pg_advisory_xact_lock(DEFAULT_ADVISORY_LOCK)))
+            existing = await session.get(Cluster, command.resource_id, with_for_update=True)
+            if existing is not None and existing.source_client_id != context.client_id:
+                raise ProtocolConflict
+            store = ClusterStore.from_transaction(session)
+            if existing is None:
+                await store.create(
+                    command.resource_id,
+                    command.name,
+                    command.endpoint,
+                    command.credential_ref,
+                    SYSTEM_ACTOR_ID,
+                    user_labels(command.labels),
+                    source_client_id=context.client_id,
+                    ca_certificate=command.ca_certificate,
+                )
+                await store.activate(command.resource_id, SYSTEM_ACTOR_ID)
+            else:
+                if existing.is_default and not command.enabled:
+                    raise DefaultClusterError
+                if existing.status is not ClusterStatus.ACTIVE:
+                    await store.reactivate(command.resource_id, updated_by=SYSTEM_ACTOR_ID)
+            cluster = await store.update(
+                command.resource_id,
+                updated_by=SYSTEM_ACTOR_ID,
+                name=command.name,
+                endpoint=command.endpoint,
+                credential_ref=command.credential_ref,
+                ca_certificate=command.ca_certificate,
+                enabled=command.enabled,
+                labels=user_labels(command.labels),
+            )
+            if command.is_default:
+                cluster = await store.set_default(cluster.id, SYSTEM_ACTOR_ID)
+            elif command.enabled:
+                cluster = await store.ensure_default(cluster.id, SYSTEM_ACTOR_ID)
+        return _cluster_result(cluster)
 
 
 def _cluster_update_fields(command: ClusterUpdate) -> _ClusterUpdateFields:
@@ -150,7 +135,7 @@ class ClusterUpdateCommandHandler:
         """Merge the patch with current cluster state and apply it atomically."""
         del message
         command = _validated_payload(payload, ClusterUpdate)
-        cluster_store, _, _ = _build_stores(context)
+        cluster_store = ClusterStore.from_engine(context.engine)
 
         existing = await cluster_store.get_for_client(context.client_id, command.resource_id)
         if existing is None:
@@ -181,7 +166,7 @@ class ClusterDeleteCommandHandler:
         """Initiate cluster deletion, rejecting attempts to delete the global default."""
         del message
         command = _validated_payload(payload, ClusterDelete)
-        cluster_store, _, _ = _build_stores(context)
+        cluster_store = ClusterStore.from_engine(context.engine)
 
         existing = await cluster_store.get_for_client(context.client_id, command.resource_id)
         if existing is None:

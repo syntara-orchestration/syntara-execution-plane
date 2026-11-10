@@ -1,302 +1,172 @@
-"""Cluster command handlers provision clusters directly using domain lifecycle operations."""
+"""Cluster registration owns one transaction and never manages targets."""
 
-from __future__ import annotations
-
-import uuid
 from datetime import UTC, datetime
-from typing import Self
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from execution_plane.cluster.cluster_store import DefaultClusterError
+from execution_plane.cluster.cluster_store import ClusterStore, DefaultClusterError
 from execution_plane.commands.clusters import (
     ClusterDeleteCommandHandler,
-    ClusterProvisionCommandHandler,
     ClusterRegisterCommandHandler,
+    ResourceNotFoundError,
 )
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.models.cluster import Cluster, ClusterStatus
-from execution_plane_client.commands.clusters import ClusterDelete, ClusterProvision, ClusterRegister
+from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister
 from execution_plane_client.errors import ProtocolConflict
 from execution_plane_client.protocol import MessageEnvelope
 
 
-def _active_cluster(*, is_default: bool = False, source_client_id: str = "ao") -> Cluster:
+def _cluster(*, status: ClusterStatus, is_default: bool = False) -> Cluster:
     now = datetime.now(UTC)
     return Cluster(
-        id=uuid.uuid4(),
+        id=uuid4(),
         name="cluster-a",
         endpoint="https://cluster.example",
-        credential_ref=uuid.uuid4(),
-        status=ClusterStatus.ACTIVE,
-        source_client_id=source_client_id,
-        is_default=is_default,
-        created_by=uuid.uuid4(),
+        credential_ref=uuid4(),
+        source_client_id="ao",
+        created_by=uuid4(),
         created_at=now,
-        updated_by=uuid.uuid4(),
+        updated_by=uuid4(),
         updated_at=now,
+        status=status,
+        is_default=is_default,
     )
 
 
-class _Session:
-    """Minimal session stub for advisory lock and get operations."""
-
-    def __init__(self, cluster: Cluster | None = None) -> None:
-        self.cluster = cluster
-
-    async def execute(self, _statement: object) -> None:
-        return None
-
-    async def get(self, model: object, _key: object, **_kwargs: object) -> Cluster | None:
-        if model is Cluster:
-            return self.cluster
-        return None
-
-
-class _Transaction:
-    def __init__(self, session: _Session) -> None:
-        self.session = session
-
-    async def __aenter__(self) -> _Session:
-        return self.session
-
-    async def __aexit__(self, *_: object) -> None:
-        return None
+def _registration(monkeypatch, existing=None) -> tuple[EPCommandContext, AsyncMock, AsyncMock, Mock]:
+    session = AsyncMock()
+    session.get.return_value = existing
+    transaction = AsyncMock()
+    transaction.__aenter__.return_value = session
+    sessions = Mock()
+    sessions.begin.return_value = transaction
+    monkeypatch.setattr("execution_plane.commands.clusters.async_sessionmaker", Mock(return_value=sessions))
+    store = AsyncMock(spec=ClusterStore)
+    cluster = existing or _cluster(status=ClusterStatus.ACTIVE)
+    store.update.return_value = cluster
+    store.ensure_default.return_value = cluster
+    store.set_default.return_value = cluster
+    borrowed = Mock(return_value=store)
+    monkeypatch.setattr(ClusterStore, "from_transaction", borrowed)
+    # Registration must not acquire a second session via an engine-backed store.
+    monkeypatch.setattr(ClusterStore, "from_engine", Mock(side_effect=AssertionError("nested acquisition")))
+    context = EPCommandContext(client_id="ao", engine=Mock(spec=AsyncEngine))
+    return context, store, session, borrowed
 
 
-class _SessionMaker:
-    def __init__(self, session: _Session) -> None:
-        self.session = session
-
-    def __call__(self, *_: object, **_kwargs: object) -> Self:
-        return self
-
-    def begin(self) -> _Transaction:
-        return _Transaction(self.session)
-
-
-def _context(engine: AsyncEngine) -> EPCommandContext:
-    return EPCommandContext(client_id="ao", engine=engine)
-
-
-def _mock_context(monkeypatch: pytest.MonkeyPatch, session: _Session) -> EPCommandContext:
-    engine = Mock(spec=AsyncEngine)
-    monkeypatch.setattr(
-        "execution_plane.commands.clusters.async_sessionmaker",
-        lambda *_args, **_kwargs: _SessionMaker(session),
-    )
-    return _context(engine)
-
-
-@pytest.mark.asyncio
-async def test_cluster_register_cleanses_internal_labels(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = _Session()
-    provisioned = _active_cluster()
-    mock_registrar = AsyncMock()
-    mock_registrar.provision = AsyncMock(return_value=provisioned)
-    mock_store = AsyncMock()
-    mock_store.get = AsyncMock(return_value=None)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
-
-    payload = ClusterRegister(
-        resource_id=uuid.uuid4(),
+async def test_register_borrows_transaction_and_cleanses_labels(monkeypatch):
+    context, store, session, borrowed = _registration(monkeypatch)
+    command = ClusterRegister(
+        resource_id=uuid4(),
         name="cluster-a",
         endpoint="https://cluster.example",
-        credential_ref=uuid.uuid4(),
+        credential_ref=uuid4(),
         labels={"team": "platform", "_cluster_id": "spoofed", "_internal": "spoofed"},
     )
-
-    context = _mock_context(monkeypatch, session)
-    await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), payload, context)
-
-    call_labels = mock_registrar.provision.call_args.args[6]
-    assert "_cluster_id" not in call_labels
-    assert "_internal" not in call_labels
-    assert call_labels == {"team": "platform"}
-
-
-@pytest.mark.asyncio
-async def test_cluster_register_returns_cluster_id_in_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = _Session()
-    cluster = _active_cluster()
-    mock_registrar = AsyncMock()
-    mock_registrar.provision = AsyncMock(return_value=cluster)
-    mock_store = AsyncMock()
-    mock_store.get = AsyncMock(return_value=None)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
-
-    payload = ClusterRegister(
-        resource_id=uuid.uuid4(),
-        name="cluster-a",
-        endpoint="https://cluster.example",
-        credential_ref=uuid.uuid4(),
-    )
-
-    context = _mock_context(monkeypatch, session)
-    result = await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), payload, context)
-
-    assert result.resource is not None
+    result = await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), command, context)
+    borrowed.assert_called_once_with(session)
+    assert store.create.call_args.args[5] == {"team": "platform"}
+    assert store.update.call_args.kwargs["labels"] == {"team": "platform"}
+    store.activate.assert_awaited_once()
     assert result.resource.kind == "cluster"
-    assert result.resource.resource_id == cluster.id
+    assert result.resource.resource_id == store.update.return_value.id
 
 
-@pytest.mark.asyncio
-async def test_cluster_register_upserts_when_resource_id_already_owned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Re-applying the same resource_id owned by the same client is an idempotent upsert."""
-    resource_id = uuid.uuid4()
-    cluster = _active_cluster()
-    cluster.id = resource_id
-    session = _Session(cluster)
-    mock_store = AsyncMock()
-    mock_store.get = AsyncMock(return_value=cluster)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    mock_registrar = AsyncMock()
-    mock_registrar.provision = AsyncMock(return_value=cluster)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
-
-    payload = ClusterRegister(
-        resource_id=resource_id,
-        name="cluster-a",
-        endpoint="https://cluster.example",
-        credential_ref=uuid.uuid4(),
+@pytest.mark.parametrize("status", [ClusterStatus.ACTIVE, ClusterStatus.DRAINING, ClusterStatus.ERROR])
+async def test_register_updates_owned_cluster_and_reactivates_when_needed(monkeypatch, status):
+    cluster = _cluster(status=status)
+    context, store, _, _ = _registration(monkeypatch, cluster)
+    command = ClusterRegister(
+        resource_id=cluster.id,
+        name="renamed",
+        endpoint=cluster.endpoint,
+        credential_ref=uuid4(),
     )
-    context = _mock_context(monkeypatch, session)
-    result = await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), payload, context)
-
-    mock_registrar.provision.assert_called_once()
-    assert mock_registrar.provision.call_args.args[0] == resource_id
-    assert result.resource.resource_id == cluster.id
+    await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), command, context)
+    store.create.assert_not_awaited()
+    assert store.update.call_args.kwargs["name"] == "renamed"
+    assert store.reactivate.await_count == (status is not ClusterStatus.ACTIVE)
 
 
-@pytest.mark.asyncio
-async def test_cluster_register_rejects_resource_id_owned_by_another_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A resource_id already owned by a different client raises ProtocolConflict."""
-    resource_id = uuid.uuid4()
-    cluster = _active_cluster(source_client_id="other-client")
-    cluster.id = resource_id
-    session = _Session(cluster)
-    mock_store = AsyncMock()
-    mock_store.get = AsyncMock(return_value=cluster)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    mock_registrar = AsyncMock()
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
-
-    payload = ClusterRegister(
-        resource_id=resource_id,
-        name="cluster-a",
-        endpoint="https://cluster.example",
-        credential_ref=uuid.uuid4(),
+async def test_register_rejects_another_clients_cluster(monkeypatch):
+    cluster = _cluster(status=ClusterStatus.ACTIVE)
+    cluster.source_client_id = "other-client"
+    context, store, _, borrowed = _registration(monkeypatch, cluster)
+    command = ClusterRegister(
+        resource_id=cluster.id,
+        name=cluster.name,
+        endpoint=cluster.endpoint,
+        credential_ref=uuid4(),
     )
-    context = _mock_context(monkeypatch, session)
-    handler = ClusterRegisterCommandHandler()
-    message = Mock(spec=MessageEnvelope)
     with pytest.raises(ProtocolConflict):
-        await handler.handle(message, payload, context)
+        await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), command, context)
+    borrowed.assert_not_called()
+    store.update.assert_not_awaited()
 
-    mock_registrar.provision.assert_not_called()
 
-
-@pytest.mark.parametrize(
-    ("payload_class", "handler_class"),
-    [
-        (ClusterRegister, ClusterRegisterCommandHandler),
-        (ClusterProvision, ClusterProvisionCommandHandler),
-    ],
-)
-@pytest.mark.asyncio
-async def test_cluster_provision_passes_is_default_to_registrar(
-    monkeypatch: pytest.MonkeyPatch,
-    payload_class: type[ClusterRegister],
-    handler_class: type[ClusterRegisterCommandHandler | ClusterProvisionCommandHandler],
-) -> None:
-    session = _Session()
-    cluster = _active_cluster(is_default=True)
-    mock_registrar = AsyncMock()
-    mock_registrar.provision = AsyncMock(return_value=cluster)
-    mock_store = AsyncMock()
-    mock_store.get = AsyncMock(return_value=None)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: mock_registrar)
-
-    payload = payload_class(
-        resource_id=uuid.uuid4(),
-        name="cluster-a",
-        endpoint="https://cluster.example",
-        credential_ref=uuid.uuid4(),
-        is_default=True,
+@pytest.mark.parametrize("is_default", [False, True])
+async def test_register_selects_default_explicitly_or_bootstraps_it(monkeypatch, is_default):
+    context, store, _, _ = _registration(monkeypatch)
+    command = ClusterRegister(
+        resource_id=uuid4(),
+        name="cluster",
+        endpoint="https://cluster.test",
+        credential_ref=uuid4(),
+        is_default=is_default,
     )
-
-    context = _mock_context(monkeypatch, session)
-    await handler_class().handle(Mock(spec=MessageEnvelope), payload, context)
-
-    assert mock_registrar.provision.call_args.kwargs["is_default"] is True
+    await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), command, context)
+    assert store.set_default.await_count == is_default
+    assert store.ensure_default.await_count == (not is_default)
 
 
-@pytest.mark.asyncio
-async def test_cluster_delete_rejects_the_current_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    cluster = _active_cluster(is_default=True)
-    session = _Session(cluster)
-    mock_store = AsyncMock()
-    mock_store.get_for_client = AsyncMock(return_value=cluster)
-    mock_store.request_delete = AsyncMock(side_effect=DefaultClusterError)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: AsyncMock())
+async def test_register_disabled_cluster_does_not_make_it_default(monkeypatch):
+    context, store, _, _ = _registration(monkeypatch)
+    command = ClusterRegister(
+        resource_id=uuid4(),
+        name="cluster",
+        endpoint="https://cluster.test",
+        credential_ref=uuid4(),
+        enabled=False,
+    )
+    await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), command, context)
+    assert store.update.call_args.kwargs["enabled"] is False
+    store.ensure_default.assert_not_awaited()
 
-    payload = ClusterDelete(resource_id=cluster.id)
-    context = _mock_context(monkeypatch, session)
 
-    handler = ClusterDeleteCommandHandler()
-    message = Mock(spec=MessageEnvelope)
+async def test_register_cannot_disable_current_default(monkeypatch):
+    cluster = _cluster(status=ClusterStatus.ACTIVE, is_default=True)
+    context, store, _, _ = _registration(monkeypatch, cluster)
+    command = ClusterRegister(
+        resource_id=cluster.id,
+        name=cluster.name,
+        endpoint=cluster.endpoint,
+        credential_ref=uuid4(),
+        enabled=False,
+    )
     with pytest.raises(DefaultClusterError):
-        await handler.handle(message, payload, context)
+        await ClusterRegisterCommandHandler().handle(Mock(spec=MessageEnvelope), command, context)
+    store.update.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_cluster_delete_raises_not_found_when_cluster_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    from execution_plane.commands.clusters import ResourceNotFoundError
-
-    session = _Session()
-    mock_store = AsyncMock()
-    mock_store.get_for_client = AsyncMock(return_value=None)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: AsyncMock())
-
-    payload = ClusterDelete(resource_id=uuid.uuid4())
-    context = _mock_context(monkeypatch, session)
-
+@pytest.mark.parametrize("outcome", ["missing", "default", "owned"])
+async def test_cluster_delete_checks_ownership_and_default(monkeypatch, outcome):
+    cluster = _cluster(status=ClusterStatus.ACTIVE, is_default=outcome == "default")
+    store = AsyncMock(spec=ClusterStore)
+    store.get_for_client.return_value = None if outcome == "missing" else cluster
+    store.request_delete.return_value = cluster
+    if outcome == "default":
+        store.request_delete.side_effect = DefaultClusterError
+    monkeypatch.setattr(ClusterStore, "from_engine", Mock(return_value=store))
+    context = EPCommandContext(client_id="ao", engine=Mock(spec=AsyncEngine))
     handler = ClusterDeleteCommandHandler()
-    message = Mock(spec=MessageEnvelope)
-    with pytest.raises(ResourceNotFoundError):
-        await handler.handle(message, payload, context)
-
-
-@pytest.mark.asyncio
-async def test_cluster_delete_drains_an_owned_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Deleting an owned cluster by id drains it and returns its id in the receipt."""
-    cluster = _active_cluster()
-    session = _Session(cluster)
-    mock_store = AsyncMock()
-    mock_store.get_for_client = AsyncMock(return_value=cluster)
-    mock_store.request_delete = AsyncMock(return_value=cluster)
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterStore.from_engine", lambda _e: mock_store)
-    monkeypatch.setattr("execution_plane.commands.clusters.ExecutionTargetStore.from_engine", lambda _e: AsyncMock())
-    monkeypatch.setattr("execution_plane.commands.clusters.ClusterRegistrar", lambda *_a, **_k: AsyncMock())
-
-    payload = ClusterDelete(resource_id=cluster.id)
-    context = _mock_context(monkeypatch, session)
-
-    result = await ClusterDeleteCommandHandler().handle(Mock(spec=MessageEnvelope), payload, context)
-
-    mock_store.request_delete.assert_called_once()
-    assert result.resource.resource_id == cluster.id
+    command = ClusterDelete(resource_id=cluster.id)
+    if outcome == "owned":
+        result = await handler.handle(Mock(spec=MessageEnvelope), command, context)
+        assert result.resource.resource_id == cluster.id
+    else:
+        with pytest.raises(ResourceNotFoundError if outcome == "missing" else DefaultClusterError):
+            await handler.handle(Mock(spec=MessageEnvelope), command, context)

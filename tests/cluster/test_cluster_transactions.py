@@ -17,7 +17,7 @@ _MUTATIONS = (
     "set_default",
     "ensure_default",
     "reactivate",
-    "record_discovery_state",
+    "activate",
     "mark_drain_failed",
     "request_delete",
     "finalize_delete",
@@ -33,9 +33,9 @@ def _mutation(method: str) -> tuple[AsyncMock, tuple[object, ...], dict[str, obj
         args = (cluster.id, cluster.name, cluster.endpoint, cluster.credential_ref, actor)
     elif method in {"update", "reactivate"}:
         kwargs = {"updated_by": actor, "name": "changed"} if method == "update" else {"updated_by": actor}
-    elif method == "record_discovery_state":
+    elif method == "activate":
         cluster.status = ClusterStatus.REGISTERING
-        args = (cluster.id, ClusterStatus.ACTIVE, None, actor)
+        args = (cluster.id, actor)
     elif method == "mark_drain_failed":
         args = (cluster.id, "drain failed", actor)
     elif method == "finalize_delete":

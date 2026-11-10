@@ -131,9 +131,6 @@ jobs:
       EP_CREDENTIAL_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       EP_KIND_CREDENTIAL_REF: 3679517c-ba49-5f27-868e-37e42d1184c1
       EP_API_URL: http://127.0.0.1:8001
-      # The default target is provisioned into this namespace, where the kind
-      # deploy applies the dispatcher RBAC (namespace left the cluster command).
-      EP_DEFAULT_WORKLOAD_NAMESPACE: execution-plane
       EP_AO_JWT_PUBLIC_KEY_PATH: .secrets/ao-jwt-public.pem
       EP_AO_JWT_ISSUER: http://localhost:8000
 
@@ -146,8 +143,8 @@ jobs:
         run: make secrets
 
       # Stand up a throwaway kind cluster. deploy_kind_execution_target.py registers
-      # it via the EP API, which provisions the Cluster and its default
-      # ExecutionTarget synchronously through the production command handler.
+      # its Cluster and then explicitly registers an ExecutionTarget through
+      # the production command handlers, using the namespace with dispatcher RBAC.
       - name: Create kind cluster
         uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:

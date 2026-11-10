@@ -92,7 +92,6 @@ class _ClusterStore:
         self.clusters = clusters
         self.finalized: list[uuid.UUID] = []
         self.failed: list[uuid.UUID] = []
-        self.recorded_discovery_failures = 0
         self.recorded_drain_failures = 0
 
     async def list(self, **_: object) -> list[Cluster]:
@@ -100,13 +99,6 @@ class _ClusterStore:
 
     async def finalize_delete(self, cluster_id: uuid.UUID) -> None:
         self.finalized.append(cluster_id)
-
-    async def record_discovery_state(
-        self, cluster_id: uuid.UUID, _status: ClusterStatus, _message: str, _updated_by: uuid.UUID
-    ) -> Cluster:
-        self.failed.append(cluster_id)
-        self.recorded_discovery_failures += 1
-        return self.clusters[0]
 
     async def mark_drain_failed(self, cluster_id: uuid.UUID, _message: str, _updated_by: uuid.UUID) -> Cluster:
         self.failed.append(cluster_id)
@@ -371,7 +363,6 @@ async def test_monitor_marks_a_cluster_failed_when_cluster_drain_raises() -> Non
     await monitor._drain_cluster(cluster.id, uuid.uuid4())
 
     assert cluster_store.failed == [cluster.id]
-    assert cluster_store.recorded_discovery_failures == 0
     assert cluster_store.recorded_drain_failures == 1
 
 

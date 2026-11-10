@@ -49,13 +49,6 @@ DEFAULT_ADVISORY_LOCK = 703571
 class ClusterStore(StoreBase):
     """Persist Cluster state and own the database resources it uses."""
 
-    @staticmethod
-    def _can_record_discovery_state(cluster: Cluster) -> bool:
-        """Return whether a Cluster can have its discovery state set."""
-        if not cluster.enabled:
-            return False
-        return cluster.status is ClusterStatus.REGISTERING
-
     async def create(
         self,
         cluster_id: uuid.UUID,
@@ -288,24 +281,21 @@ class ClusterStore(StoreBase):
                 await self._rollback(session)
                 raise
 
-    async def record_discovery_state(
+    async def activate(
         self,
         cluster_id: uuid.UUID,
-        status: ClusterStatus,
-        status_message: str | None,
         updated_by: uuid.UUID,
     ) -> Cluster:
-        """Persist registration/discovery state on the existing Cluster."""
+        """Activate a newly registered Cluster without creating ExecutionTargets."""
         async with self._session_context() as session:
             try:
                 cluster = await session.get(Cluster, cluster_id, with_for_update=True)
                 if cluster is None:
                     raise ClusterNotFoundError(cluster_id)  # noqa: TRY301
-                if not self._can_record_discovery_state(cluster):
+                if not cluster.enabled or cluster.status is not ClusterStatus.REGISTERING:
                     return self._without_secret(cluster)
-                cluster.status = status
-                cluster.enabled = status is not ClusterStatus.ERROR
-                cluster.status_message = status_message
+                cluster.status = ClusterStatus.ACTIVE
+                cluster.status_message = None
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await self._commit(session)

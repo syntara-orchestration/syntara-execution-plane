@@ -61,12 +61,6 @@ class ClusterRegister(ClusterConfigBase, ResourceIdentity, CommandPayload):
         return self
 
 
-class ClusterProvision(ClusterRegister):
-    """Provision through the same cluster and default-target reconciler."""
-
-    command_type: ClassVar[str] = "cluster.provision"
-
-
 class ClusterDelete(ResourceIdentity, CommandPayload):
     """Disable and drain an existing cluster addressed by id."""
 

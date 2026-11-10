@@ -40,7 +40,6 @@ CLUSTER = {
         (control, "Completion", "work.execute.completed", {"status": "succeeded", "result": {"stdout": "done"}}),
         (control, "CancelCommand", "command.cancel", {"target_command_id": RESOURCE_ID}),
         (clusters, "ClusterRegister", "cluster.register", CLUSTER),
-        (clusters, "ClusterProvision", "cluster.provision", CLUSTER),
         (
             clusters,
             "ClusterUpdate",
@@ -131,7 +130,7 @@ def test_cluster_patch_keeps_explicit_null_and_omits_unchanged_fields():
     assert parsed.model_fields_set == {"resource_id", "ca_certificate"}
 
 
-@pytest.mark.parametrize("payload_class", [clusters.ClusterRegister, clusters.ClusterProvision])
+@pytest.mark.parametrize("payload_class", [clusters.ClusterRegister])
 def test_cluster_creation_commands_can_set_the_global_default(payload_class):
     message = payload_class(
         resource_id=UUID(RESOURCE_ID),

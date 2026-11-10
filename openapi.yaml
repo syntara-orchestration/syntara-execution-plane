@@ -1113,53 +1113,6 @@ components:
       - resource_id
       title: ClusterDelete
       description: Disable and drain an existing cluster addressed by id.
-    ClusterProvision:
-      properties:
-        resource_id:
-          type: string
-          format: uuid
-          title: Resource Id
-        name:
-          type: string
-          maxLength: 255
-          minLength: 1
-          title: Name
-        endpoint:
-          type: string
-          maxLength: 2048
-          title: Endpoint
-        credential_ref:
-          type: string
-          format: uuid
-          title: Credential Ref
-        ca_certificate:
-          anyOf:
-          - type: string
-            maxLength: 65536
-          - type: 'null'
-          title: Ca Certificate
-        labels:
-          additionalProperties:
-            type: string
-          type: object
-          title: Labels
-        enabled:
-          type: boolean
-          title: Enabled
-          default: true
-        is_default:
-          type: boolean
-          title: Is Default
-          default: false
-      additionalProperties: false
-      type: object
-      required:
-      - resource_id
-      - name
-      - endpoint
-      - credential_ref
-      title: ClusterProvision
-      description: Provision through the same cluster and default-target reconciler.
     ClusterRegister:
       properties:
         resource_id:
@@ -1261,7 +1214,6 @@ components:
     Command:
       oneOf:
       - $ref: '#/components/schemas/ClusterDeleteCommandV1'
-      - $ref: '#/components/schemas/ClusterProvisionCommandV1'
       - $ref: '#/components/schemas/ClusterRegisterCommandV1'
       - $ref: '#/components/schemas/ClusterUpdateCommandV1'
       - $ref: '#/components/schemas/CancelCommandV1'
@@ -1276,7 +1228,6 @@ components:
         propertyName: command_type
         mapping:
           cluster.delete: '#/components/schemas/ClusterDeleteCommandV1'
-          cluster.provision: '#/components/schemas/ClusterProvisionCommandV1'
           cluster.register: '#/components/schemas/ClusterRegisterCommandV1'
           cluster.update: '#/components/schemas/ClusterUpdateCommandV1'
           command.cancel: '#/components/schemas/CancelCommandV1'
@@ -1673,40 +1624,6 @@ components:
       - payload
       - occurred_at
       title: ClusterDeleteCommandV1
-      description: One versioned operation; participants persist only its domain effects.
-    ClusterProvisionCommandV1:
-      properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
-        command_type:
-          type: string
-          const: cluster.provision
-        command_revision:
-          type: integer
-          const: 1
-        payload:
-          $ref: '#/components/schemas/ClusterProvision'
-        occurred_at:
-          type: string
-          format: date-time
-          title: Occurred At
-      additionalProperties: false
-      type: object
-      required:
-      - command_id
-      - command_type
-      - command_revision
-      - payload
-      - occurred_at
-      title: ClusterProvisionCommandV1
       description: One versioned operation; participants persist only its domain effects.
     ClusterRegisterCommandV1:
       properties:

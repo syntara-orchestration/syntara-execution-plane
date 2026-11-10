@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from execution_plane_client.commands.base import CommandPayload
-from execution_plane_client.commands.clusters import ClusterDelete, ClusterProvision, ClusterRegister, ClusterUpdate
+from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
 from execution_plane_client.commands.control import CancelCommand, Completion
 from execution_plane_client.commands.credentials import CredentialResolve
 from execution_plane_client.commands.targets import TargetDelete, TargetHealth, TargetRegister, TargetUpdate
@@ -31,7 +31,6 @@ class CommandCatalog:
             Completion,
             CredentialResolve,
             ClusterRegister,
-            ClusterProvision,
             ClusterUpdate,
             ClusterDelete,
             TargetRegister,
