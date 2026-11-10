@@ -50,6 +50,15 @@ spec:
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
       value: feat/ANSTRAT-1803
+    # VALIDATION PIN (throwaway PR): aap-dev from the branch that registers
+    # ExecutionTargets explicitly (ansible/aap-dev#1179), pairing with this
+    # PR's base — the EP branch that stops auto-provisioning the default
+    # target (syntara-execution-plane#173). A green run proves the
+    # coordinated pair works: cluster registration no longer auto-creates
+    # the target, and aap-dev's hook creates it explicitly. Drop once
+    # #1179 and #173 merge.
+    - name: aap-dev-revision
+      value: codex/explicit-ep-target-registration
   pipelineRef:
     resolver: bundles
     params:
