@@ -50,6 +50,12 @@ spec:
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
       value: feat/ANSTRAT-1803
+    # VALIDATION PIN (ansible/aap-dev#1184, throwaway PR): build the syntara
+    # image from the aap-dev branch that drops git-core, proving the image
+    # builds from source with the PyPI execution-plane-client and the full
+    # AO + EP stack deploys without git. Drop once #1184 merges.
+    - name: aap-dev-revision
+      value: goneri/remove-git-core-syntara-image
   pipelineRef:
     resolver: bundles
     params:
