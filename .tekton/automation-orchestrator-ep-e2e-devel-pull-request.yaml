@@ -43,9 +43,13 @@ spec:
     - name: pipeline-github-repo
       value: "{{repo_name}}"
     - name: pipeline-github-pr-revision
-      value: "{{revision}}"
+      # VALIDATION PIN: deploy the EP half of the AAP-99749 cancellation work
+      # (#174's branch) rather than this throwaway PR's head, so the run
+      # co-tests the git-core-free syntara image against the EP revision
+      # that pairs with syntara#1214.
+      value: AAP-99749
     - name: pipeline-github-pr-number
-      value: "{{pull_request_number}}"
+      value: '174'
     - name: ao-git-url
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
