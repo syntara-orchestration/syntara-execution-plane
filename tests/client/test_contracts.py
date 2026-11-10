@@ -62,7 +62,7 @@ def test_completion_is_a_command_with_a_parent():
             command_id=command_id,
             command_type="work.execute.completed",
             command_revision=1,
-            payload={"status": "succeeded", "result": {}},
+            payload={"status": "completed", "result": {}},
             occurred_at=datetime.now(UTC),
         ),
     )

@@ -10,7 +10,7 @@ import httpx
 import structlog
 
 from execution_plane.callback_client import CallbackHTTPClient
-from execution_plane_client.commands.control import Completion
+from execution_plane_client.commands.control import Completion, CompletionStatus
 from execution_plane_client.commands.results import TransportReceipt
 from execution_plane_client.models.work_item import WorkItemStatus
 from execution_plane_client.protocol import ResourceReference
@@ -68,10 +68,10 @@ class CompletionNotifier:
             return
 
         statuses = {
-            WorkItemStatus.COMPLETED: "succeeded",
-            WorkItemStatus.FAILED: "failed",
-            WorkItemStatus.CANCELLED: "cancelled",
-            WorkItemStatus.RECONCILIATION_REQUIRED: "outcome_unknown",
+            WorkItemStatus.COMPLETED: CompletionStatus.COMPLETED,
+            WorkItemStatus.FAILED: CompletionStatus.FAILED,
+            WorkItemStatus.CANCELLED: CompletionStatus.CANCELLED,
+            WorkItemStatus.RECONCILIATION_REQUIRED: CompletionStatus.RECONCILIATION_REQUIRED,
         }
         completion = Completion.model_validate(
             {

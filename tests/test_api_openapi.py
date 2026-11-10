@@ -11,7 +11,7 @@ from execution_plane.models.cluster import Cluster
 from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.models.work_item import WorkItem
 from execution_plane_client.commands.clusters import ClusterRegister
-from execution_plane_client.commands.control import Completion
+from execution_plane_client.commands.control import Completion, CompletionStatus
 from tests.test_command_api import command_message
 
 
@@ -86,7 +86,7 @@ def test_command_schema_validates_the_other_installed_commands(kind, payload) ->
 def test_completion_schema_requires_parent_and_is_not_accepted_as_an_inbound_command() -> None:
     document = create_app().openapi()
     message = (
-        Completion(status="succeeded", result={"stdout": "done"})
+        Completion(status=CompletionStatus.COMPLETED, result={"stdout": "done"})
         .to_message(
             source_id="ep",
             destination_id="ao",
