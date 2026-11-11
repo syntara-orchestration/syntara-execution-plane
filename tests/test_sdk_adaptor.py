@@ -46,7 +46,12 @@ def _server(*, handler=None, service=None, step="script.v1") -> Iterator[grpc.Ch
             server.stop(grace=0).wait()
 
 
-def _invoke(channel, **overrides: object) -> dict[str, Any]:
+def _invoke(
+    channel,
+    *,
+    credential_bindings: list[dict[str, object]] | None = None,
+    **overrides: object,
+) -> dict[str, Any]:
     kwargs = {
         "identity": "work-1-attempt-2",
         "progress": lambda _event: None,
@@ -55,22 +60,35 @@ def _invoke(channel, **overrides: object) -> dict[str, Any]:
         "grace": 1,
     }
     kwargs.update(overrides)
+    invocation = {
+        "workflow_run_id": "workflow-1",
+        "step_revision_id": "script.v1",
+        "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
+        "runtime_context": {"driver": "test"},
+        "timeout_seconds": 2,
+    }
+    if credential_bindings is not None:
+        invocation["credential_bindings"] = credential_bindings
     return invoke(
         channel,
-        WorkloadInvocation.model_validate(
-            {
-                "workflow_run_id": "workflow-1",
-                "step_revision_id": "script.v1",
-                "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
-                "runtime_context": {"driver": "test"},
-                "timeout_seconds": 2,
-            }
-        ),
+        WorkloadInvocation.model_validate(invocation),
         **kwargs,
     )
 
 
-def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests():
+@pytest.mark.parametrize(
+    ("credential_bindings", "expected_error"),
+    [
+        ([], "missing"),
+        (
+            [{"credential_recipe_id": "acme.echo.database", "credential_ref": "00000000-0000-0000-0000-000000000001"}],
+            "unavailable",
+        ),
+    ],
+)
+def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests(
+    credential_bindings: list[dict[str, object]], expected_error: str
+):
     calls = []
 
     def handler(invocation) -> ContainerResult:
@@ -83,17 +101,21 @@ def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests():
         assert invocation.runtime_context == {"driver": "test"}
         calls.append("execute")
         credentials = invocation.credential_provider.restrict(
-            frozenset({"database"}),
+            frozenset({"acme.echo.database"}),
             lambda _document: None,
         )
         with pytest.raises(CredentialAccessError) as error:
-            credentials.read("database")
+            credentials.read("acme.echo.database")
         return ContainerResult(_DIGEST, output={"credential_error": error.value.reason})
 
     with _server(handler=handler) as channel:
-        result = _invoke(channel, on_execute_submitted=lambda: calls.append("submitted"))
+        result = _invoke(
+            channel,
+            credential_bindings=credential_bindings,
+            on_execute_submitted=lambda: calls.append("submitted"),
+        )
     assert calls == ["submitted", "execute"]
-    assert _map_result(result, None)["output"] == {"credential_error": "unavailable"}
+    assert _map_result(result, None)["output"] == {"credential_error": expected_error}
 
 
 def test_selected_step_must_be_advertised_before_submission():
