@@ -79,6 +79,10 @@ spec:
     value: '{{source_url}}'
   - name: ep-revision
     value: '{{revision}}'
+  - name: ao-operator-git-url
+    value: https://github.com/automation-nexus/automation-orchestrator-operator.git
+  - name: ao-operator-revision
+    value: feat/ANSTRAT-1803
   pipelineSpec:
     description: |-
       Validate syntara-step-types changes by dispatching the plugin example
