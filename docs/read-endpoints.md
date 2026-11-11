@@ -38,7 +38,7 @@ AO endpoint: `GET /api/execution_plane/v1/execution_targets`
 | `last_ran_at` | datetime \| null |
 
 EP also has a `/v1/clusters` endpoint that is not currently proxied through AO.
-Cluster reads include the binding's `is_default` desired-state field.
+Cluster reads include the `is_default` field.
 
 ## Pagination
 
@@ -54,13 +54,13 @@ Clusters and execution targets default to `created_at` (oldest first). All sorta
 |---|---|
 | `/v1/work-items` | `id`, `created_at`, `status`, `resource_cleanup_status` |
 | `/v1/execution-targets` | `id`, `created_at`, `name`, `endpoint`, `status`, `backend_type`, `cluster_id`, `enabled`, `is_default` |
-| `/v1/clusters` | `id`, `created_at`, `name`, `endpoint`, `status`, `enabled`, `namespace`, `desired_revision`, `observed_revision`, `updated_at` |
+| `/v1/clusters` | `id`, `created_at`, `name`, `endpoint`, `status`, `enabled`, `is_default`, `updated_at` |
 
 Nullable fields are filterable but not sortable. Unsupported sorts return HTTP 422. Every sort uses the resource UUID as a tie-breaker, including boolean and revision-number sorts.
 
 Follow `next` or `prev` to navigate in either direction. Keep the same filters, `sort`, and `limit` when following a cursor; its sort field and direction must match the requested sort (including the endpoint default when `sort` is omitted). A missing page in either direction is represented by a null cursor. Totals are computed only when `include_total=true` and count all matching resources owned by the authenticated client, independently of the cursor and page limit.
 
-Cursors are opaque tokens; callers should forward them unchanged. EP continues to emit base64-encoded JSON objects containing string fields `id`, `created_at`, `direction`, `sort_field`, `sort_direction`, and `sort_value`. When sorting by `created_at`, EP also accepts Syntara's cursor format without `sort_value` and uses `created_at` as the anchor. Other sorts require `sort_value`. Invalid or otherwise incomplete cursors, including timestamps without a timezone, return HTTP 422. Unknown cursor fields are ignored.
+Cursors are opaque tokens; callers should forward them unchanged. EP emits base64-encoded JSON objects containing string fields `id`, `created_at`, `direction`, `sort_field`, `sort_direction`, and `sort_value`. When sorting by `created_at`, EP also accepts Syntara's cursor format without `sort_value` and uses `created_at` as the anchor. Other sorts require `sort_value`. Invalid or otherwise incomplete cursors, including timestamps without a timezone, return HTTP 422. Unknown cursor fields are ignored.
 
 ```
 GET /v1/work-items?limit=50&sort=status
@@ -75,9 +75,7 @@ EP ports `syntara.core.utils.filters.parse_filters` / `apply_filters` and `synta
 |---|---|
 | `/v1/work-items` | `id`, `status`, `created_at`, `claimed_at`, `completed_at`, `resource_cleanup_status`, `resource_cleanup_error` |
 | `/v1/execution-targets` | All sortable fields above, plus `last_ran_at`, `status_message`, and `labels[key]` |
-| `/v1/clusters` | All sortable fields above, plus `cluster_id`, `status_message`, and `labels[key]` |
-
-`/v1/clusters` lists cluster bindings: its public `id` filters/sorts the `source_integration_id` column, and `desired_revision` maps to `revision`. Its nullable `cluster_id` is the separate physical cluster identifier.
+| `/v1/clusters` | All sortable fields above, plus `status_message` and `labels[key]` |
 
 | Syntax | Meaning |
 |---|---|
@@ -98,7 +96,7 @@ Filters run in PostgreSQL before pagination and are applied identically to `tota
 
 ```text
 GET /v1/execution-targets?id[in]=<uuid1>,<uuid2>&enabled=true&sort=name&include_total=true
-GET /v1/clusters?labels[env]=prod&desired_revision[gte]=2&sort=-updated_at
+GET /v1/clusters?labels[env]=prod&enabled=true&sort=-updated_at
 GET /v1/work-items?status[in]=pending,failed&claimed_at[isnull]=true&limit=20
 ```
 

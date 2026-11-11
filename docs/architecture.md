@@ -152,7 +152,7 @@ the certificate material for it.
 | --- | --- | --- |
 | AO → EP | `work.execute` | Submit one container workload with a stable UUID. |
 | AO → EP | `command.cancel` | Request cooperative cancellation of an existing work item. |
-| AO → EP | `cluster.*` | Register, update, provision, or drain a cluster binding. |
+| AO → EP | `cluster.*` | Register, update, or drain a Cluster. |
 | AO → EP | `execution_target.*` | Register, update, delete, or health-check an execution target. |
 | EP → AO | `credential.resolve` | Resolve an opaque cluster or target credential reference. |
 | EP → AO | `work.execute.completed` | Deliver a terminal or uncertain outcome from EP to AO. |
@@ -202,9 +202,8 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant Kube as Kubernetes API
 
-    AO->>EP: cluster.register or cluster.provision
+    AO->>EP: cluster.register
     EP->>DB: persist cluster desired state
-    EP->>DB: create or update default execution target
     EP-->>AO: accepted resource reference
     AO->>EP: execution_target.register or execution_target.update
     EP->>DB: persist target desired state and placement
@@ -269,8 +268,7 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> registering
-    registering --> active : discovery and default target succeed
-    registering --> error : discovery or default target registration fails
+    registering --> active : registration commits
     active --> draining : deletion requested
     draining --> active : reactivation requested
     draining --> error : drain cannot complete

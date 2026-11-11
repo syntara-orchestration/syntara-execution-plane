@@ -150,7 +150,7 @@ default.
 
 ### WorkItem and audit contract
 
-`WorkItem` remains the durable unit of work exchanged between Execution Plane Consumers (such as a Temporal worker) and the Execution Plane worker. Its existing lifecycle timestamps,
+`WorkItem` is the durable unit of work exchanged between Execution Plane Consumers (such as a Temporal worker) and the Execution Plane worker. Its lifecycle timestamps,
 including `claimed_at`, `completed_at`, and `signaled_at`, describe work
 processing and are distinct from audit timestamps.
 
@@ -213,10 +213,6 @@ after registering the Cluster. They supply the target's placement (including the
 Kubernetes namespace) and choose whether to promote it to default. Subsequent
 changes use target commands. CI and local setup tools follow this same two-step
 flow and reuse the existing target on repeated setup runs.
-
-`cluster.provision` has been removed without an alias. Deploy the matching client
-and setup-tool updates together. Existing Clusters and ExecutionTargets remain
-in place; the change does not delete targets created by earlier versions.
 
 ## Deletion and draining operation
 
@@ -324,7 +320,7 @@ from selection.
 Consumers depend directly on `ClusterStore`, `ExecutionTargetStore`, and
 `WorkStore`. Each store provides one concrete persistence API for its primary
 model, without consumer-specific protocol classes or forwarding services.
-`WorkStore` also retains the existing completion-outbox operations.
+`WorkStore` also owns completion-outbox operations.
 
 `ClusterRegisterCommandHandler` coordinates Cluster registration in a caller-owned
 transaction. Target handlers manage targets. `WorkScheduler` coordinates claim and placement.
@@ -396,10 +392,6 @@ values are never returned. APIs expose only a redacted status or equivalent
 non-secret metadata. Credentials must also be excluded from logs, labels,
 ordinary model serialization, and audit payloads.
 
-The existing router is temporarily hosted by Syntara. The store and orchestration
-boundaries are independent of that hosting arrangement so the Execution Plane
-can later become a standalone service.
-
 ## Schema and operational considerations
 
 The `execution_plane` schema contains the Cluster, ExecutionTarget, and
@@ -413,9 +405,6 @@ WorkItem tables. The schema must provide:
 - audit columns on every database model;
 - required UUID `credential_ref` values for target and Cluster credentials.
 
-This branch is green-field: the original schema is changed directly and no
-raw-credential migration or backfill is provided.
-
 The design does not prescribe whether the drained predicate is based solely on
 terminal WorkItems, claimed workers, or an additional worker heartbeat. That
 predicate is part of the worker lifecycle contract, but it must be strong
@@ -425,5 +414,5 @@ enough to ensure that finalization cannot race with active execution.
 
 - [AAP-92716](https://redhat.atlassian.net/browse/AAP-92716) describes the
   broader service concept and lifecycle concerns.
-- [`integration.md`](integration.md) documents the current temporary boundary
+- [`integration.md`](integration.md) documents the service boundary
   crossings between Syntara and the Execution Plane.

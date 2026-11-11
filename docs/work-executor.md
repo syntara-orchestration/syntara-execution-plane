@@ -16,57 +16,21 @@ work payload — validates it, and writes a `WorkItem` record through the [`Work
 The UUID is caller-owned. The Consumer generates it before submitting so it can track
 the work item without waiting for a response.
 
-The async execution path after submission: Work Scheduler claims the `WorkItem` and
-dispatches it via a `WorkerManager`; on successful start the Scheduler hands off to a
-`WorkWatcher` and moves on. The `WorkWatcher` monitors the running job and writes the
-result to the Work progress boundary, which triggers the Completion Notifier to fire the Consumer's
-callback. See [logical_components.md](logical_components.md) for the full picture.
+The Work Scheduler claims and places the `WorkItem`, then dispatches it via a
+`WorkerManager`. The manager records the result through `WorkStore`; the
+Completion Notifier delivers the outcome to the consumer. See
+[architecture.md](architecture.md) for the full execution flow.
 
 ---
 
 ## Submission interface
 
-How the Consumer reaches the Work Executor is not settled. Options:
-
-**Current:** AO submits a command to EP; the Work command handler calls the
-[`Work boundary`](work-store.md), which persists the `WorkItem` and sends a
-`pg_notify` on `execution_plane_work_items` to wake the EP worker immediately rather
-than waiting for the poll interval.
-
-**REST API (`POST /submit`):** EP exposes an HTTP endpoint. Both AO and Controller submit
-work via HTTP. This fits the model of EP as an independently deployed service with its
-own API surface. The ep-client library would wrap this call.
-
-**Queue or messaging system:** Consumers push work submissions onto a queue (Redis, for
-example); the EP worker pops them. Decouples submission from processing latency at the
-cost of an additional dependency on the submission path.
-
-The interface decision depends on the network topology between AO, Controller, and EP,
-and whether EP is co-located or independently deployed.
-
-Because both AO and Controller are consumers of this interface, the submission call is
-likely to move into a client library for the Execution Plane. That library is not yet
-designed.
-
----
+AO submits `work.execute` through `POST /v1/commands`. The command handler
+calls the [Work boundary](work-store.md), which persists the `WorkItem` and
+sends `pg_notify` on `execution_plane_work_items` to wake the worker. See
+[integration.md](integration.md) for the command envelope and authentication.
 
 ## Validation
 
-Currently, the Work command handler validates the command payload before the Service
+The Work command handler validates the command payload before the Service
 persists it. The database schema also enforces the persisted structure.
-
-Once a submission interface (REST API, queue) sits between the Consumer and the
-[`Work boundary`](work-store.md), the EP receives formally unstructured data. At that point the Work Executor
-must validate the payload against known bounds before persisting it: required fields,
-type constraints, and size limits.
-
----
-
-## Other attachments
-
-It is not settled whether isolation policy belongs on the work item at submission time or
-on the Target. The same open question may recur for other related structures — credentials,
-resource constraints, routing hints. Work items may grow additional attachments and
-associated model relationships as the design matures. The Work Executor is the natural
-attachment point at submission time, but the shape of those attachments is not yet
-planned.

@@ -10,7 +10,7 @@ class WorkerManager(Protocol):
 ```
 
 The worker process registers managers by `ExecutionTarget.backend_type`. The
-first implementation is `VanillaK8sWorkerManager`; it reads the target's
+Kubernetes implementation is `VanillaK8sWorkerManager`; it reads the target's
 namespace, selectors, and tolerations plus the cluster's verified endpoint and
 CA, and resolves the cluster's `credential_ref` just in time. It builds no AO or
 Temporal dependency into EP.
@@ -54,9 +54,7 @@ return or quarantine it; it must not delete the worker when one WorkItem ends.
 
 ## Current scheduler limits
 
-`WorkScheduler.claim_and_place_work()` still claims the first active, project-eligible default
-target. The placement reconciler is constructed but is not yet used to rank or
-select targets. There is no capacity reservation, warm pool, concurrent
-dispatch, or WorkWatcher. One worker replica processes one item at a time for
-the first release. These limits keep allocation ownership explicit while more
-backends and clients are added in later releases.
+`WorkScheduler.claim_and_place_work()` resolves eligible targets, revalidates
+candidates, and assigns a target while holding the work claim. There is no
+capacity reservation, warm pool, concurrent dispatch, or WorkWatcher. One
+worker replica processes one item at a time.

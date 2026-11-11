@@ -15,9 +15,7 @@ are for, what they are not for, who writes them, and how they meet
 ExecutionTarget.
 
 Matching, default routing, and ineligibility reasons live in the
-[ExecutionTarget Reconciler](executiontarget-reconciler.md). This document does not
-re-specify that algorithm. It exists because review of that design
-showed the *vocabulary* and *ownership* of labels were still ambiguous.
+[ExecutionTarget Reconciler](executiontarget-reconciler.md). This document describes the vocabulary and ownership of labels.
 
 Worked inventories (empty selectors, `region` / `env`, volume
 workspace, object-store workspace, OpenShell) are in
@@ -66,8 +64,7 @@ eligible ExecutionTarget set  →  Work Scheduler picks one
 
 ## Terminology
 
-Do not call both sides "selectors." Review mixed those words; they are
-not interchangeable.
+Labels describe targets; selectors express work requirements.
 
 | Term | Definition |
 |---|---|
@@ -196,7 +193,7 @@ Sources AO may combine **before** the selector map exists:
 
 | Source | Typical keys | Notes |
 |---|---|---|
-| Execution Profile or node routing controls | `region`, `gpu`, similar | routing selectors as defined during PoC. |
+| Execution Profile or node routing controls | `region`, `gpu`, similar | Routing requirements supplied by AO. |
 | Future project / org / system defaults | same shape | Combination rules are an AO design. EP only sees the result. |
 
 ### What "global labels only" means

@@ -145,11 +145,10 @@ graph LR
     RP -->|"write"| CS
 ```
 
-Both durable data stores are Postgres in the current branch. A third store,
-`ClusterStore`, is anticipated.
+The Work, ExecutionTarget, and Cluster stores use PostgreSQL.
 
 | Store | What it holds | Technology |
 |---|---|---|
-| Work Store | `WorkItem` records — queue, results, completion events | Postgres (current branch) |
-| ExecutionTarget Store | `ExecutionTarget` records — lifecycle, health, capacity | Postgres (current branch) |
-| Cluster Store | `Cluster` records — created on provisioning | Postgres (anticipated) |
+| Work Store | `WorkItem` records — queue, results, completion events | Postgres |
+| ExecutionTarget Store | `ExecutionTarget` records — lifecycle, health, capacity | Postgres |
+| Cluster Store | `Cluster` records — created on provisioning | Postgres |

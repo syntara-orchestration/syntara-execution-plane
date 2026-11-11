@@ -1,10 +1,5 @@
 # Running AWX-style jobs on the cold-start execution plane
 
-This design comparison records the original NodeService-based implementation.
-The current [SDK workload protocol](workload-protocol.md) replaces its invocation
-shape and generated files. Credential delivery remains deferred; the old
-`credentials.resolved` examples below describe that historical design.
-
 Status: **evaluation / future work.** Nothing here is implemented. This document
 maps how AWX executes jobs on Kubernetes today, how that maps onto the cold-start
 node-dispatch framework ([cold-start-node-dispatch.md](cold-start-node-dispatch.md)),
@@ -17,14 +12,9 @@ ANSTRAT-1803 scope** — 1803 ships the single-node-type cold-start MVP; this is
 
 Audience: someone who knows one side (AWX *or* this framework) and needs the other.
 
-Credential-handling sections below are design alternatives only. Release one
-sends `credentials.resolved` as an empty object and defines no workload
-credential mount. Do not build an extension against a proposed file path or
-gRPC credential flow until ANSTRAT-2422 establishes that contract.
-
 ---
 
-## TL;DR — the bottom line
+## Overview
 
 Running Ansible jobs on this framework is a **good fit, with one genuinely hard
 problem and one sizeable one.**
@@ -152,9 +142,8 @@ receptor link TLS, not on encrypting the payload).
 (Full detail in [cold-start-node-dispatch.md](cold-start-node-dispatch.md).)
 
 - The **AO** (Temporal activity `ep_dispatch_activity`) selects a container image
-  per node type and builds an **invocation envelope** — `{version, operation,
-  inputs, credentials:{resolved:{}}, workflow_context, settings, timeout_seconds,
-  max_output_bytes}` — persisted to `work_items.payload`.
+  per node type and builds an invocation using the
+  [SDK workload protocol](workload-protocol.md), persisted to `work_items.payload`.
 - The **EP worker** (`VanillaK8sWorkerManager` → `transport.run_job`) creates one
   hardened, single-attempt Job around the workload Pod (`job_body`), waits for
   its owned Pod to become ready, and makes the SDK gRPC calls over a
@@ -162,10 +151,8 @@ receptor link TLS, not on encrypting the payload).
   credential Secret or certificate mount.
 - The node runs, returns one `Result`, progress events stream back over gRPC, and
   the pod is reaped.
-- The protocol has a `credentials_json` field, but EP does not send resolved
-  credential values today: `credentials.resolved` is empty. Any later use of
-  that field, credential storage, or a mount path requires the ANSTRAT-2422
-  extension contract. Script nodes carry no credentials in release one.
+- EP does not inject workload credential files. AWX credential delivery
+  requires a separate design.
 
 The shapes line up: cold-start pod, per-node image, proxy-through-apiserver data
 path, a progress stream, and a cancellation hook.
@@ -179,12 +166,12 @@ path, a progress stream, and a cancellation hook.
 | Container-group pod (one per job, reaped) | Cold-start pod per `WorkItem`, reaped | **Same model.** |
 | Execution Environment (EE) image | `node_container_images[<type>]` image | **Direct map** — an `ansible-job` node type whose image is an EE. |
 | `ansible-runner worker` (stdin/stdout stream) in the pod | gRPC node server in the pod | **Replace** the in-pod process. Keep ansible-runner's *local* run engine; drop worker/transmit/process. |
-| transmit zipstream (kwargs + zipped `private_data_dir`) | gRPC invocation envelope (`inputs` + `credentials.resolved`) | **Replace the transport.** Envelope must grow to carry playbook/inventory/extravars/limit. Project delivery is a gap (§4.3). |
+| transmit zipstream (kwargs + zipped `private_data_dir`) | SDK invocation inputs | **Replace the transport.** Envelope must grow to carry playbook/inventory/extravars/limit. Project delivery is a gap (§4.3). |
 | stdout JSON frames: `event`/`status`/`artifacts`/`eof` | gRPC `Result` + streamed `progress` events | **Map** events→progress, final status→Result. Needs volume/throughput attention (§4.4). |
-| `work cancel <unit_id>` | `NodeService.Cancel` / `cancelled` event | **Map** (our cancel is unwired today — shortcut 3). |
+| `work cancel <unit_id>` | SDK `Cancel` RPC | **Map** cooperative cancellation to the runner. |
 | receptor `work-kubernetes` → apiserver attach | kube-apiserver port-forward | **Equivalent today**; both proxy through the API server. |
-| netceptor mesh (reach a cluster with no direct route) | *(not built)* — transport option B | **Gap for multi-cluster** (§4.5). Matches our out-of-1803 receptor transport. |
-| Secrets as plaintext files in `private_data_dir` on the pod | `credentials.resolved` over gRPC, materialized in-pod | **Deliberately different** — the hard part (§4.1). |
+| netceptor mesh (reach a cluster with no direct route) | *(not built)* — proposed mesh transport | **Gap for multi-cluster** (§4.5). Matches our out-of-1803 receptor transport. |
+| Secrets as plaintext files in `private_data_dir` on the pod | Workload credential delivery is not implemented | **Deliberately different** — the hard part (§4.1). |
 
 ---
 
@@ -192,9 +179,7 @@ path, a progress stream, and a cancellation hook.
 
 ### 4.1 Secrets without touching disk — the central problem
 
-This is the one the user flagged: *"part of the goal is to not write secrets to
-disk, and it's non-obvious how we would do much better."* Two independent goals,
-ranked:
+Two independent credential-protection goals:
 
 **Goal A (minimum): secrets never hit the pod's real filesystem.**
 ansible-runner fundamentally wants a `private_data_dir` on disk, and
@@ -205,13 +190,8 @@ filesystem that never pages out.** This framework already mounts a `tmpfs`
 (`emptyDir{medium: Memory}`) and runs with `readOnlyRootFilesystem: true`
 (`pod_body`). The design:
 
-1. AO would resolve credential references into a representation agreed under
-   ANSTRAT-2422 (currently `credentials.resolved` is `{}`). EP now encrypts
-   persisted WorkItem payloads, but the value shape, lifetime, and approved
-   injection mechanism still need the extension decision.
-2. A future node runtime could receive them over the gRPC `credentials_json`
-   field — **not** in `inputs` or the Job/Pod spec — if that is the contract
-   selected in ANSTRAT-2422.
+1. Define credential resolution, lifetime, and delivery under ANSTRAT-2422.
+2. Keep credential values out of ordinary inputs and Job/Pod specifications.
 3. The **in-pod node runtime** receives them in memory and writes the
    `private_data_dir` (env files, inventory, extravars) **onto the memory-backed
    volume**, points `ansible-runner` at it, runs locally, then the pod dies and
@@ -225,16 +205,11 @@ versus AWX's 0600 files on the pod filesystem.
 
 **Goal B (stretch): no bare-text in transit — which AWX does not do.**
 AWX's transmit zipstream is plaintext; confidentiality is the receptor link TLS.
-Our baseline is better the moment the gRPC channel is mTLS (the `agent-tls` plan)
-rather than today's `insecure_channel`. To actually *exceed* AWX, encrypt the
-`credentials_json` **payload itself** (envelope encryption with a key the node
+For protection beyond transport TLS, encrypt the
+credential payload itself (envelope encryption with a key the node
 runtime unwraps in memory) so secrets are ciphertext at the DB, on the wire, and
 in transport logs — decrypted only inside the pod. This is optional and layered on
 top of Goal A; call it out but don't gate the integration on it.
-
-> The admin-facing transport logging added alongside this work deliberately logs
-> only API status/reason/body, never the invocation or credentials — keep that
-> invariant when `credentials.resolved` becomes non-empty.
 
 ### 4.2 An `ansible-job` node type and an in-pod runtime
 
@@ -249,8 +224,7 @@ forwarding job events as gRPC progress and the final status/rc/artifacts as the
 ### 4.3 Project / playbook delivery
 
 AWX ships the entire `project/` (playbook, roles) inside the transmit zip. We
-deliver an image + a small invocation (`MAX_FRAME_BYTES` ≈ 2 MB — too small for a
-real project). Options, in rough order of preference:
+deliver an image and a bounded invocation, rather than a project archive. Options, in rough order of preference:
 
 - **SCM fetch in-pod**: the runtime clones/pulls the project at run time (needs
   egress + an SCM credential — itself a secret via §4.1). Closest to AWX "project
@@ -308,33 +282,9 @@ the 3 and deletes the other 2** — no control-node buffer, no Redis — and the
 keeps is *better* than workceptor's: it holds the common case in RAM and spills only
 the overflow *tail* to disk, instead of writing the entire stream to disk.
 
-**The buffer already exists in PR 701 — it just can't spill.** PR 701
-(`feat/sdk-node-containers`, open) establishes the in-pod node runtime. In
-`backend/nodes/_shared/src/syntara_node_runtime/server.py`, `NodeService.Execute`
-already places a bounded, in-process, cross-thread buffer between producer and
-consumer: `events: queue.Queue[pb.ExecutionEvent | None] = queue.Queue(maxsize=128)`.
+The proposed buffer has two bounded tiers:
 
-- **Producer** — the executor on the `sdk-node-execution` worker thread (`run()` →
-  `runtime.execute()` → `node.run`), emitting via `send()`, which does
-  `events.put(event, timeout=0.1)` in a `while context.is_active()` loop catching
-  `queue.Full`. **This is today's backpressure point**: a full queue blocks `send()`,
-  which blocks the executor (and, for ansible, the `event_handler`).
-- **Buffer** — the `queue.Queue(maxsize=128)` itself.
-- **Consumer** — the `Execute` generator (a gRPC thread-pool worker, `max_workers=4`)
-  drains it, `events.get(timeout=0.1)` → `yield` → gRPC/HTTP-2; a `None` sentinel
-  ends the stream.
-
-So it is already **one process, two threads — no sidecar, no extra process.** The
-playbook is a child process of the node server; the node server is the gRPC host;
-the buffer is in-process.
-
-**The change your requirement implies is a near-drop-in swap of that one object.**
-Replace `queue.Queue(maxsize=128)` with a `SpillQueue(mem_bytes, disk_bytes,
-spill_dir)` keeping the **same** `put(timeout)` / `get(timeout)` / `Full` / `Empty` /
-`None`-sentinel contract, so `send()` and the generator are untouched:
-
-- a **byte-bounded** in-memory tier (not the current count-based 128 — events run up
-  to the 2 MiB cap, so 128 of them is a loose ~256 MiB bound); when it fills, append
+- a **byte-bounded** in-memory tier; when it fills, append
   new events to a **watermarked append-only spill file** and refill the head of the
   mem tier as the consumer drains (hysteresis, strict FIFO — `job_events` ordering
   must hold);
@@ -346,33 +296,22 @@ spill_dir)` keeping the **same** `put(timeout)` / `get(timeout)` / `Full` / `Emp
 disk-backed `emptyDir`** mounted for `spill_dir`. Today's pod is read-only root plus
 a *memory*-backed `/tmp` tmpfs — memory tmpfs is still RAM, so spilling there
 defeats the purpose. Add a dedicated disk-backed volume (`sizeLimit` = `disk_bytes`),
-separate from the secrets tmpfs (§4.1), in PR 701's node `manifest.yaml` (and the
-cold-start `pod_body`); keep root FS read-only.
+separate from the secrets tmpfs (§4.1), in the workload manifest and cold-start pod specification; keep root FS read-only.
 
 With the buffer settled, the remaining ceilings are the real engineering:
 
-1. **Hard 2 MiB per-gRPC-message cap, no chunking.** `codec.py`
-   `MAX_MESSAGE_BYTES = 2 MiB` is set as `grpc.max_receive_message_length`; any
-   single `ExecutionEvent` over 2 MiB aborts the call with `RESOURCE_EXHAUSTED`.
-   ansible mostly keeps events small for us already — the callback caps a task's
-   `res` at `MAX_EVENT_RES` (**700 KB**, replacing an oversize `res` with `{}`), and
-   large stdout is split per-line into separate `verbose` events. But that cap does
-   **not** cover every field (e.g. the `playbook_on_stats` event is exempt, and
-   `OutputEventFilter` buffers a single event's marker in an unbounded in-memory
-   `StringIO` before the handler sees it). So the in-pod runtime must **guard each
-   event against the 2 MiB wall** — split, truncate, or spill oversize events —
-   rather than assume ansible keeps them small. Alternatively raise the cap and/or
-   add a chunking layer to the node protocol (a real protocol change).
+1. **Bound each progress event.** Validate event size against the SDK message
+   limits. Split, truncate, or store oversized output separately; a bounded
+   queue alone does not bound the size of an individual event.
 
 2. **Don't put aggregate output in the final `Result`.** The terminal `Result` is a
-   **single** gRPC message (≤ `max_output_bytes`, default **1 MiB**). GB of output
+   **single** gRPC message. GB of output
    cannot live there. Model ansible output as the **`Progress` event stream**; the
    `Result` carries only terminal status / rc / stats (small). This is the natural
    shape and sidesteps the single-message limit for the bulk.
 
-3. **The EP consumer is pass-through to Postgres — no second buffer.** Today
-   `on_progress` in `manager.py` just debug-logs and discards the event. For an
-   Ansible job it becomes the **async pump → Postgres**: read event → write a
+3. **Persist job events without a second buffer.** The proposed Ansible-job
+   consumer is an **async pump → Postgres**: read event → write a
    `JobEvent`-style row, with **no** control-side buffer of its own (the design law
    above). Because it is the only consumer on the hop, if Postgres slows the pump
    slows, the HTTP/2 window fills, and the node `SpillQueue` absorbs it (mem → disk)
@@ -384,39 +323,33 @@ With the buffer settled, the remaining ceilings are the real engineering:
    partials) needs materially more — raise both, and keep the volume `medium:
    Memory` so nothing persists. (Overlaps §4.1 and the resource-limits gap.)
 
-**Net:** one buffer, at the node — in-memory with disk overflow, swapped in for PR
-701's existing in-process `queue.Queue(maxsize=128)`; the EP side streams straight to
+**Net:** one buffer, at the node — in-memory with disk overflow; the EP side streams straight to
 Postgres with no buffer of its own; and under overload backpressure flows back to
 that single node buffer. This is strictly leaner than AWX (3 buffers → 1) and beats
 workceptor by spilling only the overflow tail. The remaining engineering is (1)
-keeping every event under the 2 MiB message cap (or adding chunking), (2) streaming
+keeping every event under the SDK message limit (or adding chunking), (2) streaming
 bulk output as events rather than in the `Result`, (3) the async pass-through
 consumer, and (4) bigger pod limits plus the disk-backed spill volume. None of this
-is the "it all buffers in RAM" failure the GB-output worry implies. **Scoped as its
-own story** (depends on PR 701 landing the node runtime).
+is the "it all buffers in RAM" failure the GB-output worry implies.
 
-Separately, long Ansible runs stress the MVP's serial-dispatch (shortcut 7),
+Separately, long Ansible runs stress serial-dispatch,
 fixed-timeout, and single-port-forward-per-call assumptions — size those for
 minutes-to-hours, not seconds.
 
 ### 4.5 Multi-cluster reach (the mesh)
 
-For a single reachable cluster, the port-forward (and the near-term
-co-located-worker + Service/mTLS plan) is enough — **the same situation as an AWX
+For a single reachable cluster, the port-forward is enough — **the same situation as an AWX
 container group**, which also reaches its pod through the apiserver. To reach
 clusters the control plane has **no route to** (AWX's remote-node / mesh story),
-we need transport **option B: a receptor/mesh transport** — explicitly the
-out-of-1803 work in
-[cold-start-node-dispatch.md](cold-start-node-dispatch.md#transport-evolution-from-port-forward-to-production).
+a **receptor/mesh transport** is an option.
 Reuse **netceptor** (keep the mesh overlay); **replace workceptor** (our
 `WorkItem` + worker-manager is the work-unit layer). This is where the AWX
 precedent and our production transport converge.
 
 ### 4.6 Cancellation, timeouts, artifacts/fact-cache
 
-- Wire `WorkItem` cancellation → `NodeService.Cancel` (shortcut 3); AWX relies on
-  `work cancel`.
-- Per-job timeout vs. our per-node `NodeSettingsNoRetry.timeout` and the pod's
+- Connect SDK cancellation to the Ansible runner; AWX relies on `work cancel`.
+- Per-job timeout vs. the invocation's `timeout_seconds` and the pod's
   `activeDeadlineSeconds` — Ansible jobs need a much larger, configurable budget.
 - Decide whether set_stats/fact-cache **artifacts** (AWX streams them back and
   persists them) are in scope; if so, the `Result`/progress contract must carry
@@ -449,8 +382,7 @@ seam, not an in-pod concern.
 The instinct that "AWX uses a mesh, we use a port-forward, so we're far apart" is
 wrong for the case that matters: an AWX **container group** reaches its pod the
 same way we do — through the kube-apiserver, not the mesh. The mesh is an
-orthogonal concern (reaching unreachable clusters) that both systems need and that
-we've already scoped as transport option B. So the architectures rhyme.
+orthogonal concern (reaching unreachable clusters) for multi-cluster deployments. So the architectures rhyme.
 
 The real substitution is **transport, not topology**: replace ansible-runner's
 stdin/stdout `transmit`/`worker`/`process` streaming with the gRPC node protocol,
@@ -462,12 +394,11 @@ streamer removes a whole class of framing/keepalive/zipstream complexity.
 **The genuinely hard part is secrets, and it's worth doing right because we can
 actually beat AWX here.** AWX writes credentials as 0600 plaintext files onto the
 pod and ships them plaintext in the zipstream. We already have the ingredients to
-do better: a memory-backed, read-only-root pod; a dedicated `credentials_json`
-gRPC channel; and (soon) mTLS to the pod. The achievable target is **secrets only
+do better: a memory-backed volume and a read-only-root pod. The achievable target is **secrets only
 ever in pod RAM, never on disk**, and with payload encryption, **ciphertext
-everywhere except inside the pod**. The catch the user named is real:
+everywhere except inside the pod**. The constraint is that
 ansible-runner *wants files*, so "no disk" means "tmpfs in RAM", not "no files" —
-and the resolved-secrets-at-rest problem in `work_items.payload` (shortcut 1) is a
+and credential protection is a
 hard prerequisite, not an afterthought. SSH keys are the one place AWX already
 does the right thing (FIFO→ssh-agent); reuse it.
 
@@ -485,10 +416,10 @@ swap itself.
    extension receives credential values over gRPC or through a documented
    runtime mount. EP payload-at-rest encryption is implemented already.
 2. `ansible-job` node type + in-pod runtime wrapping local ansible-runner (§4.2),
-   secrets materialized on tmpfs over `credentials_json` (§4.1 Goal A).
+   secrets materialized on tmpfs through the agreed credential contract (§4.1 Goal A).
 3. Project delivery (§4.3), the node-side spill buffer + event streaming (§4.4),
    and the EP↔AWX output handoff (§4.7).
-4. mTLS-to-pod (near-term transport) then the receptor/mesh transport for
+4. Evaluate direct pod mTLS and receptor/mesh transport for
    multi-cluster (§4.5), with optional payload encryption (§4.1 Goal B).
 
 ---
@@ -498,11 +429,6 @@ swap itself.
 - This framework: [cold-start-node-dispatch.md](cold-start-node-dispatch.md),
   [worker-manager.md](worker-manager.md), [integration.md](integration.md),
   [kind-demo-runbook.md](kind-demo-runbook.md).
-- Node runtime (PR 701, `feat/sdk-node-containers`, open):
-  `backend/nodes/_shared/src/syntara_node_runtime/server.py` (the `NodeService.Execute`
-  queue — the buffer to make spillable), `.../runtime.py` (executor/`send` contract),
-  `backend/nodes/aap-job/...` (today's remote-controller AAP executor, httpx launch +
-  poll — not a local ansible-runner).
 - AWX (`~/repos/awx/`): `awx/main/tasks/receptor.py` (AWXReceptorJob, pod
   definition, work types, transmit/process), `awx/main/tasks/jobs.py`
   (private_data_dir, credential injection), `awx/main/utils/execution_environments.py`

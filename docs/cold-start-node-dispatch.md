@@ -1,9 +1,7 @@
 # Cold-start node dispatch
 
-This is the first isolated EP execution path in migration PR #1, paired with AO
-PR #728. It supports script nodes and a fresh Kubernetes worker allocation per
-execution attempt. The code and deployment changes still need combined-service
-and target-cluster validation before this can be described as production-ready.
+Cold-start dispatch allocates a fresh Kubernetes worker for each execution
+attempt.
 
 ## Service and node protocol boundary
 
@@ -18,7 +16,7 @@ The EP worker invokes the SDK-owned container service using its installed
 `ContainerClient`, through the adapter in
 [`sdk_adaptor.py`](../src/execution_plane/worker_manager/vanilla_k8s/sdk_adaptor.py). The
 [workload protocol guide](workload-protocol.md) describes the dependency source,
-new invocation fields, and required AO/workload image migration. The worker tunnels that gRPC channel
+invocation fields, and workload image requirements. The worker tunnels that gRPC channel
 through an authenticated Kubernetes API port-forward. Invocation, progress,
 errors, stdout/stderr fields, and final output all travel through gRPC. EP does
 not create an input Secret, use Kubernetes exec, or read Pod logs for results.
@@ -84,15 +82,12 @@ race is resolved. A received terminal result wins over a concurrent
 cancellation. A warm/shared worker must instead return or quarantine the worker;
 cancelling one WorkItem must not delete a shared Pod.
 
-## Deliberate first-release limits
+## Execution limits
 
 - AO is the only configured caller and script is the only EP-dispatched node
   type. Other image-map entries and credential-bearing nodes are not enabled.
-- Dispatch is serial with one EP worker replica. The existing first-active,
-  default-target selection remains; the placement reconciler is not a scheduler.
-- The container image is pinned by digest, but currently lives under a
-  maintainer-owned public Quay namespace. Move it to an organization-owned
-  publishing pipeline before treating it as a release artifact.
+- Dispatch is serial with one EP worker replica. The placement reconciler
+  identifies eligible targets; the scheduler chooses a target.
 - `output_config` supports field selection. Template expressions still require
   a Syntara-independent evaluator.
 - NetworkPolicy enforcement and the port-forward path have not yet been
