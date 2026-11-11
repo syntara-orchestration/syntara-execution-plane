@@ -1525,10 +1525,14 @@ components:
           minLength: 1
           pattern: ^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$
           title: Credential Recipe Id
+          description: Qualified Plugin SDK CredentialRecipe identifier that the workload
+            may request at runtime.
         credential_ref:
           type: string
           format: uuid
           title: Credential Ref
+          description: Opaque AO credential reference; EP resolves it only after the
+            workload requests this recipe.
       additionalProperties: false
       type: object
       required:
@@ -1543,13 +1547,18 @@ components:
           maxLength: 2048
           minLength: 1
           title: Image
+          description: OCI image reference for the isolated cold-start workload container.
         selectors:
           additionalProperties:
             type: string
           type: object
           title: Selectors
+          description: Exact label requirements used to select an execution target;
+            all keys and values must match.
         invocation:
           $ref: '#/components/schemas/WorkloadInvocation'
+          description: Validated workload invocation, including host-side credential
+            bindings.
         output_config:
           anyOf:
           - additionalProperties:
@@ -1557,10 +1566,14 @@ components:
             type: object
           - type: 'null'
           title: Output Config
+          description: Optional result-field allowlist mapping output names to workload
+            result keys.
         workload_type:
           type: string
           const: container
           title: Workload Type
+          description: Workload execution family; container is the only supported
+            value.
           default: container
       additionalProperties: false
       type: object
@@ -1577,31 +1590,42 @@ components:
           minLength: 1
           pattern: ^[A-Za-z0-9._:-]+$
           title: Workflow Run Id
+          description: Caller-owned identity of the workflow run containing this step.
         step_revision_id:
           type: string
           maxLength: 256
           minLength: 1
           pattern: ^[A-Za-z0-9._:-]+$
           title: Step Revision Id
+          description: Workload-advertised revision of the step implementation to
+            execute.
         inputs:
           additionalProperties: true
           type: object
           title: Inputs
+          description: Step inputs defined by the selected workload; never use this
+            field for credential bindings.
         runtime_context:
           additionalProperties: true
           type: object
           title: Runtime Context
+          description: Non-secret execution context supplied to the workload; not
+            for credential bindings.
         credential_bindings:
           items:
             $ref: '#/components/schemas/WorkCredentialBinding'
           type: array
           maxItems: 16
           title: Credential Bindings
+          description: Host-side recipe-to-reference bindings; never plugin inputs
+            or runtime context.
         timeout_seconds:
           type: integer
           maximum: 86400.0
           exclusiveMinimum: 0.0
           title: Timeout Seconds
+          description: Maximum workload execution time in seconds, including SDK streaming
+            but excluding cleanup.
       additionalProperties: false
       type: object
       required:

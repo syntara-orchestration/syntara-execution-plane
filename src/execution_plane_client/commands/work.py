@@ -19,8 +19,13 @@ CredentialRecipeId = Annotated[
 class WorkCredentialBinding(WireModel):
     """One Plugin SDK recipe-to-AO credential mapping for a work item."""
 
-    credential_recipe_id: CredentialRecipeId
-    credential_ref: UUID = Field(repr=False)
+    credential_recipe_id: CredentialRecipeId = Field(
+        description="Qualified Plugin SDK CredentialRecipe identifier that the workload may request at runtime."
+    )
+    credential_ref: UUID = Field(
+        repr=False,
+        description="Opaque AO credential reference; EP resolves it only after the workload requests this recipe.",
+    )
 
 
 class WorkloadInvocation(WireModel):
@@ -31,12 +36,30 @@ class WorkloadInvocation(WireModel):
     claim that arbitrary file paths have been mounted by EP.
     """
 
-    workflow_run_id: StepIdentity
-    step_revision_id: StepIdentity
-    inputs: dict[str, object]
-    runtime_context: dict[str, object] = Field(default_factory=dict)
-    credential_bindings: list[WorkCredentialBinding] = Field(default_factory=list, max_length=16, repr=False)
-    timeout_seconds: Annotated[PositiveInt, Field(le=86_400)]
+    workflow_run_id: StepIdentity = Field(description="Caller-owned identity of the workflow run containing this step.")
+    step_revision_id: StepIdentity = Field(
+        description="Workload-advertised revision of the step implementation to execute."
+    )
+    inputs: dict[str, object] = Field(
+        description="Step inputs defined by the selected workload; never use this field for credential bindings."
+    )
+    runtime_context: dict[str, object] = Field(
+        default_factory=dict,
+        description="Non-secret execution context supplied to the workload; not for credential bindings.",
+    )
+    credential_bindings: list[WorkCredentialBinding] = Field(
+        default_factory=list,
+        max_length=16,
+        repr=False,
+        description="Host-side recipe-to-reference bindings; never plugin inputs or runtime context.",
+    )
+    timeout_seconds: Annotated[
+        PositiveInt,
+        Field(
+            le=86_400,
+            description="Maximum workload execution time in seconds, including SDK streaming but excluding cleanup.",
+        ),
+    ]
 
     @field_validator("inputs", "runtime_context", mode="before")
     @classmethod
@@ -60,8 +83,27 @@ class WorkExecute(CommandPayload):
 
     command_type: ClassVar[str] = "work.execute"
 
-    image: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
-    selectors: dict[StrictStr, StrictStr] = Field(default_factory=dict)
-    invocation: WorkloadInvocation = Field(repr=False)
-    output_config: dict[str, str] | None = None
-    workload_type: Literal["container"] = "container"
+    image: Annotated[
+        StrictStr,
+        Field(
+            min_length=1,
+            max_length=2048,
+            description="OCI image reference for the isolated cold-start workload container.",
+        ),
+    ]
+    selectors: dict[StrictStr, StrictStr] = Field(
+        default_factory=dict,
+        description="Exact label requirements used to select an execution target; all keys and values must match.",
+    )
+    invocation: WorkloadInvocation = Field(
+        repr=False,
+        description="Validated workload invocation, including host-side credential bindings.",
+    )
+    output_config: dict[str, str] | None = Field(
+        default=None,
+        description="Optional result-field allowlist mapping output names to workload result keys.",
+    )
+    workload_type: Literal["container"] = Field(
+        default="container",
+        description="Workload execution family; container is the only supported value.",
+    )
