@@ -208,7 +208,7 @@ spec:
       description: Number of AO backend pod replicas. Passed to the deploy-ao-using-aap-dev task, which
         forwards it to aap-dev as AO_BACKEND_REPLICAS so the AutomationOrchestrator CR is rendered with
         spec.backend.replicas already set. Leave empty to fall back to the operator's own default (2).
-      default: '4'
+      default: '2'
     - name: external-services-deploy-key-secret
       type: string
       description: Name of the Kubernetes Secret holding the SSH deploy key for the ansible-automation-platform/external-services
@@ -1089,6 +1089,12 @@ spec:
                 kubectl get automationorchestrator myao -o yaml 2>&1 | tail -80 || true
                 echo '--- myao-admin-settings ConfigMap ---'
                 kubectl get configmap myao-admin-settings -o yaml 2>&1 || true
+                echo '--- VM resources (disk / memory / load) ---'
+                df -h 2>&1 || true
+                free -h 2>&1 || true
+                uptime 2>&1 || true
+                echo '--- kind node conditions ---'
+                kubectl describe node 2>&1 | sed -n '/Conditions:/,/Capacity:/p' || true
                 echo '--- pods in aap27-next ---'
                 kubectl get pods -n aap27-next -o wide 2>&1 || true
                 echo '--- operator logs (last 200 lines) ---'
