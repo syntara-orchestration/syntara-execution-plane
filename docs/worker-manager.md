@@ -56,5 +56,4 @@ return or quarantine it; it must not delete the worker when one WorkItem ends.
 
 `WorkScheduler.claim_and_place_work()` resolves eligible targets, revalidates
 candidates, and assigns a target while holding the work claim. There is no
-capacity reservation, warm pool, concurrent dispatch, or WorkWatcher. One
-worker replica processes one item at a time.
+capacity reservation, warm pool, or WorkWatcher.

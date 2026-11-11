@@ -86,8 +86,9 @@ cancelling one WorkItem must not delete a shared Pod.
 
 - AO is the only configured caller and script is the only EP-dispatched node
   type. Other image-map entries and credential-bearing nodes are not enabled.
-- Dispatch is serial with one EP worker replica. The placement reconciler
-  identifies eligible targets; the scheduler chooses a target.
+- Each EP worker handles up to `EP_MAX_CONCURRENT_DISPATCHES` concurrent
+  WorkItems (default `8`). The placement reconciler identifies eligible
+  targets; the scheduler chooses a target.
 - `output_config` supports field selection. Template expressions still require
   a Syntara-independent evaluator.
 - NetworkPolicy enforcement and the port-forward path have not yet been

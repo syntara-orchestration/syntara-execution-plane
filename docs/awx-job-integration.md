@@ -332,9 +332,9 @@ bulk output as events rather than in the `Result`, (3) the async pass-through
 consumer, and (4) bigger pod limits plus the disk-backed spill volume. None of this
 is the "it all buffers in RAM" failure the GB-output worry implies.
 
-Separately, long Ansible runs stress serial-dispatch,
-fixed-timeout, and single-port-forward-per-call assumptions — size those for
-minutes-to-hours, not seconds.
+Separately, long Ansible runs stress fixed-timeout and
+single-port-forward-per-call assumptions — size those for minutes-to-hours,
+not seconds.
 
 ### 4.5 Multi-cluster reach (the mesh)
 
@@ -404,9 +404,8 @@ does the right thing (FIFO→ssh-agent); reuse it.
 
 **Biggest non-secret risk: the execution *shape*, not the plumbing.** Script nodes
 are short, single-result, small-payload. Ansible jobs are long, high-event-volume,
-large-project. The assumptions that are fine for the MVP — serial dispatch, one
-port-forward per call, result-at-completion, a small invocation envelope, tight
-timeouts — all get stressed. Project delivery (§4.3) and incremental event
+large-project. One port-forward per call, result-at-completion, a small invocation
+envelope, and tight timeouts all get stressed. Project delivery (§4.3) and incremental event
 persistence (§4.4) are where I'd expect the most redesign, more than the transport
 swap itself.
 
