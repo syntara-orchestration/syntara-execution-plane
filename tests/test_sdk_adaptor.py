@@ -12,6 +12,7 @@ import pytest
 from syntara_plugin.runtime import (
     ContainerInvocationError,
     ContainerResult,
+    CredentialAccessError,
     FailureCode,
     StepRegistry,
     add_container_runtime_service,
@@ -21,6 +22,7 @@ from syntara_plugin.runtime.protocol import container_pb2_grpc as rpc
 
 from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
 from execution_plane.worker_manager.vanilla_k8s.sdk_adaptor import WorkloadRpcError, invoke
+from execution_plane_client.commands.work import WorkloadInvocation
 
 _DIGEST = "sha256:" + "a" * 64
 
@@ -55,36 +57,43 @@ def _invoke(channel, **overrides: object) -> dict[str, Any]:
     kwargs.update(overrides)
     return invoke(
         channel,
-        {
-            "workflow_run_id": "workflow-1",
-            "step_revision_id": "script.v1",
-            "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
-            "runtime_context": {"driver": "test"},
-            "timeout_seconds": 2,
-        },
+        WorkloadInvocation.model_validate(
+            {
+                "workflow_run_id": "workflow-1",
+                "step_revision_id": "script.v1",
+                "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
+                "runtime_context": {"driver": "test"},
+                "timeout_seconds": 2,
+            }
+        ),
         **kwargs,
     )
 
 
-def test_sdk_service_receives_identity_inputs_and_empty_credential_paths():
+def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests():
     calls = []
 
     def handler(invocation) -> ContainerResult:
         assert invocation.invocation_id == "work-1-attempt-2"
         assert invocation.workflow_run_id == "workflow-1"
         assert invocation.step_revision_id == "script.v1"
-        assert invocation.credential_file_paths == {}
         assert invocation.inputs["environment"] == {"GREETING": "hello"}
         assert invocation.inputs["large_integer"] == 2**60
         assert invocation.inputs["null"] is None
         assert invocation.runtime_context == {"driver": "test"}
         calls.append("execute")
-        return ContainerResult(_DIGEST, output={"stdout": "hello"})
+        credentials = invocation.credential_provider.restrict(
+            frozenset({"database"}),
+            lambda _document: None,
+        )
+        with pytest.raises(CredentialAccessError) as error:
+            credentials.read("database")
+        return ContainerResult(_DIGEST, output={"credential_error": error.value.reason})
 
     with _server(handler=handler) as channel:
         result = _invoke(channel, on_execute_submitted=lambda: calls.append("submitted"))
     assert calls == ["submitted", "execute"]
-    assert _map_result(result, None)["output"] == {"stdout": "hello"}
+    assert _map_result(result, None)["output"] == {"credential_error": "unavailable"}
 
 
 def test_selected_step_must_be_advertised_before_submission():
@@ -217,8 +226,10 @@ class _Service(rpc.ContainerServiceServicer):
     def Health(self, request, context) -> pb.HealthResponse:  # noqa: N802
         return pb.HealthResponse(ready=True, runtime_abi=self.abi, step_revision_ids=["script.v1"])
 
-    def Execute(self, request, context) -> Iterator[pb.ExecutionEvent]:  # noqa: N802
-        yield from self.events(request, context)
+    def Execute(self, request, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
+        first = next(request)
+        for event in self.events(first.start, context):
+            yield pb.ExecuteServerMessage(event=event)
 
 
 def _terminal(identity="work-1-attempt-2") -> pb.ExecutionEvent:
@@ -352,7 +363,7 @@ def test_stream_timeout_should_match_contract_timeout_not_contract_plus_grace():
     # Track what timeout_seconds is actually passed to client.stream()
     actual_timeout = None
 
-    def mock_stream(request, *, timeout_seconds=None) -> Iterator[ContainerResult]:
+    def mock_stream(request, *, timeout_seconds=None, credential_handler=None) -> Iterator[ContainerResult]:
         nonlocal actual_timeout
         actual_timeout = timeout_seconds
         # Return a valid result

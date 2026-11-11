@@ -387,9 +387,9 @@ structlog==26.1.0 \
     --hash=sha256:e081a26d6c373e6d201eca24eede26d8ffab07f88f477822e679183428d3d91e \
     --hash=sha256:f63a716cbd1b1291cf7661de7794b455acfa4c43c5bcf1630e6ad5ddc1adb3b7
     # via execution-plane
-syntara-plugin-contracts==0.1.0a3 \
-    --hash=sha256:5292444409af8072b62503f36917b4cf9a6d8fb1ca01e20250a01436f3608fc8 \
-    --hash=sha256:9a3279d607435dc9194b16759ef7016a94f4b81f5dd7cbe904c44c411e97cdb3
+syntara-plugin-contracts==0.1.0a4 \
+    --hash=sha256:35969a8a8ada0352be4eed8caf030153625cc335b68f75aaf2b7926e094fc303 \
+    --hash=sha256:d2eb200daa35cf72fa67bca511ecbdc186a4c6797164569190a51f4ee78645f0
     # via execution-plane
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \

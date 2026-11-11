@@ -20,11 +20,12 @@ from kubernetes.stream import portforward
 
 from execution_plane.worker_manager.vanilla_k8s.forward import forward_socket
 from execution_plane.worker_manager.vanilla_k8s.sdk_adaptor import CHANNEL_OPTIONS, PORT, WorkloadRpcError, invoke
-from execution_plane_client.commands.work import WorkloadInvocation
 
 if TYPE_CHECKING:
     import threading
     from collections.abc import Callable
+
+    from execution_plane_client.commands.work import WorkloadInvocation
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -80,7 +81,7 @@ def pod_body(
     identity: str,
     attempt_id: str,
     image: str,
-    invocation: dict[str, Any],
+    invocation: WorkloadInvocation,
     *,
     startup: int,
     grace: int,
@@ -105,7 +106,7 @@ def pod_body(
         "spec": {
             "restartPolicy": "Never",
             "automountServiceAccountToken": False,
-            "activeDeadlineSeconds": startup + invocation["timeout_seconds"] + grace,
+            "activeDeadlineSeconds": startup + invocation.timeout_seconds + grace,
             "terminationGracePeriodSeconds": grace,
             "nodeSelector": _node_selector(node_selectors or []),
             "tolerations": _tolerations(tolerations or []),
@@ -244,7 +245,7 @@ def job_body(
     identity: str,
     attempt_id: str,
     image: str,
-    invocation: dict[str, Any],
+    invocation: WorkloadInvocation,
     *,
     startup: int,
     grace: int,
@@ -279,7 +280,7 @@ def job_body(
             "completions": 1,
             "parallelism": 1,
             "backoffLimit": 0,
-            "activeDeadlineSeconds": startup + invocation["timeout_seconds"] + grace,
+            "activeDeadlineSeconds": startup + invocation.timeout_seconds + grace,
             "ttlSecondsAfterFinished": 3600,
             "template": pod,
         },
@@ -290,7 +291,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
     *,
     target: dict[str, Any],
     image: str,
-    invocation: dict[str, Any],
+    invocation: WorkloadInvocation,
     identity: str,
     attempt_id: str,
     startup: int,
@@ -308,11 +309,6 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
     """Execute once in a cold-start Job; application data travels only over gRPC."""
     name = "syntara-node-" + hashlib.sha256(attempt_id.encode()).hexdigest()[:32]
     namespace = target["namespace"]
-    try:
-        WorkloadInvocation.model_validate(invocation)
-    except ValueError:
-        message = "Workload invocation is invalid"
-        raise TransportError(message) from None
     with tempfile.TemporaryDirectory(prefix="syntara-node-") as directory:
         config = client.Configuration()
         config.host = target["base_url"]

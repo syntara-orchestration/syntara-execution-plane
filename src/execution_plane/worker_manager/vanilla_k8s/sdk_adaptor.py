@@ -19,12 +19,14 @@ from syntara_plugin.runtime import (
 )
 from syntara_plugin.runtime.container import ANY_STEP_REVISION
 
-from execution_plane_client.commands.work import WorkloadInvocation
+from execution_plane.credential_resolution.sdk_resolver import CredentialResolver
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import grpc
+
+    from execution_plane_client.commands.work import WorkloadInvocation
 
 PORT = 50051
 MAX_MESSAGE_BYTES = 2_097_152
@@ -113,7 +115,7 @@ def _failure_frame(error: ContainerRemoteError, *, cancelled: bool = False) -> d
 
 def invoke(
     channel: grpc.Channel,
-    invocation: dict[str, Any],
+    invocation: WorkloadInvocation,
     *,
     identity: str,
     progress: Callable[[dict[str, Any]], None],
@@ -123,18 +125,16 @@ def invoke(
     on_execute_submitted: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Negotiate the SDK service, execute once, and consume its entire stream."""
-    data = WorkloadInvocation.model_validate(invocation)
     request = ContainerInvocation(
         invocation_id=identity,
-        workflow_run_id=data.workflow_run_id,
-        step_revision_id=data.step_revision_id,
-        inputs=data.inputs,
-        runtime_context=data.runtime_context,
-        credential_file_paths={},
-        timeout_seconds=data.timeout_seconds,
+        workflow_run_id=invocation.workflow_run_id,
+        step_revision_id=invocation.step_revision_id,
+        inputs=invocation.inputs,
+        runtime_context=invocation.runtime_context,
+        timeout_seconds=invocation.timeout_seconds,
     )
     client = ContainerClient(channel)
-    _wait_for_health(client, data.step_revision_id, cancelled, startup)
+    _wait_for_health(client, invocation.step_revision_id, cancelled, startup)
     if cancelled.is_set():
         message = "Workload execution cancelled before submission"
         raise WorkloadRpcError(message, cancelled=True)
@@ -154,7 +154,11 @@ def invoke(
         # timeout_seconds, so transport cannot outlive the step's contract
         # budget. The cancellation grace window is enforced by the watcher
         # (Cancel + channel close) and run_job's Job deletion, not the wire.
-        for event in client.stream(request, timeout_seconds=data.timeout_seconds):
+        for event in client.stream(
+            request,
+            timeout_seconds=invocation.timeout_seconds,
+            credential_handler=CredentialResolver(),
+        ):
             if result is not None:
                 message = "Workload returned events after its terminal result"
                 raise WorkloadRpcError(message)

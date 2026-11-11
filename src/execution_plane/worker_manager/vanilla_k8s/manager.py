@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from execution_plane.models.execution_target import ExecutionTarget
     from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
+    from execution_plane_client.commands.work import WorkloadInvocation
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -54,7 +55,7 @@ class _DispatchContext:
     """Validated inputs needed to start one cold-start transport attempt."""
 
     image: str
-    invocation: dict[str, Any]
+    invocation: WorkloadInvocation
     output_config: dict[str, str] | None
     identity: str
     attempt_id: str
@@ -169,7 +170,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         attempt_id = f"{identity}-{work_item.claim_generation}"
         return _DispatchContext(
             image=command.image,
-            invocation=command.invocation.model_dump(mode="json"),
+            invocation=command.invocation,
             output_config=command.output_config,
             identity=identity,
             attempt_id=attempt_id,
