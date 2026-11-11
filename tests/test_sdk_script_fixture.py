@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import time
+import tomllib
 from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
@@ -26,6 +28,21 @@ def _load_worker() -> ModuleType:
     return module
 
 
+def test_sdk_script_image_matches_ep_contracts_release() -> None:
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    contracts = next(
+        dependency
+        for dependency in project["project"]["dependencies"]
+        if dependency.startswith("syntara-plugin-contracts==")
+    )
+    expected = contracts.split("==", 1)[1]
+    containerfile = (Path(__file__).parent / "fixtures" / "sdk_script" / "Containerfile").read_text()
+    match = re.search(r"^RUN pip install --no-cache-dir syntara-plugin-sdk==([^ \n]+)$", containerfile, re.MULTILINE)
+
+    assert match is not None
+    assert match.group(1) == expected
+
+
 def test_python_script_result_matches_ao_output_contract() -> None:
     worker = _load_worker()
     invocation = ContainerInvocation(
@@ -33,7 +50,6 @@ def test_python_script_result_matches_ao_output_contract() -> None:
         workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "python", "code": "import json; print(json.dumps({'answer': 42}))"},
-        credential_file_paths={},
         timeout_seconds=10,
         cancellation=Event(),
     )
@@ -55,7 +71,6 @@ def test_python_script_json_after_logs_is_parsed() -> None:
         workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "python", "code": "import json; print('running'); print(json.dumps({'answer': 42}))"},
-        credential_file_paths={},
         timeout_seconds=10,
         cancellation=Event(),
     )
@@ -80,7 +95,6 @@ def test_perf_worker_timestamps_appended_to_stderr_when_enabled() -> None:
             "code": "echo hi",
             "environment": {"EP_PERF_WORKER_TIMESTAMPS": "1"},
         },
-        credential_file_paths={},
         timeout_seconds=10,
         cancellation=Event(),
     )
@@ -105,7 +119,6 @@ def test_perf_worker_timestamps_omitted_by_default() -> None:
         workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "bash", "code": "echo hi"},
-        credential_file_paths={},
         timeout_seconds=10,
         cancellation=Event(),
     )

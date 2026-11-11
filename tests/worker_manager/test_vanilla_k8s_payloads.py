@@ -5,10 +5,16 @@ from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
 from execution_plane.worker_manager.vanilla_k8s.transport import job_body, network_policy_body
+from execution_plane_client.commands.work import WorkloadInvocation
 
 
-def _invocation() -> dict[str, object]:
-    return {"timeout_seconds": 60}
+def _invocation() -> WorkloadInvocation:
+    return WorkloadInvocation(
+        workflow_run_id="workflow-1",
+        step_revision_id="script.v1",
+        inputs={},
+        timeout_seconds=60,
+    )
 
 
 def test_job_body_is_a_single_attempt_worker_allocation() -> None:
@@ -145,6 +151,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         return True
 
     def run_job(**kwargs: object) -> dict:
+        assert isinstance(kwargs["invocation"], WorkloadInvocation)
         kwargs["on_result"](frame)
         assert trace[0][0] == "persist"
         trace.append(("cleanup",))
