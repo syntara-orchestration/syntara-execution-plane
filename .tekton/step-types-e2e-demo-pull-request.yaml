@@ -1386,3 +1386,5 @@ spec:
   taskRunTemplate:
     serviceAccountName: konflux-integration-runner
 
+
+# retrigger: 2026-11-11 gatekeeper rollout flake (run 9rc6n)
