@@ -145,6 +145,32 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     assert "CommandScope" in components
 
 
+def test_workload_credential_bindings_are_documented() -> None:
+    components = create_app().openapi()["components"]["schemas"]
+    binding = components["WorkCredentialBinding"]
+    invocation = components["WorkloadInvocation"]
+
+    assert binding["properties"]["credential_recipe_id"] == {
+        "type": "string",
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": r"^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$",
+        "title": "Credential Recipe Id",
+        "description": "Qualified Plugin SDK CredentialRecipe identifier that the workload may request at runtime.",
+    }
+    assert binding["properties"]["credential_ref"]["format"] == "uuid"
+    assert binding["properties"]["credential_ref"]["description"] == (
+        "Opaque AO credential reference; EP resolves it only after the workload requests this recipe."
+    )
+    assert invocation["properties"]["credential_bindings"] == {
+        "items": {"$ref": "#/components/schemas/WorkCredentialBinding"},
+        "type": "array",
+        "maxItems": 16,
+        "title": "Credential Bindings",
+        "description": "Host-side recipe-to-reference bindings; never plugin inputs or runtime context.",
+    }
+
+
 def test_completion_is_documented_as_an_outbound_command() -> None:
     document = create_app().openapi()
     webhook = document["webhooks"]["work.execute.completed"]["post"]

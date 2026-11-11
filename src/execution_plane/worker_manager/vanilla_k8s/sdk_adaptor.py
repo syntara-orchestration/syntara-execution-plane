@@ -157,7 +157,7 @@ def invoke(
         for event in client.stream(
             request,
             timeout_seconds=invocation.timeout_seconds,
-            credential_handler=CredentialResolver(),
+            credential_handler=CredentialResolver(invocation.credential_bindings),
         ):
             if result is not None:
                 message = "Workload returned events after its terminal result"

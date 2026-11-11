@@ -3,13 +3,13 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from execution_plane.models.work_item import WorkItemStatus
-from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.commands.work import WorkCredentialBinding, WorkExecute
 from execution_plane_client.models.work_item import WorkItemRead
 
 
@@ -25,7 +25,85 @@ def _payload(**invocation_overrides: object) -> dict[str, Any]:
 
 
 def test_work_item_submit_accepts_a_versioned_node_invocation() -> None:
-    WorkExecute.model_validate(_payload())
+    command = WorkExecute.model_validate(_payload())
+
+    assert command.invocation.credential_bindings == []
+
+
+@pytest.mark.parametrize("binding_count", [1, 2])
+def test_work_item_submit_accepts_credential_bindings(binding_count: int) -> None:
+    payload = _payload(
+        credential_bindings=[
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": str(uuid4())},
+            {"credential_recipe_id": "acme.echo.workspace-token", "credential_ref": str(uuid4())},
+        ][:binding_count]
+    )
+
+    command = WorkExecute.model_validate(payload)
+
+    assert [binding.credential_recipe_id for binding in command.invocation.credential_bindings] == [
+        "acme.echo.api-token",
+        "acme.echo.workspace-token",
+    ][:binding_count]
+    assert all(isinstance(binding.credential_ref, UUID) for binding in command.invocation.credential_bindings)
+
+
+def test_credential_bindings_stay_outside_plugin_inputs_and_runtime_context() -> None:
+    payload = _payload(
+        credential_bindings=[
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": str(uuid4())},
+        ]
+    )
+
+    command = WorkExecute.model_validate(payload)
+
+    assert "credential_bindings" not in command.invocation.inputs
+    assert "credential_bindings" not in command.invocation.runtime_context
+    assert command.invocation.credential_bindings == [
+        WorkCredentialBinding.model_validate(binding) for binding in payload["invocation"]["credential_bindings"]
+    ]
+
+
+def test_work_item_submit_rejects_duplicate_credential_recipe_ids() -> None:
+    credential_ref = str(uuid4())
+    payload = _payload(
+        credential_bindings=[
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": credential_ref},
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": str(uuid4())},
+        ]
+    )
+
+    with pytest.raises(ValidationError, match=r"unique credential recipe IDs"):
+        WorkExecute.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("updates", "match"),
+    [
+        (
+            {"credential_bindings": [{"credential_recipe_id": "not-qualified", "credential_ref": str(uuid4())}]},
+            "credential_recipe_id",
+        ),
+        (
+            {"credential_bindings": [{"credential_recipe_id": "acme.echo.api-token", "credential_ref": "not-a-uuid"}]},
+            "credential_ref",
+        ),
+        (
+            {
+                "credential_bindings": [
+                    {"credential_recipe_id": f"acme.echo.{index}", "credential_ref": str(uuid4())}
+                    for index in range(17)
+                ]
+            },
+            "at most 16",
+        ),
+    ],
+)
+def test_work_item_submit_rejects_invalid_credential_bindings(updates: dict[str, object], match: str) -> None:
+    payload = _payload(**updates)
+
+    with pytest.raises(ValidationError, match=match):
+        WorkExecute.model_validate(payload)
 
 
 def test_work_item_read_excludes_completion_delivery_internals() -> None:
