@@ -1082,7 +1082,21 @@ spec:
               # (building from source implies the opt-in). With the flag on and no
               # ep-revision, aap-dev deploys the prebuilt quay.io/aap EP image.
               export AO_EXECUTION_PLANE='$(if [ "${ENABLE_EXECUTION_PLANE}" = "true" ] || [ -n "${EP_REVISION}" ]; then echo true; else echo false; fi)'
-              make AO_OPERATOR=true SKAFFOLD_CONFIG=\$(pwd)/skaffolding/skaffold-ao-operator.yaml aap-deploy
+              make AO_OPERATOR=true SKAFFOLD_CONFIG=\$(pwd)/skaffolding/skaffold-ao-operator.yaml aap-deploy || {
+                echo '=== aap-deploy failed; collecting diagnostics before teardown ==='
+                export KUBECONFIG=\$HOME/aap-dev/.tmp/27-next-ao-operator.kubeconfig
+                echo '--- AutomationOrchestrator CR myao (status/conditions) ---'
+                kubectl get automationorchestrator myao -o yaml 2>&1 | tail -80 || true
+                echo '--- myao-admin-settings ConfigMap ---'
+                kubectl get configmap myao-admin-settings -o yaml 2>&1 || true
+                echo '--- pods in aap27-next ---'
+                kubectl get pods -n aap27-next -o wide 2>&1 || true
+                echo '--- operator logs (last 200 lines) ---'
+                kubectl logs -n aap27-next deployment/automation-orchestrator-operator-controller-manager --tail=200 2>&1 || true
+                echo '--- recent events ---'
+                kubectl get events -n aap27-next --sort-by=.lastTimestamp 2>&1 | tail -40 || true
+                exit 1
+              }
               mkdir -p \$HOME/aap-dev/.tmp
               \$HOME/aap-dev/bin/kind export kubeconfig \
                 --name 27-next-ao-operator \
