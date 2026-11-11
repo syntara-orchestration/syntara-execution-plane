@@ -84,7 +84,7 @@ The outbound `work.execute.completed` command is documented separately under
 | --- | --- |
 | `work.execute` | `WorkExecute`: image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
 | `command.cancel` | `target_command_id`: existing work UUID; request cancellation through `WorkStore` |
-| `cluster.register`, `cluster.provision` | `ClusterRegister`: `resource_key`, `desired_revision`, name, endpoint, namespace, `credential_ref`, optional CA/project grants/labels/enabled/`is_default`; create or replace binding desired state |
+| `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_key`, `desired_revision`, explicitly changed binding fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
 | `cluster.delete` | `resource_key`, `desired_revision`; disable an existing binding for reconciliation |
 | `execution_target.register` | `resource_id`, owned physical `cluster_id`, name, backend, placement, endpoint, `credential_ref`, labels and optional `is_default`; create an independent target and optionally promote it as the Cluster default |

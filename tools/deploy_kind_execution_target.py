@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Create a local kind cluster and register it as an Execution Plane target.
 
-AO registers compute using a cluster command; the EP command handler provisions a
-Cluster plus a default vanilla-Kubernetes ExecutionTarget synchronously.
+Cluster and ExecutionTarget registration are separate commands. This tool
+registers the Cluster, then explicitly creates or updates its local target.
 
 This script:
 
@@ -10,7 +10,7 @@ This script:
 2. Applies deploy/kubernetes/execution-target/rbac.yaml (syntara-dispatcher).
 3. Attaches the running EP worker container to the kind network so the
    in-cluster API IP is reachable from podman-compose.
-4. Provisions the cluster against the local EP API.
+4. Registers the cluster and its target against the local EP API.
 
 Usage:
     make setup && uvx podman-compose up --build -d
@@ -34,15 +34,18 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from execution_plane_client.protocol import Command, CommandScope, MessageEnvelope
+from execution_plane_client.commands.clusters import ClusterRegister
+from execution_plane_client.commands.targets import KubernetesPlacement, TargetRegister, TargetUpdate
 from tools import create_ao_credential as ao_credential
 
 from .work_item_client import ep_request, ep_service_token, list_execution_targets, wait_for_ep_api
+
+if TYPE_CHECKING:
+    from execution_plane_client.commands.base import CommandPayload
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CLUSTER_NAME = "ep-kind"
@@ -228,64 +231,95 @@ def connect_worker_to_kind_network() -> str | None:
     return worker
 
 
-def provision_cluster(
+def submit_resource_command(api_url: str, token: str, command: CommandPayload) -> dict[str, Any]:
+    """Submit a typed resource command through the service-authenticated API."""
+    client_id = os.environ.get("EP_AO_CLIENT_ID", "syntara-orchestration")
+    envelope = command.to_message(
+        source_id=client_id,
+        destination_id=os.environ.get("EP_SERVICE_JWT_AUDIENCE", "execution-plane"),
+        client_id=client_id,
+    )
+    status, payload = ep_request("POST", f"{api_url}/v1/commands", token, envelope.model_dump(mode="json"))
+    if status >= HTTPStatus.BAD_REQUEST:
+        msg = f"{command.command_type} failed ({status}): {payload}"
+        raise RuntimeError(msg)
+    if not isinstance(payload, dict):
+        msg = f"Unexpected resource command response: {payload}"
+        raise TypeError(msg)
+    return payload
+
+
+def register_cluster(
     api_url: str,
     token: str,
     source_integration_id: uuid.UUID,
     *,
     name: str,
     endpoint: str,
-    namespace: str,
     credential_ref: uuid.UUID,
-    ca_certificate: str,
+    ca_certificate: str | None,
 ) -> dict[str, Any]:
-    """Provision the kind cluster synchronously through the EP command API.
-
-    Provisioning is synchronous and idempotent on the physical cluster id. The
-    cluster's id is this caller-supplied UUID (shared with the AO Integration);
-    re-runs upsert the same row. The default target's namespace comes from the EP
-    service's EP_DEFAULT_WORKLOAD_NAMESPACE (set to match ``namespace`` for kind).
-    """
-    del namespace  # No longer part of the cluster command; set via EP config / target placement.
-    body = {
-        "resource_id": str(source_integration_id),
-        "name": name,
-        "endpoint": endpoint,
-        "credential_ref": str(credential_ref),
-        "ca_certificate": ca_certificate,
-        "enabled": True,
-        "is_default": True,
-        "labels": {"execution-plane.syntara.io/local": "kind"},
-    }
-    print(f"[INFO] Provisioning cluster {source_integration_id}")
-    command_id = uuid.uuid4()
-    client_id = os.environ.get("EP_AO_CLIENT_ID", "syntara-orchestration")
-    envelope = MessageEnvelope(
-        message_id=uuid.uuid4(),
-        command_id=command_id,
-        source_id=client_id,
-        destination_id=os.environ.get("EP_SERVICE_JWT_AUDIENCE", "execution-plane"),
-        scope=CommandScope(client_id=client_id),
-        command=Command(
-            command_id=command_id,
-            command_type="cluster.provision",
-            command_revision=1,
-            occurred_at=datetime.now(UTC),
-            payload=body,
+    """Register only the Cluster, idempotently using the caller-supplied id."""
+    return submit_resource_command(
+        api_url,
+        token,
+        ClusterRegister(
+            resource_id=source_integration_id,
+            name=name,
+            endpoint=endpoint,
+            credential_ref=credential_ref,
+            ca_certificate=ca_certificate,
+            is_default=True,
+            labels={"execution-plane.syntara.io/local": "kind"},
         ),
     )
-    status, payload = ep_request("POST", f"{api_url}/v1/commands", token, envelope.model_dump(mode="json"))
-    if status >= HTTPStatus.BAD_REQUEST:
-        msg = f"Cluster provision failed ({status}): {payload}"
+
+
+def register_target(
+    api_url: str,
+    token: str,
+    cluster_id: uuid.UUID,
+    *,
+    name: str,
+    endpoint: str,
+    namespace: str,
+) -> dict[str, Any]:
+    """Explicitly register the local target, updating it on subsequent setup runs."""
+    # Reuse a target created by earlier versions of this tool as well as new
+    # targets. Filter by both cluster and name; never adopt another cluster's target.
+    matches = [
+        target
+        for target in list_execution_targets(api_url, token, cluster_id=cluster_id, name=name)
+        if target["cluster_id"] == str(cluster_id) and target["name"] == name
+    ]
+    if len(matches) > 1:
+        msg = f"Multiple targets named {name!r} belong to cluster {cluster_id}"
         raise RuntimeError(msg)
-    if not isinstance(payload, dict):
-        msg = f"Unexpected cluster command response: {payload}"
-        raise TypeError(msg)
-    return payload
+    placement = KubernetesPlacement(namespace=namespace)
+    if matches:
+        command: CommandPayload = TargetUpdate(
+            resource_id=uuid.UUID(matches[0]["id"]),
+            endpoint=endpoint,
+            placement=placement,
+            is_default=True,
+        )
+    else:
+        command = TargetRegister(
+            resource_id=uuid.uuid5(cluster_id, "kind-execution-target"),
+            cluster_id=cluster_id,
+            name=name,
+            backend_type="kubernetes",
+            endpoint=endpoint,
+            credential_ref=uuid.UUID(int=0),
+            placement=placement,
+            is_default=True,
+            labels={"execution-plane.syntara.io/local": "kind"},
+        )
+    return submit_resource_command(api_url, token, command)
 
 
 def wait_for_cluster(api_url: str, token: str, source_integration_id: uuid.UUID, timeout: int) -> dict[str, Any]:
-    """Poll until the synchronously-provisioned cluster reports active.
+    """Poll until the registered cluster reports active.
 
     The cluster's physical id is this caller-supplied UUID, so address it by id.
     """
@@ -299,7 +333,7 @@ def wait_for_cluster(api_url: str, token: str, source_integration_id: uuid.UUID,
             if cluster_status == "active":
                 return payload
             if cluster_status == "error":
-                msg = payload.get("status_message") or "Cluster provisioning failed"
+                msg = payload.get("status_message") or "Cluster registration failed"
                 raise RuntimeError(msg)
         time.sleep(3)
     msg = f"Timed out waiting for cluster {source_integration_id} to become active"
@@ -323,7 +357,7 @@ def register_kind_cluster(
     wait_seconds: int,
     wait_for_api: int = 0,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Provision the kind cluster synchronously through the EP command API.
+    """Register the kind Cluster, then its independently managed target.
 
     When *wait_for_api* is non-zero the EP API is polled for readiness first.
     """
@@ -331,17 +365,24 @@ def register_kind_cluster(
         wait_for_ep_api(api_url, timeout=wait_for_api)
     token = ep_service_token()
     integration_id = source_integration_id(cluster_name)
-    provision_cluster(
+    register_cluster(
+        api_url,
+        token,
+        integration_id,
+        name=binding_name,
+        endpoint=endpoint,
+        credential_ref=credential_ref,
+        ca_certificate=ca_certificate,
+    )
+    cluster = wait_for_cluster(api_url, token, integration_id, wait_seconds)
+    register_target(
         api_url,
         token,
         integration_id,
         name=binding_name,
         endpoint=endpoint,
         namespace=namespace,
-        credential_ref=credential_ref,
-        ca_certificate=ca_certificate,
     )
-    cluster = wait_for_cluster(api_url, token, integration_id, wait_seconds)
     return cluster, list_execution_targets(api_url, token)
 
 
@@ -396,7 +437,7 @@ def _ao_admin_password(args: argparse.Namespace) -> str:
 
 
 def main() -> int:
-    """Create kind, provision the cluster, and wait until it is active."""
+    """Create kind and register its cluster and target."""
     args = _parse_args()
     if args.credential_ref is None and not args.create_ao_credential:
         msg = "--credential-ref, EP_KIND_CREDENTIAL_REF, or --create-ao-credential is required"

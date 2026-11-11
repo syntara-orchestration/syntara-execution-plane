@@ -14,16 +14,6 @@ class NodeLifecycleSettings(BaseSettings):
     node_startup_seconds: int = Field(default=120, validation_alias="EP_NODE_STARTUP_SECONDS", ge=1)
     node_grace_seconds: int = Field(default=30, validation_alias="EP_NODE_GRACE_SECONDS", ge=1)
 
-    # Namespace for the default execution target created when a cluster is first
-    # provisioned. Namespace is otherwise a per-target placement concern, editable
-    # via execution_target.update.
-    default_workload_namespace: str = Field(
-        default="default",
-        validation_alias="EP_DEFAULT_WORKLOAD_NAMESPACE",
-        min_length=1,
-        max_length=63,
-    )
-
 
 class WorkloadEgressSettings(BaseSettings):
     """Workload egress allow and deny ranges."""

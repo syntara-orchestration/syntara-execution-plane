@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
@@ -44,7 +44,6 @@ DEFAULT_TOKEN_SCOPES = (
     "execution-targets:read",
     "clusters:read",
     "cluster.register",
-    "cluster.provision",
     "cluster.update",
     "cluster.delete",
     "execution_target.register",
@@ -296,9 +295,21 @@ def get_work_item(api_url: str, token: str, work_id: uuid.UUID) -> dict[str, Any
     return response
 
 
-def list_execution_targets(api_url: str, token: str) -> list[dict[str, Any]]:
-    """Return execution targets visible to the service token."""
-    status, response = ep_request("GET", f"{api_url.rstrip('/')}/v1/execution-targets", token)
+def list_execution_targets(
+    api_url: str,
+    token: str,
+    *,
+    cluster_id: uuid.UUID | None = None,
+    name: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return visible targets, optionally narrowing a setup lookup by cluster and name."""
+    filters = {}
+    if cluster_id is not None:
+        filters["cluster_id"] = str(cluster_id)
+    if name is not None:
+        filters["name"] = name
+    query = f"?{urlencode(filters)}" if filters else ""
+    status, response = ep_request("GET", f"{api_url.rstrip('/')}/v1/execution-targets{query}", token)
     if status >= HTTPStatus.BAD_REQUEST:
         msg = f"Listing execution targets failed ({status}): {response}"
         raise RuntimeError(msg)

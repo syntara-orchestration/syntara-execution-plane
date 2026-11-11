@@ -30,7 +30,7 @@ async def test_caller_controls_composed_cluster_changes(cluster_sessions, commit
             await session.begin()
             store = ClusterStore.from_transaction(session)
             await store.create(cluster_id, str(cluster_id), f"https://{cluster_id}.example", uuid4(), actor)
-            await store.record_discovery_state(cluster_id, ClusterStatus.ACTIVE, None, actor)
+            await store.activate(cluster_id, actor)
             await store.update(cluster_id, updated_by=actor, name="updated")
             assert session.in_transaction()
             async with cluster_sessions() as observer:
@@ -59,7 +59,7 @@ async def test_caller_controls_composed_cluster_changes(cluster_sessions, commit
         "set_default",
         "ensure_default",
         "reactivate",
-        "record_discovery_state",
+        "activate",
         "mark_drain_failed",
         "request_delete",
         "finalize_delete",
@@ -73,8 +73,8 @@ async def test_outer_rollback_restores_existing_cluster(cluster_sessions, method
         async with cluster_sessions() as session:
             store = ClusterStore.from_session(session)
             await store.create(cluster_id, str(cluster_id), f"https://{cluster_id}.example", uuid4(), actor)
-            if method != "record_discovery_state":
-                await store.record_discovery_state(cluster_id, ClusterStatus.ACTIVE, None, actor)
+            if method != "activate":
+                await store.activate(cluster_id, actor)
             if method in {"reactivate", "finalize_delete"}:
                 await store.request_delete(cluster_id, actor)
         async with cluster_sessions() as session:
@@ -86,8 +86,8 @@ async def test_outer_rollback_restores_existing_cluster(cluster_sessions, method
         elif method == "reactivate":
             store_args = (cluster_id,)
             store_kwargs = {"updated_by": actor}
-        elif method == "record_discovery_state":
-            store_args = (cluster_id, ClusterStatus.ACTIVE, None, actor)
+        elif method == "activate":
+            store_args = (cluster_id, actor)
         elif method == "mark_drain_failed":
             store_args = (cluster_id, "failed", actor)
         elif method == "finalize_delete":

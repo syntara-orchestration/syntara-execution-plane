@@ -138,8 +138,9 @@ Local helper scripts under `tools/` cover the rest of a first bring-up. EP does
 not issue tokens; `tools/generate_jwt_for_ep.py` signs an AO service JWT with the
 local or sibling Syntara ES256 key. Submit requires a `project_id` claim.
 `tools/deploy_kind_execution_target.py` creates a kind cluster, applies
-`deploy/kubernetes/execution-target/rbac.yaml`, and registers it through a
-cluster binding. `tools/submit_work_item.py` posts a script work item to the
+`deploy/kubernetes/execution-target/rbac.yaml`, registers the Cluster, then
+explicitly registers an ExecutionTarget with the chosen namespace. Re-running
+the tool updates the existing target. `tools/submit_work_item.py` posts a script work item to the
 local API.
 
 ```bash

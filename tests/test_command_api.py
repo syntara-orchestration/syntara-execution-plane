@@ -216,6 +216,7 @@ async def test_capabilities_do_not_advertise_uninstalled_completion_handlers():
         response = await client.get("/v1/capabilities")
     assert response.status_code == 200
     commands = response.json()["commands"]
-    assert len(commands) == 10
+    assert len(commands) == 9
+    assert "cluster.provision" not in commands
     assert commands["command.cancel"] == [1]
     assert "work.execute.completed" not in commands

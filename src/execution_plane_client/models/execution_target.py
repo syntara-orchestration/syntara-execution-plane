@@ -190,7 +190,7 @@ class KubernetesTargetPlacement(CommandKubernetesPlacement):
 
 
 class ExecutionTargetCreate(BaseModel):
-    """A Kubernetes target on the single cluster provisioned at installation."""
+    """A Kubernetes target on the single cluster registered at installation."""
 
     model_config = ConfigDict(extra="forbid")
 
