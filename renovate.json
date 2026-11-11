@@ -10,7 +10,10 @@
     "enabled": true,
     "labels": ["security"],
     "rangeStrategy": "bump",
-    "schedule": ["at any time"]
+    "schedule": ["at any time"],
+    "automerge": true,
+    "platformAutomerge": true,
+    "automergeStrategy": "squash"
   },
   "customManagers": [
     {
