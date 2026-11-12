@@ -20,9 +20,14 @@ from syntara_plugin.runtime import (
 from syntara_plugin.runtime.protocol import container_pb2 as pb
 from syntara_plugin.runtime.protocol import container_pb2_grpc as rpc
 
-from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
+from execution_plane.worker_manager.vanilla_k8s.manager import (
+    NodeExecutionError,
+    VanillaK8sWorkerManager,
+    _map_result,
+)
 from execution_plane.worker_manager.vanilla_k8s.sdk_adaptor import WorkloadRpcError, invoke
 from execution_plane_client.commands.work import WorkloadInvocation
+from execution_plane_client.models.work_item import WorkItemStatus
 
 _DIGEST = "sha256:" + "a" * 64
 
@@ -248,9 +253,10 @@ class _Service(rpc.ContainerServiceServicer):
     def Health(self, request, context) -> pb.HealthResponse:  # noqa: N802
         return pb.HealthResponse(ready=True, runtime_abi=self.abi, step_revision_ids=["script.v1"])
 
-    def Execute(self, request, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
-        first = next(request)
-        for event in self.events(first.start, context):
+    def Execute(self, requests, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
+        request = next(requests)
+        assert request.WhichOneof("message") == "start"
+        for event in self.events(request.start, context):
             yield pb.ExecuteServerMessage(event=event)
 
 
@@ -363,54 +369,25 @@ def test_cancellation_closes_the_channel_when_the_workload_ignores_cancel():
     assert not error.value.retryable
 
 
-def test_stream_timeout_should_match_contract_timeout_not_contract_plus_grace():
-    """Verify that client.stream receives timeout_seconds from contract, not contract + grace.
+def test_workload_timeout_reaches_failed_without_cancellation():
+    """Receive the SDK timeout over real gRPC and map it to EP's FAILED state."""
+    stopped, cancelled = Event(), Event()
 
-    The SDK's _execution_deadline clamps the stream timeout to invocation.timeout_seconds:
-        return min(invocation.timeout_seconds, float(timeout_seconds))
+    def handler(invocation) -> ContainerResult:
+        assert invocation.cancellation.wait(5)
+        stopped.set()
+        return ContainerResult(_DIGEST, output={"late": True})
 
-    So passing (contract_timeout + grace) gets silently clamped back to contract_timeout.
-    This test verifies we pass the correct value directly, not relying on SDK clamping.
-
-    EXPECTED BEHAVIOR:
-        - Contract timeout: 10 seconds
-        - Grace period: 5 seconds
-        - Stream should receive: 10 seconds (NOT 15)
-
-    This test FAILS on devel (which passes 15, then SDK clamps to 10).
-    This test PASSES on refactor/sdk-workload-protocol (which passes 10 directly).
-    """
-    channel = Mock()
-
-    # Track what timeout_seconds is actually passed to client.stream()
-    actual_timeout = None
-
-    def mock_stream(request, *, timeout_seconds=None, credential_handler=None) -> Iterator[ContainerResult]:
-        nonlocal actual_timeout
-        actual_timeout = timeout_seconds
-        # Return a valid result
-        yield ContainerResult("sha256:" + "a" * 64, output={"result": "done"})
-
-    mock_client = Mock()
-    mock_client.stream = mock_stream
-    mock_client.health = Mock(return_value=["script.v1"])
-
-    with patch("execution_plane.worker_manager.vanilla_k8s.sdk_adaptor.ContainerClient", return_value=mock_client):
-        _invoke(
-            channel,
-            identity="work-1",
-            progress=lambda _: None,
-            cancelled=Event(),
-            startup=0.1,
-            grace=5,  # Grace period
-        )
-
-    # The SDK should receive the contract timeout (10), not contract + grace (15)
-    assert actual_timeout == 2, (
-        f"client.stream should receive timeout_seconds=2 (contract timeout), "
-        f"but received timeout_seconds={actual_timeout}. "
-        f"Passing contract+grace is wrong even though SDK clamps it."
-    )
+    with _server(handler=handler) as channel:
+        frame = _invoke(channel, cancelled=cancelled)
+    assert stopped.wait(1)
+    assert not cancelled.is_set()
+    assert frame["kind"] == "failure"
+    assert frame["code"] == "TIMEOUT"
+    result, status = VanillaK8sWorkerManager._result_and_status(frame, None, cancelled)
+    assert status is WorkItemStatus.FAILED
+    assert result["failure_code"] == "TIMEOUT"
+    assert result["outcome"] == "not_completed"
 
 
 def test_channel_should_not_be_closed_in_invoke_finally_block():

@@ -1,7 +1,8 @@
 FROM docker.io/library/python:3.12-slim
 
-# Match EP's immutable SDK source revision, including its runtime APIs.
-RUN pip install --no-cache-dir syntara-plugin-sdk==0.1.0a4
+# Match EP's immutable SDK PR #55 revision (fix/timeout-result-delivery).
+# The contracts distribution contains all runtime APIs used by this fixture.
+RUN pip install --no-cache-dir 'syntara-plugin-contracts @ https://github.com/syntara-orchestration/syntara-plugin-sdk/archive/dca70a2be44d68b3e3f0545f9d504f3e20638f6f.tar.gz#subdirectory=sdks/python/packages/contracts'
 
 COPY worker.py /opt/sdk-test-worker.py
 USER 1001

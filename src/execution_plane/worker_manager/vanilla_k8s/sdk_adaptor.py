@@ -150,13 +150,11 @@ def invoke(
     watcher.start()
     result: ContainerResult | None = None
     try:
-        # The SDK clamps the Execute deadline to the invocation's own
-        # timeout_seconds, so transport cannot outlive the step's contract
-        # budget. The cancellation grace window is enforced by the watcher
-        # (Cancel + channel close) and run_job's Job deletion, not the wire.
+        # Let the SDK retain its bounded terminal-result delivery window after
+        # the execution budget. An explicit RPC deadline equal to that budget
+        # cuts off the workload's timeout failure before EP can receive it.
         for event in client.stream(
             request,
-            timeout_seconds=invocation.timeout_seconds,
             credential_handler=CredentialResolver(invocation.credential_bindings),
         ):
             if result is not None:
