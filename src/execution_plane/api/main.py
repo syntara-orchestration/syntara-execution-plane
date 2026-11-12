@@ -298,7 +298,15 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     ) -> ExecutionTargetRead:
         return await EPResourceQueries(request.app.state.ep_engine, identity.client_id).target(resource_id)
 
-    configure_command_openapi(app, catalog, registry.capabilities())
+    configure_command_openapi(
+        app,
+        catalog,
+        registry.capabilities(),
+        [
+            catalog.definition("credential.resolve", 1),
+            catalog.definition("credential.resolve.workload", 1),
+        ],
+    )
     return app
 
 

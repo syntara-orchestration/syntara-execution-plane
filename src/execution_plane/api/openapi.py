@@ -36,8 +36,12 @@ def _replace_references(value: object, replacements: dict[str, str]) -> None:
             _replace_references(child, replacements)
 
 
-def _command_schemas(incoming: list[CommandDefinition], completion: CommandDefinition) -> dict[str, JsonSchemaValue]:
-    definitions = [*incoming, completion]
+def _command_schemas(
+    incoming: list[CommandDefinition],
+    completion: CommandDefinition,
+    outbound: list[CommandDefinition],
+) -> dict[str, JsonSchemaValue]:
+    definitions = [*incoming, completion, *outbound]
     models: list[type[BaseModel]] = [MessageEnvelope, *(definition.payload_schema for definition in definitions)]
     references, document = models_json_schema(
         [(model, "validation") for model in models], ref_template="#/components/schemas/{model}"
@@ -56,7 +60,8 @@ def _command_schemas(incoming: list[CommandDefinition], completion: CommandDefin
             command["properties"]["parent_command_id"] = {"type": "string", "format": "uuid"}
             command["required"].append("parent_command_id")
         schemas[name] = command
-        mapping[definition.command_type] = _ref(name)
+        if definition not in outbound:
+            mapping[definition.command_type] = _ref(name)
     completion_ref = mapping.pop(completion.command_type)
     schemas["Command"] = {
         "title": "Command",
@@ -87,7 +92,12 @@ def _merge_schemas(existing: dict[str, JsonSchemaValue], generated: dict[str, Js
     return names
 
 
-def configure_command_openapi(app: FastAPI, catalog: CommandCatalog, capabilities: CapabilitiesRead) -> None:
+def configure_command_openapi(
+    app: FastAPI,
+    catalog: CommandCatalog,
+    capabilities: CapabilitiesRead,
+    outbound: list[CommandDefinition],
+) -> None:
     """Add reusable command components and the outbound completion webhook to OpenAPI."""
     incoming = [
         catalog.definition(kind, revision)
@@ -101,7 +111,7 @@ def configure_command_openapi(app: FastAPI, catalog: CommandCatalog, capabilitie
         if app.openapi_schema is not None:
             return app.openapi_schema
         document = original_openapi()
-        names = _merge_schemas(document["components"]["schemas"], _command_schemas(incoming, completion))
+        names = _merge_schemas(document["components"]["schemas"], _command_schemas(incoming, completion, outbound))
         document["paths"]["/v1/commands"]["post"]["requestBody"] = {
             "required": True,
             "content": {"application/json": {"schema": {"$ref": _ref(names["MessageEnvelope"])}}},
