@@ -691,6 +691,34 @@ components:
       - credential
       title: CredentialResolveCommandResult
       description: Typed result returned for a credential-resolution command.
+    CredentialResolveWorkloadCommandResult:
+      properties:
+        command_type:
+          type: string
+          const: credential.resolve.workload
+          title: Command Type
+          default: credential.resolve.workload
+        command_revision:
+          type: integer
+          const: 1
+          title: Command Revision
+          default: 1
+        credential:
+          additionalProperties:
+            type: string
+            maxLength: 8192
+            minLength: 1
+          propertyNames:
+            maxLength: 128
+            minLength: 1
+          type: object
+          title: Credential
+      additionalProperties: false
+      type: object
+      required:
+      - credential
+      title: CredentialResolveWorkloadCommandResult
+      description: Typed result returned for a workload credential-resolution command.
     ExecutionTargetListResponse:
       properties:
         resources:
@@ -942,11 +970,13 @@ components:
           anyOf:
           - oneOf:
             - $ref: '#/components/schemas/CredentialResolveCommandResult'
+            - $ref: '#/components/schemas/CredentialResolveWorkloadCommandResult'
             - $ref: '#/components/schemas/TargetHealthCommandResult'
             discriminator:
               propertyName: command_type
               mapping:
                 credential.resolve: '#/components/schemas/CredentialResolveCommandResult'
+                credential.resolve.workload: '#/components/schemas/CredentialResolveWorkloadCommandResult'
                 execution_target.health: '#/components/schemas/TargetHealthCommandResult'
           - type: 'null'
           title: Result
@@ -1284,6 +1314,65 @@ components:
       - reconciliation_required
       title: CompletionStatus
       description: Work-item states that can be reported by a completion command.
+    CredentialResolve:
+      properties:
+        credential_ref:
+          type: string
+          format: uuid
+          title: Credential Ref
+          description: Opaque AO credential reference.
+      additionalProperties: false
+      type: object
+      required:
+      - credential_ref
+      title: CredentialResolve
+      description: Resolve an opaque credential reference into a short-lived value.
+    CredentialResolveWorkload:
+      properties:
+        attempt_id:
+          type: string
+          maxLength: 255
+          minLength: 1
+          pattern: ^[A-Za-z0-9_.:@/-]+$
+          title: Attempt Id
+          description: Execution attempt that owns the workload invocation.
+        credential_ref:
+          type: string
+          format: uuid
+          title: Credential Ref
+          description: Opaque AO credential reference bound to the requested recipe.
+        credential_recipe_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$
+          title: Credential Recipe Id
+          description: Logical Plugin SDK recipe requested by the workload.
+        workflow_run_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[A-Za-z0-9._:-]+$
+          title: Workflow Run Id
+          description: Caller-owned workflow run containing the active step.
+        step_revision_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[A-Za-z0-9._:-]+$
+          title: Step Revision Id
+          description: Workload revision that requested the credential.
+      additionalProperties: false
+      type: object
+      required:
+      - attempt_id
+      - credential_ref
+      - credential_recipe_id
+      - workflow_run_id
+      - step_revision_id
+      title: CredentialResolveWorkload
+      description: Resolve one credential reference for the work item named by its
+        parent command.
     ClientKubernetesPlacement:
       properties:
         type:
@@ -1980,6 +2069,72 @@ components:
       - occurred_at
       - parent_command_id
       title: CompletionCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    CredentialResolveCommandV1:
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          title: Command Id
+        parent_command_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Parent Command Id
+        command_type:
+          type: string
+          const: credential.resolve
+        command_revision:
+          type: integer
+          const: 1
+        payload:
+          $ref: '#/components/schemas/CredentialResolve'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_id
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: CredentialResolveCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    CredentialResolveWorkloadCommandV1:
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          title: Command Id
+        parent_command_id:
+          type: string
+          format: uuid
+        command_type:
+          type: string
+          const: credential.resolve.workload
+        command_revision:
+          type: integer
+          const: 1
+        payload:
+          $ref: '#/components/schemas/CredentialResolveWorkload'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_id
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      - parent_command_id
+      title: CredentialResolveWorkloadCommandV1
       description: One versioned operation; participants persist only its domain effects.
     CompletionMessageEnvelope:
       properties:

@@ -133,6 +133,7 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     assert command["discriminator"]["propertyName"] == "command_type"
     mapping = command["discriminator"]["mapping"]
     assert mapping.keys() == expected_payloads.keys()
+    assert "credential.resolve.workload" not in mapping
     assert command["oneOf"] == [{"$ref": reference} for reference in mapping.values()]
     for kind, payload_name in expected_payloads.items():
         variant = components[mapping[kind].rsplit("/", 1)[-1]]
@@ -197,6 +198,7 @@ def test_transport_receipt_uses_discriminated_command_result() -> None:
     assert union["discriminator"]["propertyName"] == "command_type"
     assert mapping == {
         "credential.resolve": "#/components/schemas/CredentialResolveCommandResult",
+        "credential.resolve.workload": "#/components/schemas/CredentialResolveWorkloadCommandResult",
         "execution_target.health": "#/components/schemas/TargetHealthCommandResult",
     }
     assert union["oneOf"] == [{"$ref": reference} for reference in mapping.values()]
@@ -210,6 +212,32 @@ def test_transport_receipt_uses_discriminated_command_result() -> None:
         "type": "boolean",
         "title": "Healthy",
     }
+
+
+def test_credential_resolution_payloads_are_documented_without_ingress_handlers() -> None:
+    document = create_app().openapi()
+    components = document["components"]["schemas"]
+    cluster_command = components["CredentialResolveCommandV1"]
+    command = components["CredentialResolveWorkloadCommandV1"]
+    payload = command["properties"]["payload"]
+    command_mapping = components["Command"]["discriminator"]["mapping"]
+
+    assert cluster_command["properties"]["command_type"] == {"const": "credential.resolve", "type": "string"}
+    assert cluster_command["properties"]["payload"]["$ref"] == "#/components/schemas/CredentialResolve"
+    assert set(components["CredentialResolve"]["required"]) == {"credential_ref"}
+    assert command["properties"]["command_type"] == {"const": "credential.resolve.workload", "type": "string"}
+    assert {"command_type", "command_revision", "payload"} <= set(command["required"])
+    assert "parent_command_id" in command["required"]
+    assert payload["$ref"] == "#/components/schemas/CredentialResolveWorkload"
+    assert set(components["CredentialResolveWorkload"]["required"]) == {
+        "attempt_id",
+        "credential_ref",
+        "credential_recipe_id",
+        "workflow_run_id",
+        "step_revision_id",
+    }
+    assert "credential.resolve.workload" not in command_mapping
+    assert "credential.resolve" not in command_mapping
 
 
 def test_command_schema_references_resolve_and_do_not_replace_resource_schemas() -> None:
