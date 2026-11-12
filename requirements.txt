@@ -387,9 +387,8 @@ structlog==26.1.0 \
     --hash=sha256:e081a26d6c373e6d201eca24eede26d8ffab07f88f477822e679183428d3d91e \
     --hash=sha256:f63a716cbd1b1291cf7661de7794b455acfa4c43c5bcf1630e6ad5ddc1adb3b7
     # via execution-plane
-syntara-plugin-contracts==0.1.0a4 \
-    --hash=sha256:35969a8a8ada0352be4eed8caf030153625cc335b68f75aaf2b7926e094fc303 \
-    --hash=sha256:d2eb200daa35cf72fa67bca511ecbdc186a4c6797164569190a51f4ee78645f0
+syntara-plugin-contracts @ https://github.com/syntara-orchestration/syntara-plugin-sdk/archive/dca70a2be44d68b3e3f0545f9d504f3e20638f6f.tar.gz#subdirectory=sdks/python/packages/contracts \
+    --hash=sha256:1217c8aaee47a80cbdcec70c85348eab9f00632c0d271a58d85e86af2bdaf671
     # via execution-plane
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \

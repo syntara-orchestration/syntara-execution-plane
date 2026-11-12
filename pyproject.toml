@@ -28,12 +28,16 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "sqlmodel>=0.0.22",
     "structlog>=24.0.0",
-    "syntara-plugin-contracts==0.1.0a4",
+    # SDK PR #55: fix/timeout-result-delivery, pinned to its reviewed head.
+    "syntara-plugin-contracts @ https://github.com/syntara-orchestration/syntara-plugin-sdk/archive/dca70a2be44d68b3e3f0545f9d504f3e20638f6f.tar.gz#subdirectory=sdks/python/packages/contracts",
     "uvicorn[standard]>=0.34.0",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/execution_plane"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 only-include = [

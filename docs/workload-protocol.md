@@ -13,20 +13,22 @@ that client to EP's cancellation, progress, and attempt lifecycle.
 
 ## Installing the pinned SDK
 
-[`pyproject.toml`](../pyproject.toml) declares the `syntara-plugin-contracts`
-dependency. [`uv.lock`](../uv.lock)
-records the selected package version, registry, artifact URLs, and SHA-256
-hashes; the exported `requirements.txt` records the same pinned release and
-hashes for pip/Hermeto builds.
+This demo pins `syntara-plugin-contracts` to commit
+`dca70a2be44d68b3e3f0545f9d504f3e20638f6f` from
+[`syntara-orchestration/syntara-plugin-sdk`, branch `fix/timeout-result-delivery`](https://github.com/syntara-orchestration/syntara-plugin-sdk/pull/55).
+Both EP and `tests/fixtures/sdk_script/Containerfile` install the contracts
+subdirectory from the same immutable source archive. That distribution contains
+the runtime used by the script fixture. `uv.lock` and `requirements.txt` record
+the archive hash.
 
-Use `uv sync --locked --all-groups` (or `make install`, which runs that
-command) for reproducible installation. It requires access to PyPI but no
-sibling SDK checkout, private index, or developer-local source override.
-Plain `pip install .` can resolve the declared SDK version, but unlike `uv sync`
-it does not use the repository's complete lockfile.
+Use `uv sync --locked --all-groups` for installation. This demo requires access
+to GitHub and PyPI; it does not require a sibling SDK checkout. When updating
+the SDK pin, update the fixture image and regenerate the lockfile and requirement
+exports together.
 
-To move to another reviewed SDK release, update the version pin and regenerate
-the lockfile and requirement exports.
+The source pin adds timeout-result delivery to the `0.1.0a4` SDK already
+consumed by EP. Rebuild and load the fixture image before running the timeout
+integration test so both client and workload use the fix.
 
 ## Command and workload data
 
@@ -69,7 +71,11 @@ Cluster API authentication uses a separate resolver for the Cluster credential.
 EP negotiates `Health`, checks that the image advertises the selected step (or
 the SDK's platform-runner wildcard), then submits Execute once. It consumes
 `ContainerClient.stream` to forward progress and require a valid terminal
-outcome. Cancellation calls the SDK's Cancel RPC; after the grace period EP
+outcome. The invocation timeout remains the execution budget; the SDK adds a
+bounded delivery window to its default RPC deadline. EP omits an explicit RPC
+timeout so the runtime can report `TIMEOUT`, which EP records as `failed` when
+no cancellation was requested. Transport loss still requires reconciliation.
+Cancellation calls the SDK's Cancel RPC; after the grace period EP
 closes its dedicated channel and cleans up the owned Kubernetes resources.
 
 EP preserves the SDK's output schema digest, status code, status message,

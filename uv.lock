@@ -606,7 +606,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "syntara-plugin-contracts", specifier = "==0.1.0a4" },
+    { name = "syntara-plugin-contracts", url = "https://github.com/syntara-orchestration/syntara-plugin-sdk/archive/dca70a2be44d68b3e3f0545f9d504f3e20638f6f.tar.gz", subdirectory = "sdks/python/packages/contracts" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 
@@ -1932,7 +1932,7 @@ wheels = [
 [[package]]
 name = "syntara-plugin-contracts"
 version = "0.1.0a4"
-source = { registry = "https://pypi.org/simple" }
+source = { url = "https://github.com/syntara-orchestration/syntara-plugin-sdk/archive/dca70a2be44d68b3e3f0545f9d504f3e20638f6f.tar.gz", subdirectory = "sdks/python/packages/contracts" }
 dependencies = [
     { name = "grpcio" },
     { name = "jsonschema" },
@@ -1941,9 +1941,16 @@ dependencies = [
     { name = "pyyaml" },
     { name = "referencing" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/d8/a76b7c311d49f10bc671c28f1dca280a6788722ee4f66384cc27a7f0327b/syntara_plugin_contracts-0.1.0a4.tar.gz", hash = "sha256:35969a8a8ada0352be4eed8caf030153625cc335b68f75aaf2b7926e094fc303", size = 107598, upload-time = "2026-11-10T18:01:46.505Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/92/b5f956fbf19e186a2de3a818b7ae69f44067bc5d84d0c6944ed23eddacf8/syntara_plugin_contracts-0.1.0a4-py3-none-any.whl", hash = "sha256:d2eb200daa35cf72fa67bca511ecbdc186a4c6797164569190a51f4ee78645f0", size = 152968, upload-time = "2026-11-10T18:01:45.155Z" },
+sdist = { hash = "sha256:1217c8aaee47a80cbdcec70c85348eab9f00632c0d271a58d85e86af2bdaf671" }
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio", specifier = ">=1.78.0" },
+    { name = "jsonschema", specifier = ">=4.23" },
+    { name = "protobuf", specifier = ">=6.31.1" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "referencing", specifier = ">=0.37" },
 ]
 
 [[package]]
