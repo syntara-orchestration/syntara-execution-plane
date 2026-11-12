@@ -45,7 +45,7 @@ RUN if [ -n "${PIP_FIND_LINKS:-}" ]; then \
         uv sync --frozen --no-dev --no-editable; \
     fi
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:2d4c4551af6831dcd26bbf86108c4385de5183ec8fe6b5868f6f9640fe47f4ed AS runtime
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:baafce2d34783a28b4a472779f304e97e00f9d35c99553bc53b068b14344d9a9 AS runtime
 
 USER 0
 
