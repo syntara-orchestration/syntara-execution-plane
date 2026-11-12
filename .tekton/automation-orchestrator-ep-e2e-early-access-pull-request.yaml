@@ -50,13 +50,17 @@ spec:
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
       value: feat/ANSTRAT-1803
+    - name: ao-operator-git-url
+      value: https://github.com/automation-nexus/automation-orchestrator-operator.git
+     - name: ao-operator-revision
+      value: feat/ANSTRAT-1803
   pipelineRef:
     resolver: bundles
     params:
       - name: name
         value: ep-api-tests
       - name: bundle
-        value: quay.io/aap-ci/tekton-catalog/pipeline/test/ep-api-tests:0.1@sha256:3f7529d4a5bf90ac3c20bb06a20d7ce5c8f4f0b1d23c5043e20a2eb6d628225d
+        value: quay.io/aap-ci/tekton-catalog/pipeline/test/ep-api-tests:0.1@sha256:a0b12780fabdc5872e2ff4f5b36c851edfa2672a62bad14457a550550075074a
       - name: kind
         value: pipeline
       - name: secret
