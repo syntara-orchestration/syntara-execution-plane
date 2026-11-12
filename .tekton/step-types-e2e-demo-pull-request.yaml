@@ -1388,3 +1388,4 @@ spec:
 
 
 # retrigger: 2026-11-11 gatekeeper rollout flake (run 9rc6n)
+# retrigger: 2026-11-11 relative E2E_PYTEST_TARGET fix
