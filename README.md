@@ -60,7 +60,7 @@ uv run execution-plane-api
 
 Application logging is structured by default; see [OTEL logging](docs/otel-logging.md) for collector, authentication, and resource settings.
 
-The API exposes versioned OpenAPI at `/docs`, authenticated work submission, scoped status reads and cancellation under `/v1`, plus liveness and readiness endpoints. Work moves through `pending`, `claimed`, `dispatched`, and `running`; cancellation of dispatched or running work first returns `cancel_requested`, and only becomes `cancelled` after the gRPC invocation is confirmed stopped. `reconciliation_required` makes an uncertain external outcome visible instead of launching a duplicate. Cancellation by stable request ID creates a tombstone when it races ahead of submission, preventing a late request from starting work. Configure EP-owned HTTPS with `EP_API_PORT`, `EP_API_TLS_CERT_PATH`, and `EP_API_TLS_KEY_PATH`; `EP_API_TLS_CLIENT_CA_PATH` makes the API validate client certificates when provided. SIGINT and SIGTERM trigger clean shutdown, with API in-flight requests bounded by `EP_API_GRACEFUL_SHUTDOWN_SECONDS` (default 20). Kubernetes manifests expect a TLS certificate in `execution-plane-api-tls` whose SAN matches the service DNS name. The API requires signed AO service tokens with an audience, client ID, project ID, and operation scopes.
+The API exposes versioned OpenAPI at `/docs`, authenticated work submission, scoped status reads and cancellation under `/v1`, plus liveness and readiness endpoints. Work moves through `pending`, `claimed`, `dispatched`, and `running`; cancellation of dispatched or running work first returns `cancel_requested`, and only becomes `cancelled` after the gRPC invocation is confirmed stopped. `reconciliation_required` makes an uncertain external outcome visible instead of launching a duplicate. Cancellation identifies an existing work item by UUID; an unknown UUID returns HTTP 404. Configure EP-owned HTTPS with `EP_API_PORT`, `EP_API_TLS_CERT_PATH`, and `EP_API_TLS_KEY_PATH`; `EP_API_TLS_CLIENT_CA_PATH` makes the API validate client certificates when provided. SIGINT and SIGTERM trigger clean shutdown, with API in-flight requests bounded by `EP_API_GRACEFUL_SHUTDOWN_SECONDS` (default 20). Kubernetes manifests expect a TLS certificate in `execution-plane-api-tls` whose SAN matches the service DNS name. The API requires signed AO service tokens with `exp`, `iat`, `iss`, `aud`, and `client_id` claims, plus the operation's required scope in `scope`.
 
 Each API or worker process owns one shared PostgreSQL connection pool. Stores
 borrow connections for individual database operations and return them before
@@ -113,8 +113,8 @@ The independent local compose stack is started from this repository with
 `make setup && uvx podman-compose up --build`. The worker submits each script as a
 short-lived Kubernetes Job in the selected execution target. Configure
 `EP_WORKLOAD_RUNNER_IMAGE` to an image available to that target cluster and grant
-the stored target credential permission to create/read Secrets, Jobs, Pods, Pod
-logs, and NetworkPolicies in the configured namespace. `EP_WORKLOAD_ALLOWED_EGRESS_CIDRS`
+the resolved Cluster credential the permissions listed below in the target
+namespace. `EP_WORKLOAD_ALLOWED_EGRESS_CIDRS`
 is an operator-reviewed JSON list of destinations the workload may reach; without
 it, workloads can resolve DNS but have no general egress. If a whole IP family is
 allowed, also set `EP_WORKLOAD_FORBIDDEN_EGRESS_CIDRS` to the AO, Temporal,
@@ -136,7 +136,7 @@ API trust roots and submitted invocation payloads are encrypted at rest by EP.
 
 Local helper scripts under `tools/` cover the rest of a first bring-up. EP does
 not issue tokens; `tools/generate_jwt_for_ep.py` signs an AO service JWT with the
-local or sibling Syntara ES256 key. Submit requires a `project_id` claim.
+local or sibling Syntara ES256 key.
 `tools/deploy_kind_execution_target.py` creates a kind cluster, applies
 `deploy/kubernetes/execution-target/rbac.yaml`, registers the Cluster, then
 explicitly registers an ExecutionTarget with the chosen namespace. Re-running
@@ -147,9 +147,8 @@ local API.
 make setup
 uvx podman-compose up --build -d
 
-# Service token for curl. Submit needs --project-id.
+# Service token for curl.
 uv run python -m tools.generate_jwt_for_ep
-uv run python -m tools.generate_jwt_for_ep --project-id 00000000-0000-0000-0000-000000000001
 
 # Kind cluster + default ExecutionTarget (needs kind and kubectl)
 uv run python -m tools.deploy_kind_execution_target

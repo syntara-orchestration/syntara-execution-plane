@@ -9,7 +9,7 @@ AO validates the script configuration, chooses a digest-pinned image, and
 builds the versioned node invocation. It submits
 `{invocation, image, output_config}` to EP's authenticated HTTP API. EP owns
 the accepted WorkItem, attempt state, encrypted invocation payload, result,
-and completion outbox in its separate database. AO never imports EP stores and
+and inline completion-delivery state in its separate database. AO never imports EP stores and
 does not connect to the EP database.
 
 The EP worker invokes the SDK-owned container service using its installed
@@ -23,15 +23,16 @@ not create an input Secret, use Kubernetes exec, or read Pod logs for results.
 
 AO persists the encrypted full request before its first HTTP submission. On a
 Temporal retry it decrypts and reuses that original payload and stable request
-ID, including the selected image and execution limits. EP idempotency rejects a
-different payload for the same caller/project/request identity. Failure details
+ID, including the selected image and execution limits. A repeated work UUID
+returns HTTP 409; query the existing work item after a lost submission response. Failure details
 and partial output are retained as Temporal error details in both the
 synchronous-response and completion-notification paths.
 
 ## Logical attempt and cold-start resource lifecycle
 
-The WorkItem is the logical execution record. A claim generation identifies an
-attempt; the backend Job name and UID identify infrastructure resources. They
+The WorkItem UUID identifies the logical work. Its UUID combined with the claim
+generation identifies an attempt and is passed to the SDK as the invocation ID.
+The backend Job name and UID identify infrastructure resources. They
 are persisted separately on the WorkItem. The `WorkerManager` boundary accepts
 a WorkItem and owns obtaining/releasing its worker; it does not make a Pod part
 of the public work contract.
@@ -86,8 +87,8 @@ cancelling one WorkItem must not delete a shared Pod.
 
 - AO is the only configured caller and script is the only EP-dispatched node
   type. Other image-map entries and credential-bearing nodes are not enabled.
-- Each EP worker handles up to `EP_MAX_CONCURRENT_DISPATCHES` concurrent
-  WorkItems (default `8`). The placement reconciler identifies eligible
+- Each EP worker dispatches up to `EP_MAX_CONCURRENT_DISPATCHES` work items
+  concurrently (default `8`). The placement reconciler identifies eligible
   targets; the scheduler chooses a target.
 - `output_config` supports field selection. Template expressions still require
   a Syntara-independent evaluator.

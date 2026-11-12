@@ -24,7 +24,8 @@ created Pod's Job owner UID before opening the gRPC port-forward. Invocation and
 all application results use the SDK protocol; Kubernetes is used only to
 provision, observe, and clean up resources.
 
-The manager persists the terminal result and EP completion outbox before
+The manager persists the terminal result and completion-delivery state on the
+WorkItem before
 deleting its exclusively owned Job. Cleanup state is recorded separately from
 execution state. An aged NetworkPolicy reconciler removes policies left behind
 after a controller crash only when both the Job and its Pods are gone.

@@ -13,7 +13,8 @@ that client to EP's cancellation, progress, and attempt lifecycle.
 
 ## Installing the pinned SDK
 
-`pyproject.toml` pins `syntara-plugin-contracts==0.1.0a1` from PyPI. `uv.lock`
+[`pyproject.toml`](../pyproject.toml) declares the `syntara-plugin-contracts`
+dependency. [`uv.lock`](../uv.lock)
 records the selected package version, registry, artifact URLs, and SHA-256
 hashes; the exported `requirements.txt` records the same pinned release and
 hashes for pip/Hermeto builds.
@@ -42,18 +43,26 @@ Its invocation contains:
     "environment": {"GREETING": "hello"}
   },
   "runtime_context": {},
+  "credential_bindings": [],
   "timeout_seconds": 60
 }
 ```
 
 The selected workload defines the meaning of inputs and its step revision.
 `script.v1` is the integration test workload's revision, not a universal SDK
-script identifier. EP supplies an invocation ID derived from the work UUID and
-claim generation, and supplies an empty credential-file-path map.
+script identifier. The work UUID identifies the logical work item. Each claimed
+attempt has an ID of `<work UUID>-<claim generation>`. The Kubernetes transport
+passes that attempt ID to the SDK as `invocation_id` and uses it to name and
+label the attempt's resources. Claim generations also fence worker updates so
+a stale worker cannot modify a newer attempt.
 
-Script environment variables are ordinary inputs. EP does not mount workload
-credential files. Cluster API authentication is internal to EP's Kubernetes
-transport.
+Script environment variables are ordinary inputs. Optional `credential_bindings`
+map `credential_recipe_id` to an AO `credential_ref` UUID. EP accepts up to 16
+bindings with distinct recipe IDs and keeps them outside `inputs` and
+`runtime_context`. The SDK stream receives a credential handler configured with
+these bindings. The handler rejects unbound recipes as `missing` and bound
+recipes as `unavailable`; it does not resolve or deliver workload credentials.
+Cluster API authentication uses a separate resolver for the Cluster credential.
 
 ## Execution and outcomes
 

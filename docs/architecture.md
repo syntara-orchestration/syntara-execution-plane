@@ -229,7 +229,7 @@ flowchart TB
     Retry --> Send
 
     Ambiguous([Result lost after Execute may have started]) --> Fence[Stop claim lease and mark reconciliation required]
-    Fence --> UnknownNotification[Mark outcome_unknown completion notification]
+    Fence --> UnknownNotification[Mark reconciliation_required completion notification]
     UnknownNotification --> Investigate[Operator investigation and explicit new request]
     PreExecute([Failure before Execute submitted]) --> Requeue[Requeue with backoff]
 ```

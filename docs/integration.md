@@ -1,7 +1,7 @@
 # AO and EP service integration
 
 AO owns workflow authorization, activities and user-facing workflow state. EP
-owns work, cluster bindings, targets and completion events in its own database.
+owns work, clusters, targets and completion-delivery state in its own database.
 The `execution-plane-client` distribution shares only command contracts,
 validation, an in-memory handler registry and a generic handler protocol. Its
 only runtime dependency is Pydantic; importing it requires no EP configuration.
@@ -38,15 +38,16 @@ commands or provide command-status or command-children endpoints.
 ```
 
 The envelope and nested command IDs must match. Work commands use that UUID as
-`WorkItem.id`; no project ID, request ID or separate work correlation ID is
-stored. HTTP 202 returns `received`, `message_id` and an optional `resource`
+`WorkItem.id`. HTTP 202 returns `received`, `message_id` and an optional `resource`
 reference. It confirms application of the domain request, not completion of a
 job, cluster setup or draining.
 
 The workload image must implement the [SDK container service](workload-protocol.md)
-and advertise the requested step revision. EP assigns the attempt invocation ID.
-Script environment variables belong in `inputs.environment`; secret-file
-delivery is not implemented.
+and advertise the requested step revision. EP constructs the SDK invocation ID
+from the work UUID and claim generation.
+Script environment variables belong in `inputs.environment`. Workload credential
+references belong in `invocation.credential_bindings`; see the
+[workload protocol](workload-protocol.md#command-and-workload-data) for resolution behavior.
 
 The caller authenticates using the ES256 service JWT and deployed TLS
 configuration. `source_id` and `scope.client_id` must match its verified
@@ -137,13 +138,16 @@ to retryable dispatch failures rather than unknown workload outcomes.
 
 ## Work completion is a command
 
-EP saves each work outcome and callback delivery state on its WorkItem. EP's
+EP saves each work outcome and callback delivery state inline on its
+`work_items` row. Delivery state tracks attempts, retry timing, errors,
+delivery acknowledgement and the delivery lease. EP's
 Completion Notifier sends a `work.execute.completed` command to Syntara at
 `EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
-The `Completion` payload contains `status`, `result` and a `work_item` resource
-reference. Status is `succeeded`, `failed` or `cancelled`; work requiring
-reconciliation reports `outcome_unknown`. Syntara's request size limit should
+The `Completion` payload contains `status`, `result`, an optional `resource`
+reference and optional `error_code`. EP's notifier sets `resource` to
+`{"kind": "work_item", "resource_id": "<work UUID>"}`. Status is `completed`,
+`failed`, `cancelled` or `reconciliation_required`. Syntara's request size limit should
 accommodate the work invocation's output limit.
 
 `parent_command_id` identifies the WorkItem, and `occurred_at` is its completion time.
