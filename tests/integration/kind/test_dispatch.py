@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import threading
 import time
@@ -781,3 +782,83 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
     assert final_item.result is not None
     assert final_item.result["cancelled"] is True
     assert final_item.result["execution_started"] is False
+
+
+def _sdk_supports_log_batch() -> bool:
+    """Whether the installed SDK contract carries the LogBatch message."""
+    try:
+        from syntara_plugin.runtime import ContainerLogBatch  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not _sdk_supports_log_batch(),
+    reason=(
+        "the pinned syntara-plugin-contracts release predates the LogBatch contract; "
+        "revisit once the SDK release carrying it is pinned (AAP-102015)"
+    ),
+)
+async def test_work_item_operational_logs_reach_the_forwarder(
+    ep_cluster: Cluster,
+    integration_credential_resolver: CredentialResolver,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AAP-102015: helper-emitted operational records are forwarded with correlation.
+
+    The fixture workload emits one operational log record before its terminal
+    result (once the SDK helper side lands, ANSTRAT-2422). The in-process
+    worker's forwarder must emit it on the ``execution_plane.step_logs``
+    logger, tagged with the invocation, workflow run, work item, and target.
+    """
+    from execution_plane import operational_logs
+
+    caplog.set_level(logging.DEBUG, logger="execution_plane.step_logs")
+    monkeypatch.setattr(operational_logs, "_forwarding_enabled", lambda: True)
+
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_settings()
+    client_id = "ep-it-log-batch"
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+        ) as work:
+            dispatched = await _dispatch_item(
+                work,
+                work.worker_managers,
+                client_id=client_id,
+                payload=build_payload(
+                    language="bash",
+                    code="echo ep-integration-log-batch-ok",
+                    timeout_seconds=120,
+                    environment={},
+                    image=_NODE_IMAGE,
+                ),
+            )
+            final_item = await _process_until_terminal(
+                dispatched.assigned, work, target_store, settings, client_id=client_id
+            )
+
+    assert final_item is not None
+    assert final_item.status is WorkItemStatus.COMPLETED, (
+        f"Expected COMPLETED but got {final_item.status}; result={final_item.result}"
+    )
+    step_records = [r for r in caplog.records if r.name == "execution_plane.step_logs"]
+    assert step_records, "Expected at least one forwarded operational log record"
+    for record in step_records:
+        assert record.invocation_id
+        assert record.workflow_run_id == "ep-it-workflow"
+        assert record.work_item_id == str(final_item.id)
+        assert record.execution_target_id

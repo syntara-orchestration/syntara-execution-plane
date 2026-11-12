@@ -305,6 +305,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
     tolerations: list[str] | None = None,
     allowed_egress_cidrs: list[str] | None = None,
     forbidden_egress_cidrs: list[str] | None = None,
+    log_sink: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     """Execute once in a cold-start Job; application data travels only over gRPC."""
     name = "syntara-node-" + hashlib.sha256(attempt_id.encode()).hexdigest()[:32]
@@ -507,6 +508,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                                 startup=min(2, max(0.1, grpc_deadline - time.monotonic())),
                                 grace=grace,
                                 on_execute_submitted=mark_submitted,
+                                log_sink=log_sink,
                             )
                             on_result(frame)
                             return frame
