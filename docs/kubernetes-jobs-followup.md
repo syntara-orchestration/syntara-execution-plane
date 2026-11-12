@@ -1,6 +1,6 @@
 # Cold-start Kubernetes Job details
 
-The cold-start backend in PR #1 wraps the SDK worker Pod in a deterministic
+The cold-start backend wraps the SDK worker Pod in a deterministic
 `batch/v1` Job. The Job is a provisioning detail owned by
 `VanillaK8sWorkerManager`; logical WorkItem state remains in EP's database and
 does not inherit Job or Pod lifecycle semantics.

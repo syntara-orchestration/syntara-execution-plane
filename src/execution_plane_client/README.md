@@ -20,11 +20,9 @@ from uuid import uuid4
 from execution_plane_client.commands.clusters import ClusterRegister
 
 message = ClusterRegister(
-    resource_key=uuid4(),
-    desired_revision=1,
+    resource_id=uuid4(),
     name="workers",
     endpoint="https://cluster.example",
-    namespace="execution-plane",
     credential_ref=uuid4(),
 ).to_message(
     source_id="syntara-orchestration",

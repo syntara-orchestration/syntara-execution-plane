@@ -8,9 +8,6 @@ item.
 - Feature: [ANSTRAT-1803](https://redhat.atlassian.net/browse/ANSTRAT-1803)
 - Parent epic: [AAP-82060](https://redhat.atlassian.net/browse/AAP-82060)
 
-This document was originally titled Pool Reconciler. The scheduling unit is
-an ExecutionTarget, not a Worker Pool. The ticket name is unchanged.
-
 ## What this document is
 
 The design the ExecutionTarget Reconciler implementation must follow. It
@@ -161,16 +158,13 @@ architecture).
 
 ## Inputs
 
-The reconciler does not take a `WorkItem` row. Work Store / Work Executor may
-later persist selectors on `WorkItem`; the reconciler only needs a DTO:
+The reconciler does not take a `WorkItem` row; it receives a DTO:
 
 ```python
 class WorkRequirements:
     selectors: dict[str, str]          # empty → default routing
     workload_type: str | None = None   # unused in MVP matching; reserved for Isolation Policy
 ```
-
-This avoids a Work Store schema change in AAP-92721.
 
 A Cluster affinity selector, when present, is just another key in
 `selectors`. The reconciler uses it to drop Clusters before listing
@@ -213,13 +207,6 @@ class ExecutionTargetSnapshotSource(Protocol):
 Targets of the same Cluster share one ClusterSnapshot instance. The reconciler
 applies eligibility filters in process; the snapshot source is not required to
 pre-filter by selector.
-
-Until AAP-92716 lands Cluster as a first-class row, an adapter may expose a
-single implicit Cluster (the local OpenShift / Kubernetes cluster) wrapping
-the existing `ExecutionTarget` rows (`labels`, `backend_type`, `status`,
-`enabled`, and a namespace). `TargetStatus.ACTIVE` is eligible;
-`enabled is False` is ineligible. Swap the adapter for the real Services
-without changing `ExecutionTargetReconciler`.
 
 ## Core operation: Resolve
 
@@ -556,7 +543,7 @@ Implementation lives in the execution-plane package so it can run without
 Syntara `BaseService` (this is not an HTTP domain service).
 
 ```
-backend/execution-plane/src/execution_plane/execution_target_reconciler/
+src/execution_plane/execution_target_reconciler/
   types.py          # WorkRequirements, ClusterSnapshot, ExecutionTargetSnapshot, ReconcileResult, ...
   protocols.py      # ExecutionTargetSnapshotSource, EligibilityFilter
   exceptions.py
@@ -564,8 +551,8 @@ backend/execution-plane/src/execution_plane/execution_target_reconciler/
   filters.py        # Lifecycle, Selector, Health, no-op Policy
   reconciler.py
   placement.py      # PlacementResolver + WorkerManagerRegistry
-  adapters.py       # implicit single-Cluster adapter until AAP-92716
-backend/execution-plane/tests/execution_target_reconciler/
+  adapters.py       # model-to-snapshot conversion
+tests/execution_target_reconciler/
 ```
 
 Tests must mirror the source domain
@@ -575,8 +562,6 @@ do not re-export from `__init__.py`.
 ## Out of scope
 
 - Work Scheduler loop, claim/retry, `pg_notify` (AAP-92722)
-- Wiring `worker.py` off in-process `execute_script` (valid until the
-  scheduler exists)
 - Cluster / ExecutionTarget Service CRUD, migrations, auto-provisioning
   (AAP-92716)
 - New REST endpoints or OpenAPI changes

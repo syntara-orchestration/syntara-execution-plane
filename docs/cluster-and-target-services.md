@@ -40,8 +40,8 @@ which work can be executed.
 | Field | Semantics |
 |---|---|
 | `id` | UUID primary key |
-| `name` | Required, unique, human-readable name |
-| `endpoint` | Cluster control-plane endpoint; unique across Clusters |
+| `name` | Required, human-readable name |
+| `endpoint` | Cluster control-plane endpoint |
 | `status` | `REGISTERING`, `ACTIVE`, `DRAINING`, or `ERROR` |
 | `enabled` | Whether the Cluster may participate in selection or reconciliation |
 | `is_default` | Whether this is the protected global default Cluster |
@@ -53,8 +53,7 @@ which work can be executed.
 | `updated_by` | Actor or service identity that last changed the row |
 | `updated_at` | Last metadata or lifecycle update timestamp |
 
-The Cluster `endpoint` identifies the control-plane endpoint. It is unique
-across Clusters: two Clusters cannot represent the same endpoint.
+The Cluster `endpoint` identifies the control-plane endpoint.
 `credential_ref` is opaque to EP. EP never persists, logs, or returns the raw
 credential value. Before dispatch, health probing, or Kubernetes reconciliation,
 EP sends a `credential.resolve` command to
@@ -91,8 +90,8 @@ exactly one Cluster.
 | `cluster_id` | Non-null foreign key to `execution_plane.clusters.id` |
 | `name` | User-facing target name |
 | `backend_type` | Supported execution backend, such as `kubernetes` or `openshell` |
-| `endpoint` | Endpoint used for worker connectivity |
-| `credential_ref` | Required AO UUID identifying the target credential |
+| `endpoint` | Target endpoint metadata; Kubernetes dispatch uses the Cluster endpoint |
+| `credential_ref` | Required AO UUID identifying the target credential; Kubernetes dispatch uses the Cluster credential |
 | `status` | `REGISTERING`, `VALIDATING`, `BOOTSTRAPPING`, `ACTIVE`, `DEGRADED`, `DRAINING`, or `FAILED` |
 | `enabled` | Eligibility/configuration gate |
 | `is_default` | Whether this is the Cluster's protected default target |
@@ -110,9 +109,11 @@ document, an execution backend or backend provider is the external system that
 hosts work.
 
 The target `credential_ref` follows the same protection rules as the Cluster
-reference. A target may reference its own AO credential when the backend
-requires one; the Cluster credential is not implicitly exposed through the
-target model.
+reference. Kubernetes dispatch connects using `Cluster.endpoint`,
+`Cluster.ca_certificate`, and the credential resolved from
+`Cluster.credential_ref`. The target's `placement` supplies the namespace, node
+selectors, and tolerations. Target `endpoint` and `credential_ref` are not used
+for Kubernetes connectivity.
 
 #### ExecutionTarget lifecycle states
 
@@ -150,7 +151,7 @@ default.
 
 ### WorkItem and audit contract
 
-`WorkItem` remains the durable unit of work exchanged between Execution Plane Consumers (such as a Temporal worker) and the Execution Plane worker. Its existing lifecycle timestamps,
+`WorkItem` is the durable unit of work exchanged between Execution Plane Consumers (such as a Temporal worker) and the Execution Plane worker. Its lifecycle timestamps,
 including `claimed_at`, `completed_at`, and `signaled_at`, describe work
 processing and are distinct from audit timestamps.
 
@@ -193,8 +194,6 @@ The database and stores enforce the following invariants:
 12. A draining target cannot receive new work and cannot be physically deleted
    until its active work has completed.
 13. A Cluster cannot be physically deleted while related targets remain.
-14. Every Cluster has a unique `endpoint`. Two Clusters cannot represent the
-    same endpoint.
 
 ## Independent cluster and target registration
 
@@ -213,10 +212,6 @@ after registering the Cluster. They supply the target's placement (including the
 Kubernetes namespace) and choose whether to promote it to default. Subsequent
 changes use target commands. CI and local setup tools follow this same two-step
 flow and reuse the existing target on repeated setup runs.
-
-`cluster.provision` has been removed without an alias. Deploy the matching client
-and setup-tool updates together. Existing Clusters and ExecutionTargets remain
-in place; the change does not delete targets created by earlier versions.
 
 ## Deletion and draining operation
 
@@ -324,7 +319,7 @@ from selection.
 Consumers depend directly on `ClusterStore`, `ExecutionTargetStore`, and
 `WorkStore`. Each store provides one concrete persistence API for its primary
 model, without consumer-specific protocol classes or forwarding services.
-`WorkStore` also retains the existing completion-outbox operations.
+`WorkStore` also owns completion-outbox operations.
 
 `ClusterRegisterCommandHandler` coordinates Cluster registration in a caller-owned
 transaction. Target handlers manage targets. `WorkScheduler` coordinates claim and placement.
@@ -396,25 +391,18 @@ values are never returned. APIs expose only a redacted status or equivalent
 non-secret metadata. Credentials must also be excluded from logs, labels,
 ordinary model serialization, and audit payloads.
 
-The existing router is temporarily hosted by Syntara. The store and orchestration
-boundaries are independent of that hosting arrangement so the Execution Plane
-can later become a standalone service.
-
 ## Schema and operational considerations
 
 The `execution_plane` schema contains the Cluster, ExecutionTarget, and
 WorkItem tables. The schema must provide:
 
 - a foreign key from `execution_targets.cluster_id` to `clusters.id`;
-- a unique constraint on `clusters.endpoint`;
+- a partial unique index for the global default Cluster;
 - a partial unique index for one default target per Cluster;
 - indexes for Cluster names, Cluster endpoints, target membership, lifecycle
   status, enabled state, and eligible-target queries;
 - audit columns on every database model;
 - required UUID `credential_ref` values for target and Cluster credentials.
-
-This branch is green-field: the original schema is changed directly and no
-raw-credential migration or backfill is provided.
 
 The design does not prescribe whether the drained predicate is based solely on
 terminal WorkItems, claimed workers, or an additional worker heartbeat. That
@@ -425,5 +413,5 @@ enough to ensure that finalization cannot race with active execution.
 
 - [AAP-92716](https://redhat.atlassian.net/browse/AAP-92716) describes the
   broader service concept and lifecycle concerns.
-- [`integration.md`](integration.md) documents the current temporary boundary
+- [`integration.md`](integration.md) documents the service boundary
   crossings between Syntara and the Execution Plane.
