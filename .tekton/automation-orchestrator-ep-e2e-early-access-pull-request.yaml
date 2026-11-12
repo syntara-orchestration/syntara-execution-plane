@@ -52,7 +52,7 @@ spec:
       value: feat/ANSTRAT-1803
     - name: ao-operator-git-url
       value: https://github.com/automation-nexus/automation-orchestrator-operator.git
-     - name: ao-operator-revision
+    - name: ao-operator-revision
       value: feat/ANSTRAT-1803
   pipelineRef:
     resolver: bundles
