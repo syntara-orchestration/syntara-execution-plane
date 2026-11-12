@@ -10,6 +10,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from syntara_plugin.runtime import (
     ContainerClient,
     ContainerInvocation,
@@ -20,6 +21,8 @@ from syntara_plugin.runtime import (
 from syntara_plugin.runtime.container import ANY_STEP_REVISION
 
 from execution_plane.credential_resolution.sdk_resolver import CredentialResolver
+
+logger = structlog.stdlib.get_logger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -113,7 +116,29 @@ def _failure_frame(error: ContainerRemoteError, *, cancelled: bool = False) -> d
     return {"kind": "failure", "code": error.code.value, "retryable": error.retryable, "outcome": error.outcome}
 
 
-def invoke(
+def _is_log_batch(event: object) -> bool:
+    """Recognize an SDK operational log batch without hard-importing its type.
+
+    Duck-typed so the adaptor works with any SDK version that yields log
+    batches (the pinned SDK release predates the contract; the stream simply
+    never yields them there) and with test doubles.
+    """
+    if isinstance(event, ContainerProgress | ContainerResult | str):
+        return False
+    return hasattr(event, "records") and hasattr(event, "invocation_id")
+
+
+def _deliver_log_batch(event: object, sink: Callable[[object], None] | None) -> None:
+    """Hand one batch to the sink; telemetry never fails the invocation."""
+    if sink is None:
+        return
+    try:
+        sink(event)
+    except Exception:  # noqa: BLE001 - Forwarding failures must not fail a work item.
+        logger.warning("Operational log batch forwarding failed", exc_info=True)
+
+
+def invoke(  # noqa: C901, PLR0912 - stream consumption plus safe telemetry delivery
     channel: grpc.Channel,
     invocation: WorkloadInvocation,
     *,
@@ -123,6 +148,7 @@ def invoke(
     startup: float = 120,
     grace: int = 30,
     on_execute_submitted: Callable[[], None] | None = None,
+    log_sink: Callable[[object], None] | None = None,
 ) -> dict[str, Any]:
     """Negotiate the SDK service, execute once, and consume its entire stream."""
     request = ContainerInvocation(
@@ -159,6 +185,12 @@ def invoke(
             timeout_seconds=invocation.timeout_seconds,
             credential_handler=CredentialResolver(invocation.credential_bindings),
         ):
+            if _is_log_batch(event):
+                # Best-effort operational telemetry: batches after the terminal
+                # result are dropped, never fatal.
+                if result is None:
+                    _deliver_log_batch(event, log_sink)
+                continue
             if result is not None:
                 message = "Workload returned events after its terminal result"
                 raise WorkloadRpcError(message)

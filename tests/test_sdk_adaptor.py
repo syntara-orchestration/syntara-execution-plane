@@ -451,3 +451,113 @@ def test_channel_should_not_be_closed_in_invoke_finally_block():
         "The channel is owned by run_job's `with` block, which always closes it. "
         "Only the cancellation watcher force-closes early (to interrupt stuck streams)."
     )
+
+
+class _FakeLogBatch:
+    """Duck-typed LogBatch event (the pinned SDK predates the contract)."""
+
+    def __init__(self, records: tuple[object, ...]) -> None:
+        self.invocation_id = "work-1-attempt-2"
+        self.records = records
+
+
+class _FakeLogRecord:
+    def __init__(self, level: str, message: str) -> None:
+        self.level = level
+        self.message = message
+
+
+class _FakeStreamClient:
+    """Stand-in for ContainerClient yielding a scripted event sequence."""
+
+    def __init__(self, events: tuple[Any, ...]) -> None:
+        self._events = events
+
+    def health(self, timeout_seconds: float | None = None) -> tuple[str, ...]:
+        return ("script.v1",)
+
+    def stream(self, request: object, **_kwargs: object) -> Iterator[object]:
+        yield from self._events
+
+
+def _run_fake(events: tuple[object, ...], log_sink: object, **overrides: object) -> dict[str, Any]:
+    from execution_plane.worker_manager.vanilla_k8s import sdk_adaptor
+
+    result_holder: dict[str, Any] = {}
+
+    def fake_invoke(channel: object, invocation: object, **kwargs: object) -> dict[str, Any]:
+        # Mirror invoke() but with the fake client class patched in.
+        with patch.object(sdk_adaptor, "ContainerClient", lambda _channel: _FakeStreamClient(events)):
+            return sdk_adaptor.invoke(channel, invocation, **kwargs)
+
+    kwargs = {
+        "identity": "work-1-attempt-2",
+        "progress": lambda _event: None,
+        "cancelled": Event(),
+        "startup": 0.2,
+        "grace": 1,
+        "log_sink": log_sink,
+    }
+    kwargs.update(overrides)
+    invocation = WorkloadInvocation.model_validate(
+        {
+            "workflow_run_id": "workflow-1",
+            "step_revision_id": "script.v1",
+            "inputs": {"environment": {}},
+            "runtime_context": {},
+            "timeout_seconds": 2,
+        }
+    )
+    result_holder["frame"] = fake_invoke(object(), invocation, **kwargs)
+    return result_holder["frame"]
+
+
+def _result_event() -> ContainerResult:
+    return ContainerResult(output_schema_digest=_DIGEST, output={}, status_code=0)
+
+
+def test_log_batches_reach_the_sink_before_the_result() -> None:
+    batches: list[Any] = []
+    frame = _run_fake(
+        (
+            _FakeLogBatch((_FakeLogRecord("info", "first"), _FakeLogRecord("debug", "second"))),
+            _result_event(),
+        ),
+        log_sink=batches.append,
+    )
+    assert frame["kind"] == "result"
+    assert len(batches) == 1
+    assert [record.message for record in batches[0].records] == ["first", "second"]
+
+
+def test_log_batch_after_terminal_result_is_ignored() -> None:
+    batches: list[Any] = []
+    frame = _run_fake(
+        (
+            _result_event(),
+            _FakeLogBatch((_FakeLogRecord("info", "late"),)),
+        ),
+        log_sink=batches.append,
+    )
+    assert frame["kind"] == "result"
+    assert batches == []
+
+
+def test_raising_sink_never_fails_the_invocation() -> None:
+    def boom(_batch: object) -> None:
+        msg = "collector exploded"
+        raise RuntimeError(msg)
+
+    frame = _run_fake(
+        (_FakeLogBatch((_FakeLogRecord("info", "x"),)), _result_event()),
+        log_sink=boom,
+    )
+    assert frame["kind"] == "result"
+
+
+def test_log_batches_without_a_sink_are_ignored() -> None:
+    frame = _run_fake(
+        (_FakeLogBatch((_FakeLogRecord("info", "x"),)), _result_event()),
+        log_sink=None,
+    )
+    assert frame["kind"] == "result"

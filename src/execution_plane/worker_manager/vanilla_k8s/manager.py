@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.operational_logs import OperationalLogForwarder
 from execution_plane.worker_manager.base import (
     ExecutionStartPersistenceError,
     ExecutionStartRejectedError,
@@ -62,6 +63,7 @@ class _DispatchContext:
     target_config: dict[str, Any]
     cancelled: threading.Event
     execution_start: Callable[[], None]
+    log_sink: Callable[[Any], None] | None = None
 
 
 class RetryableDispatchError(Exception):
@@ -168,6 +170,14 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
 
         identity = str(work_item.id)
         attempt_id = f"{identity}-{work_item.claim_generation}"
+        log_sink = OperationalLogForwarder(
+            {
+                "invocation_id": attempt_id,
+                "workflow_run_id": command.invocation.workflow_run_id,
+                "work_item_id": identity,
+                "execution_target_id": str(work_item.execution_target_id),
+            }
+        )
         return _DispatchContext(
             image=command.image,
             invocation=command.invocation,
@@ -177,6 +187,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             target_config=self._k8s_target(target, cluster, credential),
             cancelled=threading.Event(),
             execution_start=self.execution_start_callback(work_item),
+            log_sink=log_sink,
         )
 
     async def _run_transport(
@@ -237,6 +248,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 tolerations=context.target_config["tolerations"],
                 allowed_egress_cidrs=self._settings.workload_allowed_egress_cidrs,
                 forbidden_egress_cidrs=self._settings.workload_forbidden_egress_cidrs,
+                log_sink=context.log_sink,
             ),
         )
 
