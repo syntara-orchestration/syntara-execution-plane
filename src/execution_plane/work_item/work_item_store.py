@@ -116,7 +116,7 @@ class WorkStore(StoreBase):
             return result.scalar_one()
 
     async def reserve_one(self) -> WorkItem | None:
-        """Reserve queued work for worker-side placement resolution."""
+        """Finish never-started cancellations while reserving the next runnable item."""
         lease_expiry = datetime.now(UTC) - timedelta(seconds=60)
         async with self._session_context() as session:
             try:
@@ -147,35 +147,48 @@ class WorkStore(StoreBase):
                     self._initialize_completion_notification_fields(uncertain, now)
                 await session.commit()
 
-                result = await session.execute(
-                    select(WorkItem)
-                    .where(
-                        or_(
-                            col(WorkItem.status) == WorkItemStatus.PENDING,
-                            and_(
-                                col(WorkItem.status) == WorkItemStatus.CLAIMED,
-                                col(WorkItem.claimed_at) < lease_expiry,
-                            ),
+                while True:
+                    result = await session.execute(
+                        select(WorkItem)
+                        .where(
+                            or_(
+                                col(WorkItem.status) == WorkItemStatus.PENDING,
+                                and_(
+                                    col(WorkItem.status) == WorkItemStatus.CLAIMED,
+                                    col(WorkItem.claimed_at) < lease_expiry,
+                                ),
+                            )
                         )
+                        .where(
+                            or_(
+                                col(WorkItem.cancellation_requested).is_(False),
+                                col(WorkItem.resource_cleanup_status) == "complete",
+                                and_(
+                                    col(WorkItem.backend_resource_name).is_(None),
+                                    col(WorkItem.resource_cleanup_status) == "not_required",
+                                ),
+                            )
+                        )
+                        .order_by(
+                            case((col(WorkItem.status) == WorkItemStatus.PENDING, 0), else_=1),
+                            col(WorkItem.created_at),
+                        )
+                        .limit(1)
+                        .with_for_update(skip_locked=True)
                     )
-                    .where(col(WorkItem.cancellation_requested).is_(False))
-                    .order_by(
-                        case((col(WorkItem.status) == WorkItemStatus.PENDING, 0), else_=1),
-                        col(WorkItem.created_at),
-                    )
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
-                )
-                item = result.scalars().first()
-                if item is None:
-                    return None
-                if item.status is WorkItemStatus.PENDING:
-                    item.status = WorkItemStatus.CLAIMED
-                item.claimed_at = datetime.now(UTC)
-                item.claim_owner_id = uuid.uuid4()
-                item.claim_generation += 1
-                await session.commit()
-                return item
+                    item = result.scalars().first()
+                    if item is None:
+                        return None
+                    if self._complete_unstarted_cancellation(item):
+                        await session.commit()
+                        continue
+                    if item.status is WorkItemStatus.PENDING:
+                        item.status = WorkItemStatus.CLAIMED
+                    item.claimed_at = datetime.now(UTC)
+                    item.claim_owner_id = uuid.uuid4()
+                    item.claim_generation += 1
+                    await session.commit()
+                    return item
             except Exception:
                 await session.rollback()
                 raise
@@ -249,13 +262,16 @@ class WorkStore(StoreBase):
         claim_owner_id: uuid.UUID | None = None,
         claim_generation: int | None = None,
     ) -> bool:
-        """Persist the external-dispatch boundary unless cancellation already won."""
+        """Finalize never-started cancellation or persist the external-dispatch boundary."""
         async with self._session_context() as session:
             try:
                 item = await session.get(WorkItem, item_id, with_for_update=True)
                 if item is None:
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
                 self._validate_claim(item, claim_owner_id, claim_generation)
+                if self._complete_unstarted_cancellation(item):
+                    await session.commit()
+                    return False
                 if item.cancellation_requested or item.status in {
                     WorkItemStatus.COMPLETED,
                     WorkItemStatus.FAILED,
@@ -432,76 +448,29 @@ class WorkStore(StoreBase):
                 item.cancellation_requested = True
                 await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
 
-    async def reconcile_control_requests(self, *, limit: int = 100) -> None:
-        """Apply two database-only batches, each in its own transaction.
+    async def purge_deleted_work(self, *, limit: int = 100) -> None:
+        """Delete at most limit deletion-requested rows with no owner and confirmed cleanup.
 
-        First, lock cancellation-requested PENDING/CLAIMED rows whose resources
-        are confirmed cleaned up, or which have no recorded allocation and need
-        no cleanup. Set status to CANCELLED, replace result with
-        {"cancelled": True, "execution_started": False}, set completed_at, and
-        clear claimed_at and claim_owner_id. Initialize completion delivery if
-        not already initialized and deletion was not requested. The row lock
-        serializes this transition with mark_dispatched, preventing a late start.
-
-        Second, delete deletion-requested rows with a terminal or
-        RECONCILIATION_REQUIRED status, no claim owner, and cleanup status
-        complete/not_required. Rows cancelled in the first batch may qualify.
-
-        Each batch processes at most limit rows and skips locked rows. Intent
-        flags are unchanged. This method does not contact Kubernetes or cancel
-        dispatched/running work; the backend must establish those outcomes.
+        Eligible rows are terminal or RECONCILIATION_REQUIRED and have cleanup
+        status complete/not_required. Lock and delete them in one transaction,
+        skipping locked rows. This does not change execution outcomes or contact
+        Kubernetes; queued cancellation is handled by the normal start path.
         """
-        async with self._session_context() as session:
-            async with session.begin():
-                result = await session.execute(
-                    select(WorkItem)
-                    .where(
-                        col(WorkItem.cancellation_requested).is_(True),
-                        col(WorkItem.status).in_(
-                            [
-                                WorkItemStatus.PENDING,
-                                WorkItemStatus.CLAIMED,
-                            ]
-                        ),
-                    )
-                    .where(
-                        or_(
-                            col(WorkItem.resource_cleanup_status) == "complete",
-                            and_(
-                                col(WorkItem.backend_resource_name).is_(None),
-                                col(WorkItem.resource_cleanup_status) == "not_required",
-                            ),
-                        )
-                    )
-                    .order_by(col(WorkItem.created_at))
-                    .limit(limit)
-                    .with_for_update(skip_locked=True)
+        async with self._session_context() as session, session.begin():
+            result = await session.execute(
+                select(WorkItem)
+                .where(
+                    col(WorkItem.deletion_requested).is_(True),
+                    col(WorkItem.status).in_([*TERMINAL_RESULT_STATUSES, WorkItemStatus.RECONCILIATION_REQUIRED]),
+                    col(WorkItem.claim_owner_id).is_(None),
+                    col(WorkItem.resource_cleanup_status).in_(["not_required", "complete"]),
                 )
-                for item in result.scalars().all():
-                    # mark_dispatched takes this same row lock before backend allocation.
-                    # Retiring the claim here fences late dispatchers; no workload can start.
-                    now = datetime.now(UTC)
-                    item.status = WorkItemStatus.CANCELLED
-                    item.result = {"cancelled": True, "execution_started": False}
-                    item.completed_at = now
-                    item.claimed_at = None
-                    item.claim_owner_id = None
-                    self._initialize_completion_notification_fields(item, now)
-            async with session.begin():
-                result = await session.execute(
-                    select(WorkItem)
-                    .where(
-                        col(WorkItem.deletion_requested).is_(True),
-                        col(WorkItem.status).in_([*TERMINAL_RESULT_STATUSES, WorkItemStatus.RECONCILIATION_REQUIRED]),
-                        col(WorkItem.claim_owner_id).is_(None),
-                        col(WorkItem.resource_cleanup_status).in_(["not_required", "complete"]),
-                    )
-                    .order_by(col(WorkItem.created_at))
-                    .limit(limit)
-                    .with_for_update(skip_locked=True)
-                )
-                for item in result.scalars().all():
-                    await session.delete(item)
+                .order_by(col(WorkItem.created_at))
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+            for item in result.scalars().all():
+                await session.delete(item)
 
     async def work_awaiting_requested_cleanup(
         self, *, after_id: uuid.UUID | None = None, limit: int = 100
@@ -615,6 +584,23 @@ class WorkStore(StoreBase):
             except Exception:
                 await session.rollback()
                 raise
+
+    def _complete_unstarted_cancellation(self, item: WorkItem) -> bool:
+        """Under the dispatch row lock, record cancellation only if work cannot have started."""
+        if not item.cancellation_requested or item.status not in {WorkItemStatus.PENDING, WorkItemStatus.CLAIMED}:
+            return False
+        if item.resource_cleanup_status != "complete" and (
+            item.backend_resource_name is not None or item.resource_cleanup_status != "not_required"
+        ):
+            return False
+        now = datetime.now(UTC)
+        item.status = WorkItemStatus.CANCELLED
+        item.result = {"cancelled": True, "execution_started": False}
+        item.completed_at = now
+        item.claimed_at = None
+        item.claim_owner_id = None
+        self._initialize_completion_notification_fields(item, now)
+        return True
 
     @staticmethod
     def _initialize_completion_notification_fields(item: WorkItem, now: datetime) -> None:

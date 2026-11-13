@@ -161,7 +161,7 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     async with sessions() as session:
         assert (await session.get(WorkItem, work_id)).cancellation_requested is True
     async with sessions() as session:
-        await WorkStore.from_session(session).reconcile_control_requests()
+        assert await WorkStore.from_session(session).mark_dispatched(work_id) is False
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "cancelled"
     missing = await client.post("/v1/commands", json=command_message())
@@ -178,7 +178,7 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     async with sessions() as session:
         assert (await session.get(WorkItem, work_id)).deletion_requested is True
     async with sessions() as session:
-        await WorkStore.from_session(session).reconcile_control_requests()
+        await WorkStore.from_session(session).purge_deleted_work()
     assert (await client.get(f"/v1/work-items/{work_id}")).status_code == 404
     assert (await client.post("/v1/commands", json=deletion)).status_code == 202
 

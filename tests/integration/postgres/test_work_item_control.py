@@ -39,14 +39,14 @@ async def test_cancellation_survives_a_new_store_and_cannot_dispatch(controls):
         assert item.result is None
     assert await store.mark_dispatched(item_id) is False
     async with sessions() as session:
-        await WorkStore.from_session(session).reconcile_control_requests()
+        await WorkStore.from_session(session).purge_deleted_work()
     item = await store.get(item_id, client_id=owner)
     assert item.status is WorkItemStatus.CANCELLED
     assert item.result == {"cancelled": True, "execution_started": False}
 
 
 async def test_pending_deletion_is_async_idempotent_and_client_scoped(controls):
-    store, sessions, owner = controls
+    store, _sessions, owner = controls
     item_id = uuid4()
     await store.dispatch(owner, item_id, {})
     await store.request_delete(item_id, client_id="foreign")
@@ -57,8 +57,8 @@ async def test_pending_deletion_is_async_idempotent_and_client_scoped(controls):
     assert item.deletion_requested
     assert item.cancellation_requested
     assert item.status is WorkItemStatus.PENDING
-    async with sessions() as session:
-        await WorkStore.from_session(session).reconcile_control_requests()
+    assert await store.mark_dispatched(item_id) is False
+    await store.purge_deleted_work()
     assert await store.get(item_id, client_id=owner) is None
     await store.request_delete(item_id, client_id=owner)
 
@@ -83,13 +83,13 @@ async def test_running_deletion_retains_work_until_resource_cleanup_is_confirmed
         )
     await store.request_delete(item_id, client_id=owner)
     assert (await store.get(item_id, client_id=owner)).status is WorkItemStatus.RUNNING
-    await store.reconcile_control_requests()
+    await store.purge_deleted_work()
     assert (await store.get(item_id, client_id=owner)).status is WorkItemStatus.RUNNING
     assert await store.refresh_claim(item_id, claim_owner_id=claim_owner, claim_generation=1) is True
     await store.set_result(
         item_id, {"cancelled": True}, WorkItemStatus.CANCELLED, claim_owner_id=claim_owner, claim_generation=1
     )
-    await store.reconcile_control_requests()
+    await store.purge_deleted_work()
     assert await store.get(item_id, client_id=owner) is not None
     assert item_id in [item.id for item in await store.work_awaiting_requested_cleanup()]
     await store.update_backend_resource(
@@ -100,7 +100,7 @@ async def test_running_deletion_retains_work_until_resource_cleanup_is_confirmed
         claim_owner_id=None,
         claim_generation=1,
     )
-    await store.reconcile_control_requests()
+    await store.purge_deleted_work()
     assert await store.get(item_id, client_id=owner) is None
 
 
@@ -149,7 +149,7 @@ async def test_cancellation_intent_preserves_lifecycle_and_claim_timestamp(contr
     async with sessions.begin() as session:
         session.add(WorkItem(id=item_id, client_id=owner, status=status, created_at=claimed_at, claimed_at=claimed_at))
     await store.request_cancel(item_id, client_id=owner)
-    await store.reconcile_control_requests()
+    await store.purge_deleted_work()
     item = await store.get(item_id, client_id=owner)
     assert item.cancellation_requested is True
     assert item.deletion_requested is False
@@ -205,7 +205,9 @@ async def test_queued_cancellation_fences_dispatch_but_never_cancels_allocated_w
     if dispatch_first:
         assert await store.mark_dispatched(item_id, claim_owner_id=claim_owner, claim_generation=1)
     await store.request_cancel(item_id, client_id=owner)
-    await store.reconcile_control_requests()
+    if not dispatch_first:
+        assert await store.mark_dispatched(item_id, claim_owner_id=claim_owner, claim_generation=1) is False
+    await store.purge_deleted_work()
     item = await store.get(item_id, client_id=owner)
     if dispatch_first:
         assert item.status is WorkItemStatus.DISPATCHED
@@ -250,7 +252,7 @@ async def test_unconfirmed_pre_execute_cleanup_retains_uncertainty_and_cancel_in
         claim_owner_id=None,
         claim_generation=1,
     )
-    await store.reconcile_control_requests()
+    await store.purge_deleted_work()
     after = await store.get(item_id, client_id=owner)
     assert after.status is WorkItemStatus.RECONCILIATION_REQUIRED
     assert after.result == item.result
@@ -272,8 +274,39 @@ async def test_queued_state_with_unconfirmed_resources_is_not_declared_cancelled
             )
         )
     await store.request_cancel(item_id, client_id=owner)
-    await store.reconcile_control_requests()
+    await store.purge_deleted_work()
     item = await store.get(item_id, client_id=owner)
     assert item.status is WorkItemStatus.PENDING
     assert item.result is None
     assert item.completion_notification_state is None
+
+
+@pytest.mark.parametrize("deleting", [False, True])
+async def test_normal_claim_path_finishes_cancellation_before_placement(controls, deleting):
+    store, sessions, owner = controls
+    cancelled_id, live_id = uuid4(), uuid4()
+    async with sessions.begin() as session:
+        session.add(
+            WorkItem(
+                id=cancelled_id,
+                client_id=owner,
+                created_at=datetime(1900, 1, 1, tzinfo=UTC),
+                cancellation_requested=True,
+                deletion_requested=deleting,
+            )
+        )
+        session.add(WorkItem(id=live_id, client_id=owner, created_at=datetime(1901, 1, 1, tzinfo=UTC)))
+    await store.purge_deleted_work()
+    assert (await store.get(cancelled_id, client_id=owner)).status is WorkItemStatus.PENDING
+
+    claimed = await store.reserve_one()
+
+    assert claimed.id == live_id
+    cancelled = await store.get(cancelled_id, client_id=owner)
+    assert cancelled.status is WorkItemStatus.CANCELLED
+    assert cancelled.result == {"cancelled": True, "execution_started": False}
+    assert cancelled.execution_target_id is None
+    assert cancelled.claim_owner_id is None
+    assert (cancelled.completion_notification_state is None) is deleting
+    await store.purge_deleted_work()
+    assert (await store.get(cancelled_id, client_id=owner) is None) is deleting

@@ -241,9 +241,9 @@ async def _poll_loop(
     while True:
         dispatch_event.clear()
         try:
-            await work_progress.reconcile_control_requests()
+            await work_progress.purge_deleted_work()
         except Exception:
-            logger.exception("Work-item cancellation/deletion reconciliation failed, will retry")
+            logger.exception("Work-item deletion purge failed, will retry")
 
         # Claim while a dispatch slot is free and work is queued.
         while not slots.locked():

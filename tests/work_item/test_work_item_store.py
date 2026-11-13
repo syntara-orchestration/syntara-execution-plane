@@ -1280,3 +1280,42 @@ async def test_check_ready_propagates_database_errors() -> None:
 
     with pytest.raises(RuntimeError, match="connection refused"):
         await store.check_ready()
+
+
+@pytest.mark.asyncio
+async def test_reserve_one_finishes_queued_cancellation_and_continues_to_live_work() -> None:
+    cancelled = _work_item(cancellation_requested=True)
+    live = _work_item()
+    store = _store()
+    session = _Session()
+    session.execute.side_effect = [_ClaimResult(None), _ClaimResult(cancelled), _ClaimResult(live)]
+    store._session_factory = _SessionFactory(session)
+
+    assert await store.reserve_one() is live
+    assert cancelled.status is WorkItemStatus.CANCELLED
+    assert cancelled.result == {"cancelled": True, "execution_started": False}
+    assert cancelled.claim_owner_id is None
+    assert cancelled.execution_target_id is None
+    assert cancelled.completion_notification_state is CompletionNotificationState.PENDING
+    assert live.status is WorkItemStatus.CLAIMED
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_guard_finishes_cancellation_after_claim() -> None:
+    owner = uuid.uuid4()
+    item = _work_item(
+        status=WorkItemStatus.CLAIMED, cancellation_requested=True, claim_owner_id=owner, claim_generation=1
+    )
+    store = _store()
+    session = _Session()
+    session.items[WorkItem] = item
+    store._session_factory = _SessionFactory(session)
+
+    assert await store.mark_dispatched(item.id, claim_owner_id=owner, claim_generation=1) is False
+    assert item.status is WorkItemStatus.CANCELLED
+    assert item.result == {"cancelled": True, "execution_started": False}
+    assert item.claim_owner_id is None
+    assert item.completion_notification_state is CompletionNotificationState.PENDING
+    assert session.commits == 1
+    await store.close()
