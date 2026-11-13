@@ -232,7 +232,7 @@ def build_payload(
     environment: dict[str, str],
     image: str | None = None,
     selectors: dict[str, str] | None = None,
-    workflow_run_id: str | None = None,
+    runtime_context: dict[str, object] | None = None,
     step_revision_id: str = "script.v1",
 ) -> dict[str, Any]:
     """Build SDK invocation data for a script runner advertising the selected step."""
@@ -240,8 +240,8 @@ def build_payload(
     if environment:
         inputs["environment"] = environment
     return {
+        "runtime_context": runtime_context or {},
         "invocation": {
-            "workflow_run_id": workflow_run_id or str(uuid.uuid4()),
             "step_revision_id": step_revision_id,
             "inputs": inputs,
             "timeout_seconds": timeout_seconds,

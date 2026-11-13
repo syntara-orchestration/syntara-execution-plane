@@ -47,7 +47,6 @@ def test_python_script_result_matches_ao_output_contract() -> None:
     worker = _load_worker()
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "python", "code": "import json; print(json.dumps({'answer': 42}))"},
         timeout_seconds=10,
@@ -68,7 +67,6 @@ def test_python_script_json_after_logs_is_parsed() -> None:
     worker = _load_worker()
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "python", "code": "import json; print('running'); print(json.dumps({'answer': 42}))"},
         timeout_seconds=10,
@@ -88,7 +86,6 @@ def test_perf_worker_timestamps_appended_to_stderr_when_enabled() -> None:
     worker._server_listening_mono = listening
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={
             "language": "bash",
@@ -116,7 +113,6 @@ def test_perf_worker_timestamps_omitted_by_default() -> None:
     worker._server_listening_mono = 1000.0
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "bash", "code": "echo hi"},
         timeout_seconds=10,

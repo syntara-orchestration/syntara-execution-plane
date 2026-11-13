@@ -39,6 +39,7 @@ class WorkItem(SQLModel, table=True):
     __table_args__ = (
         sa.Index("ix_work_items_execution_target_status", "execution_target_id", "status"),
         sa.Index("ix_work_items_status", "status"),
+        sa.Index("ix_work_items_runtime_context", "runtime_context", postgresql_using="gin"),
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),
         sa.Index(
             "ix_work_items_completion_delivery",
@@ -73,6 +74,12 @@ class WorkItem(SQLModel, table=True):
     payload: dict[str, Any] = Field(
         default={},
         sa_column=Column(EncryptedWorkItemPayload(), nullable=False, server_default="{}"),
+    )
+
+    # Non-secret context is stored once, independently of encrypted invocation data.
+    runtime_context: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, server_default="{}"),
     )
 
     # Terminal result is owned and retained by EP independently of AO availability.

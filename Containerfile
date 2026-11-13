@@ -18,11 +18,15 @@ RUN (command -v uv >/dev/null 2>&1 || pip3.12 install --no-cache-dir uv==0.12.3)
 
 COPY pyproject.toml requirements.txt uv.lock README.md alembic.ini ./
 COPY src/ ./src/
+COPY tools/ci/prefetched_sdk_source.py /usr/local/bin/prefetched_sdk_source.py
 
 # Hermetic Konflux / local Hermeto: PIP_FIND_LINKS points at prefetched sdists.
 # uv.lock records platform wheels; do not use it (or any binary) offline.
+# Extract the SDK project and its canonical schemas from the prefetched Git
+# archive: uv does not honor subdirectory fragments on local archive URLs.
 # Networked builds keep uv sync --frozen.
 RUN if [ -n "${PIP_FIND_LINKS:-}" ]; then \
+        sdk_source="$(python3.12 /usr/local/bin/prefetched_sdk_source.py)" && \
         rm -f uv.lock && \
         uv venv && \
         UV_PYTHON_DOWNLOADS=never uv pip install \
@@ -39,6 +43,7 @@ RUN if [ -n "${PIP_FIND_LINKS:-}" ]; then \
             --find-links "${PIP_FIND_LINKS}" \
             --no-binary ':all:' \
             --no-deps \
+            "$sdk_source" \
             ./src/execution_plane_client \
             .; \
     else \

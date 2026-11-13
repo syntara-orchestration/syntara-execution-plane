@@ -79,7 +79,7 @@ def test_invocation_rejects_invalid_timeout(bad):
     from execution_plane_client.commands.work import WorkloadInvocation
 
     with pytest.raises(ValidationError):
-        WorkloadInvocation(workflow_run_id="workflow-1", step_revision_id="script.v1", inputs={}, timeout_seconds=bad)
+        WorkloadInvocation(step_revision_id="script.v1", inputs={}, timeout_seconds=bad)
 
 
 def test_cluster_commands_use_uuid_credential_refs():

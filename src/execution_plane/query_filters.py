@@ -30,6 +30,7 @@ logger = structlog.stdlib.get_logger(__name__)
 FilterValue = str | int | float | bool | datetime | Enum | UUID
 BRACKET_PATTERN = re.compile(r"^([\w.]+)\[([^]]*)\]$")
 LABEL_PARAM_PATTERN = re.compile(r"^labels\[([^]]+)\]$")
+RUNTIME_CONTEXT_PARAM_PATTERN = re.compile(r"^runtime_context\[([^\[\]]+)\]$")
 
 
 def column_python_type(column: Any) -> type | None:  # noqa: ANN401
@@ -143,8 +144,8 @@ def parse_filters(params: dict[str, str], allowed_fields: list[str]) -> list[Fil
     filters: list[Filter] = []
 
     for param_name, param_value in params.items():
-        # Skip label parameters - they should be handled by label filtering logic
-        if LABEL_PARAM_PATTERN.match(param_name):
+        # JSON object filters are handled separately from scalar field operators.
+        if LABEL_PARAM_PATTERN.match(param_name) or RUNTIME_CONTEXT_PARAM_PATTERN.fullmatch(param_name):
             continue
 
         # Try to match bracket notation first
@@ -620,6 +621,15 @@ def apply_list_filters[TP: tuple[Any, ...]](
     params = params or {}
     filters = parse_filters(params, getattr(model, "__filterable_fields__", []))
     query = apply_filters(query, filters, model)
+    for param, value in params.items():
+        match = RUNTIME_CONTEXT_PARAM_PATTERN.fullmatch(param)
+        if match:
+            if "runtime_context" not in model.model_fields:
+                message = "Runtime context filtering is not supported for this resource"
+                raise ValueError(message)
+            context = query_column(model, "runtime_context")
+            key = match.group(1)
+            query = query.filter(context.has_key(key) if value == "" else context.contains({key: value}))
     labels = parse_label_filter(params)
     values = {key: value for key, value in labels.items() if value != ""}
     query = apply_label_filters(query, values, model)

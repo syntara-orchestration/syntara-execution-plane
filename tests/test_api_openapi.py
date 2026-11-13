@@ -53,7 +53,6 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
                 "work_item_id": str(uuid4()),
                 "image": "node:test",
                 "invocation": {
-                    "workflow_run_id": "workflow-1",
                     "step_revision_id": "script.v1",
                     "inputs": {},
                     "timeout_seconds": 60,
@@ -232,7 +231,6 @@ def test_credential_resolution_payloads_are_documented_without_ingress_handlers(
         "attempt_id",
         "credential_ref",
         "credential_recipe_id",
-        "workflow_run_id",
         "step_revision_id",
     }
     assert "credential.resolve.workload" not in command_mapping

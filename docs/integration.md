@@ -23,13 +23,11 @@ commands or provide command-status or command-children endpoints.
     "occurred_at": "2026-10-14T08:00:00Z",
     "payload": {
       "work_item_id": "00000000-0000-0000-0000-000000000002",
-      "metadata": {"project_id": "caller-project", "workflow_id": "caller-workflow"},
+      "runtime_context": {"project_id": "caller-project", "workflow_id": "caller-workflow", "execution_id": "caller-execution"},
       "image": "registry.example/node:latest",
       "invocation": {
-        "workflow_run_id": "workflow-1",
         "step_revision_id": "script.v1",
         "inputs": {"language": "python", "code": "print('hello')"},
-        "runtime_context": {},
         "timeout_seconds": 60
       }
     }
@@ -82,7 +80,7 @@ The outbound `work.execute.completed` command is documented separately under
 
 | Type (revision 1 unless specified) | Payload and effect |
 | --- | --- |
-| `work.execute` (revision 2) | `WorkExecute`: required `work_item_id`, optional metadata, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
+| `work.execute` (revision 2) | `WorkExecute`: required `work_item_id`, optional runtime context, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
 | `work.cancel` | `work_item_id`: existing work UUID; request cancellation through `WorkStore` |
 | `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_id`, explicitly changed Cluster fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
@@ -146,7 +144,7 @@ Completion Notifier sends a `work.execute.completed` command to Syntara at
 `EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
 The revision-2 `Completion` payload contains required `work_item_id`, `status`,
-`result`, caller `metadata`, and optional `error_code`. Status is `completed`,
+`result`, caller `runtime_context`, and optional `error_code`. Status is `completed`,
 `failed`, `cancelled` or `reconciliation_required`. `occurred_at` is the work's
 completion time. Syntara's request size limit should accommodate the work
 invocation's output limit.
@@ -157,7 +155,7 @@ authorizes the command's source, destination and client scope. Both completion
 and revision-2 `credential.resolve.workload` use `payload.work_item_id` to look
 up the corresponding AO ActivityExecution. Credential resolution also validates
 the activity state, workflow-node credential binding, and persisted project
-ownership; caller metadata never supplies authorization.
+ownership; caller context never supplies authorization.
 After handling the callback, Syntara returns a successful HTTP status and a
 `TransportReceipt` containing its `message_id`.
 
@@ -168,20 +166,33 @@ delivery leases.
 
 See [cold-start-node-dispatch.md](cold-start-node-dispatch.md) for execution and recovery.
 
-## Caller metadata
+## Runtime context
 
-`WorkExecute.metadata` is an optional finite JSON object (default `{}`), bounded
-by the ordinary payload limit. EP retains it with the encrypted work payload,
-exposes it in client-scoped work-item reads, and echoes it on completion. It is
-non-secret descriptive context, immutable after submission: a duplicate work
-request returns 409 rather than overwriting the original context.
+`WorkExecute.runtime_context` is an optional finite non-secret JSON object (default
+`{}`), bounded by the ordinary payload limit. On the wire it is
+`command.payload.runtime_context`, beside `invocation`. EP stores it once in
+`WorkItem.runtime_context`, a JSONB column with a GIN index, outside the encrypted
+payload. The worker passes that same context to the SDK's `runtime_context`.
+Work-item reads and completion notifications expose the same stored value.
+Duplicate submissions return 409 and cannot overwrite it.
 
-AO supplies its project, workflow, and execution IDs as metadata. EP does not
-interpret those keys. Metadata does not select targets, identify work, authorize
-credential access, or alter lifecycle decisions. Target labels and work selectors
-keep their placement role. `invocation.runtime_context` remains workload-visible;
-work-item metadata is never automatically forwarded to plugins. Metadata has no
-filter, index, or update API.
+AO supplies `project_id`, `workflow_id`, and `execution_id` together from its
+persisted execution. EP does not interpret these keys. Context does not identify
+work, authorize credentials, select targets, or change lifecycle decisions.
+Credentials belong in the existing credential callback, never in context.
+Target labels and work selectors retain their placement role.
+
+The invocation retains `step_revision_id` to select and validate the advertised
+container handler. There is no dedicated or required `workflow_run_id`. Callers
+may add a precisely named `temporal_run_id` to context if they need it; AO does
+not send one by default. No `metadata` or `payload.context` alias is accepted.
+
+Filter with `GET /v1/work-items?runtime_context[project_id]=<id>`.
+Values match exact JSON strings; an empty query value checks key existence.
+Multiple keys are ANDed. Keys are literal top-level keys (dots do not traverse
+nested objects); commas are literal, and numbers/booleans are not coerced to
+strings. Filtering runs before pagination and total counts, within client scope.
+Context has no update or sort API.
 
 ## Coordinated protocol upgrade
 
@@ -199,10 +210,25 @@ requirements to the actual published version.
 
 Existing work rows retain their IDs, results, claims, and notification state.
 Workers recover identity from `WorkItem.id` when validating stored payloads,
-including payloads saved before this protocol revision. Missing metadata reads
-as `{}`. This requires no database schema migration.
+including payloads saved before this protocol revision. Stop EP writers and
+workers, back up the database, and run the context migration with the existing
+payload encryption key. It decrypts old payloads in batches, moves nested context
+and legacy metadata to the column, and retains old workflow run IDs as optional
+`temporal_run_id` context. Conflicting keys abort the transaction for explicit
+reconciliation. Invocation data remains encrypted, without a second context copy.
+The migration is forward-only: new requests cannot reconstruct the old required
+workflow run ID. Rollback requires restoring the pre-upgrade backup. Deploy the
+matching SDK contracts and rebuild plugin containers as part of the upgrade.
 
 Cancellation and deletion use work-item identity, not command ancestry. The
 separate cancellation/deletion implementation can retain `WorkDelete.work_item_id`
 and adopt `WorkCancel` without changing cancellation intent, cleanup fencing,
 callback suppression, reconciliation, or purge semantics.
+
+During review, the SDK contracts dependency is pinned to an immutable commit on
+its feature branch. `requirements-vcs.txt` carries that source separately from
+hashed PyPI requirements. Hermeto prefetches both manifests. The offline build
+extracts the SDK project and canonical schemas from the pinned Git archive;
+local archive URLs cannot select this package subdirectory with uv. It also consumes `requirements-build-sdk.txt` for the SDK's pinned build backend;
+`make sync-requirements` regenerates these files. Replace the Git source with the
+coordinated package release when it is available.

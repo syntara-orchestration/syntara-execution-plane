@@ -30,7 +30,6 @@ CLUSTER = {
                 "work_item_id": RESOURCE_ID,
                 "image": "node:test",
                 "invocation": {
-                    "workflow_run_id": "workflow-1",
                     "step_revision_id": "script.v1",
                     "inputs": {},
                     "timeout_seconds": 60,

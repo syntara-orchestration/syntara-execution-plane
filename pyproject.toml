@@ -114,4 +114,5 @@ show_missing = true
 skip_covered = true
 
 [tool.uv.sources]
+syntara-plugin-contracts = { git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git", rev = "4e74cdd7775dd91329366b93a42c730553ce3a52", subdirectory = "sdks/python/packages/contracts" }
 execution-plane-client = { path = "src/execution_plane_client", editable = true }

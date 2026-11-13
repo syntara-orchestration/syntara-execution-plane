@@ -42,8 +42,11 @@ openapi:
 # offline (setuptools, hatchling, cython, ...).
 sync-requirements:
 	uv export --frozen --python=3.12 --no-dev --no-editable --no-emit-package colorama --no-emit-package execution-plane-client --no-emit-workspace --output-file requirements.txt >/dev/null
+	uv run tools/ci/split_vcs_requirements.py
 	uv run tools/ci/filter_requirements_hashes.py
 	uvx --from pybuild-deps==0.6.1 --python 3.12 pybuild-deps compile --generate-hashes -o requirements-build.txt requirements.txt
+	# The pinned SDK contracts project uses hatchling 1.32.4. pybuild-deps cannot parse Git subdirectories.
+	echo "hatchling==1.32.4" | uv pip compile --generate-hashes --no-header -o requirements-build-sdk.txt -
 
 # Resolve rpms.in.yaml against the runtime UBI image into rpms.lock.yaml.
 # Hermeto uses the lockfile to prefetch RPMs for isolated microdnf installs.

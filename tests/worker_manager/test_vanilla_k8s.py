@@ -175,8 +175,8 @@ async def test_dispatch_joins_transport_and_database_callbacks_before_exiting(  
 
 
 @pytest.mark.parametrize("stored_identity", ["absent", "matching", "different"])
-async def test_stored_work_uses_row_identity_and_keeps_metadata_out_of_invocation(monkeypatch, stored_identity):
-    """Pre-upgrade payloads execute; descriptive metadata cannot address another work item."""
+async def test_stored_work_uses_row_identity_and_passes_context_separately(monkeypatch, stored_identity):
+    """Stored row identity wins; context is passed separately to the plugin."""
     from uuid import uuid4
 
     settings = Settings()
@@ -184,7 +184,8 @@ async def test_stored_work_uses_row_identity_and_keeps_metadata_out_of_invocatio
     resources = vanilla_k8s_resources()
     work_item = resources[2]
     assert "work_item_id" not in work_item.payload
-    payload = {**work_item.payload, "metadata": {"work_item_id": str(uuid4()), "project_id": "project"}}
+    payload = dict(work_item.payload)
+    work_item.runtime_context = {"work_item_id": str(uuid4()), "project_id": "project"}
     if stored_identity != "absent":
         payload["work_item_id"] = str(work_item.id if stored_identity == "matching" else uuid4())
     work_item.payload = payload
@@ -199,6 +200,7 @@ async def test_stored_work_uses_row_identity_and_keeps_metadata_out_of_invocatio
         assert context.identity == str(work_item.id)
         assert context.attempt_id == f"{work_item.id}-{work_item.claim_generation}"
         assert "metadata" not in context.invocation.model_dump()
-        assert "project_id" not in context.invocation.runtime_context
+        assert context.runtime_context == work_item.runtime_context
+        assert "runtime_context" not in context.invocation.model_dump()
     finally:
         await resolver.close()

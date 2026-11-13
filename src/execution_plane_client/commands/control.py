@@ -7,8 +7,8 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from execution_plane_client.commands.base import CommandPayload
+from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.models.work_item import WorkItemStatus
-from execution_plane_client.models.work_metadata import WorkMetadata
 from execution_plane_client.protocol import validate_json
 
 
@@ -36,7 +36,7 @@ class Completion(CommandPayload):
     command_revision: ClassVar[int] = 2
 
     work_item_id: UUID = Field(description="Identifier of the work item whose outcome is reported.")
-    metadata: WorkMetadata = Field(default_factory=dict, repr=False)
+    runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
 
     status: CompletionStatus
     result: dict[str, object] = Field(default_factory=dict, repr=False)

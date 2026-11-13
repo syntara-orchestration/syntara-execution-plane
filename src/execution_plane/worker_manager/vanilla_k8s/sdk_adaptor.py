@@ -120,6 +120,7 @@ def invoke(
     identity: str,
     progress: Callable[[dict[str, Any]], None],
     cancelled: threading.Event,
+    runtime_context: dict[str, object] | None = None,
     startup: float = 120,
     grace: int = 30,
     on_execute_submitted: Callable[[], None] | None = None,
@@ -127,10 +128,9 @@ def invoke(
     """Negotiate the SDK service, execute once, and consume its entire stream."""
     request = ContainerInvocation(
         invocation_id=identity,
-        workflow_run_id=invocation.workflow_run_id,
         step_revision_id=invocation.step_revision_id,
         inputs=invocation.inputs,
-        runtime_context=invocation.runtime_context,
+        runtime_context=runtime_context or {},
         timeout_seconds=invocation.timeout_seconds,
     )
     client = ContainerClient(channel)

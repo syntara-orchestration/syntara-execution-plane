@@ -32,7 +32,8 @@ def test_build_payload_is_accepted_by_work_execute_schema() -> None:
     )
     WorkExecute.model_validate(payload | {"work_item_id": "00000000-0000-0000-0000-000000000001"})
     assert payload["image"] == DEFAULT_NODE_IMAGE
-    assert payload["invocation"]["workflow_run_id"]
+    assert "workflow_run_id" not in payload["invocation"]
+    assert payload["runtime_context"] == {}
     assert payload["invocation"]["step_revision_id"] == "script.v1"
     assert "environment" not in payload["invocation"]["inputs"]
 
