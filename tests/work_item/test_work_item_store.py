@@ -312,7 +312,8 @@ async def test_reserve_one_requeues_expired_uncertain_dispatch() -> None:
     """Expired uncertain dispatches become reconciliation work before a new claim is made."""
     owner_id = uuid.uuid4()
     item = _work_item(
-        status=WorkItemStatus.CANCEL_REQUESTED,
+        status=WorkItemStatus.DISPATCHED,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=2,
         claimed_at=datetime.now(UTC),
@@ -590,7 +591,7 @@ async def test_mark_dispatched_rejects_cancelled_or_terminal_work() -> None:
     """Cancellation and terminal states win over a late dispatch confirmation."""
     owner_id = uuid.uuid4()
     statuses = [
-        WorkItemStatus.CANCEL_REQUESTED,
+        WorkItemStatus.DISPATCHED,
         WorkItemStatus.COMPLETED,
         WorkItemStatus.PENDING,
     ]
@@ -601,6 +602,7 @@ async def test_mark_dispatched_rejects_cancelled_or_terminal_work() -> None:
     for status in statuses:
         item = _work_item(
             status=status,
+            cancellation_requested=status is WorkItemStatus.DISPATCHED,
             claim_owner_id=owner_id if status is not WorkItemStatus.PENDING else None,
             claim_generation=1,
         )
@@ -642,7 +644,7 @@ async def test_mark_running_rejects_cancellation_and_non_dispatched_work() -> No
     """Cancellation and every state other than DISPATCHED win over a late start."""
     owner_id = uuid.uuid4()
     statuses = [
-        WorkItemStatus.CANCEL_REQUESTED,
+        WorkItemStatus.DISPATCHED,
         WorkItemStatus.CLAIMED,
         WorkItemStatus.PENDING,
     ]
@@ -653,6 +655,7 @@ async def test_mark_running_rejects_cancellation_and_non_dispatched_work() -> No
     for status in statuses:
         item = _work_item(
             status=status,
+            cancellation_requested=status is WorkItemStatus.DISPATCHED,
             claim_owner_id=owner_id,
             claim_generation=1,
         )
@@ -669,7 +672,8 @@ async def test_refresh_claim_renews_lease_and_reports_cancellation() -> None:
     owner_id = uuid.uuid4()
     claimed = _work_item(status=WorkItemStatus.CLAIMED, claim_owner_id=owner_id, claim_generation=1)
     cancel_requested = _work_item(
-        status=WorkItemStatus.CANCEL_REQUESTED,
+        status=WorkItemStatus.DISPATCHED,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=1,
         claimed_at=datetime(2020, 1, 1, tzinfo=UTC),
@@ -1009,7 +1013,8 @@ async def test_requeue_pre_execute_failure_cancels_requested_work() -> None:
     """A pre-execute cancellation request becomes a durable cancellation."""
     owner_id = uuid.uuid4()
     item = _work_item(
-        status=WorkItemStatus.CANCEL_REQUESTED,
+        status=WorkItemStatus.DISPATCHED,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=1,
     )

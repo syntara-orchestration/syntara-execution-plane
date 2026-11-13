@@ -36,8 +36,6 @@ from execution_plane_client.models.work_item import WorkItemStatus
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from sqlalchemy.ext.asyncio import AsyncSession
-
 _NOTIFY_CHANNEL = "execution_plane_work_items"
 _COMPLETION_NOTIFICATION_CLAIM_SECONDS = 30
 
@@ -129,7 +127,6 @@ class WorkStore(StoreBase):
                             [
                                 WorkItemStatus.DISPATCHED,
                                 WorkItemStatus.RUNNING,
-                                WorkItemStatus.CANCEL_REQUESTED,
                             ]
                         )
                     )
@@ -137,9 +134,7 @@ class WorkStore(StoreBase):
                     .with_for_update(skip_locked=True)
                 )
                 for uncertain in uncertain_result.scalars().all():
-                    cancellation_requested = (
-                        uncertain.cancellation_requested or uncertain.status is WorkItemStatus.CANCEL_REQUESTED
-                    )
+                    cancellation_requested = uncertain.cancellation_requested
                     uncertain.status = WorkItemStatus.RECONCILIATION_REQUIRED
                     now = datetime.now(UTC)
                     uncertain.result = {
@@ -262,7 +257,6 @@ class WorkStore(StoreBase):
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
                 self._validate_claim(item, claim_owner_id, claim_generation)
                 if item.cancellation_requested or item.status in {
-                    WorkItemStatus.CANCEL_REQUESTED,
                     WorkItemStatus.COMPLETED,
                     WorkItemStatus.FAILED,
                     WorkItemStatus.CANCELLED,
@@ -299,7 +293,7 @@ class WorkStore(StoreBase):
             if item.status in REFRESHABLE_CLAIM_STATUSES:
                 item.claimed_at = datetime.now(UTC)
                 await session.commit()
-            return item.cancellation_requested or item.status is WorkItemStatus.CANCEL_REQUESTED
+            return item.cancellation_requested
 
     async def mark_running(
         self,
@@ -450,8 +444,6 @@ class WorkStore(StoreBase):
                             [
                                 WorkItemStatus.PENDING,
                                 WorkItemStatus.CLAIMED,
-                                WorkItemStatus.DISPATCHED,
-                                WorkItemStatus.RUNNING,
                             ]
                         ),
                     )
@@ -460,7 +452,7 @@ class WorkStore(StoreBase):
                     .with_for_update(skip_locked=True)
                 )
                 for item in result.scalars().all():
-                    await self._request_cancel_locked(session, item)
+                    self._request_cancel_locked(item)
             async with session.begin():
                 result = await session.execute(
                     select(WorkItem)
@@ -512,7 +504,7 @@ class WorkStore(StoreBase):
                 self._validate_claim(item, claim_owner_id, claim_generation)
                 if item.status in TERMINAL_RESULT_STATUSES:
                     return item
-                cancel_requested = item.cancellation_requested or item.status is WorkItemStatus.CANCEL_REQUESTED
+                cancel_requested = item.cancellation_requested
                 item.status = WorkItemStatus.RECONCILIATION_REQUIRED
                 now = datetime.now(UTC)
                 item.result = {
@@ -544,7 +536,7 @@ class WorkStore(StoreBase):
                 if item is None:
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
                 self._validate_claim(item, claim_owner_id, claim_generation)
-                if item.cancellation_requested or item.status is WorkItemStatus.CANCEL_REQUESTED:
+                if item.cancellation_requested:
                     now = datetime.now(UTC)
                     result = {"cancelled": True, "execution_started": False}
                     item.result = result
@@ -590,21 +582,17 @@ class WorkStore(StoreBase):
         if item.claim_owner_id != claim_owner_id or item.claim_generation != claim_generation:
             raise StaleClaimError("Worker claim is no longer current")  # noqa: EM101, TRY003
 
-    async def _request_cancel_locked(self, session: AsyncSession, item: WorkItem) -> None:
+    def _request_cancel_locked(self, item: WorkItem) -> None:
         """Apply a cancellation transition while the work-item row is locked."""
         if item.status in {
             WorkItemStatus.COMPLETED,
             WorkItemStatus.FAILED,
             WorkItemStatus.CANCELLED,
-            WorkItemStatus.CANCEL_REQUESTED,
             WorkItemStatus.RECONCILIATION_REQUIRED,
         }:
             return
         now = datetime.now(UTC)
         if item.status in {WorkItemStatus.DISPATCHED, WorkItemStatus.RUNNING}:
-            item.status = WorkItemStatus.CANCEL_REQUESTED
-            item.claimed_at = now
-            await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
             return
         # A claim is not yet allowed to create a Job. Locking the row makes this
         # transition atomic with mark_dispatched.

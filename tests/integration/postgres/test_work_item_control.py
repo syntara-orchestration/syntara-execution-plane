@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
@@ -83,7 +84,7 @@ async def test_running_deletion_retains_work_until_resource_cleanup_is_confirmed
     await store.request_delete(item_id, client_id=owner)
     assert (await store.get(item_id, client_id=owner)).status is WorkItemStatus.RUNNING
     await store.reconcile_control_requests()
-    assert (await store.get(item_id, client_id=owner)).status is WorkItemStatus.CANCEL_REQUESTED
+    assert (await store.get(item_id, client_id=owner)).status is WorkItemStatus.RUNNING
     assert await store.refresh_claim(item_id, claim_owner_id=claim_owner, claim_generation=1) is True
     await store.set_result(
         item_id, {"cancelled": True}, WorkItemStatus.CANCELLED, claim_owner_id=claim_owner, claim_generation=1
@@ -110,3 +111,47 @@ async def test_deletion_suppresses_new_completion_delivery(controls):
     await store.set_result(item_id, {}, WorkItemStatus.COMPLETED)
     await store.request_delete(item_id, client_id=owner)
     assert item_id not in [item.id for item in await store.claim_work_items_that_need_completion_notification()]
+
+
+async def test_database_rejects_deletion_without_cancellation_on_insert_and_update(controls):
+    store, sessions, owner = controls
+    async with sessions() as session:
+        session.add(
+            WorkItem(
+                id=uuid4(),
+                client_id=owner,
+                deletion_requested=True,
+                cancellation_requested=False,
+                created_at=datetime.now(UTC),
+            )
+        )
+        with pytest.raises(IntegrityError, match="ck_work_items_deletion_requires_cancellation"):
+            await session.commit()
+        await session.rollback()
+    item_id = uuid4()
+    await store.dispatch(owner, item_id, {})
+    async with sessions() as session:
+        with pytest.raises(IntegrityError, match="ck_work_items_deletion_requires_cancellation"):
+            await session.execute(update(WorkItem).where(WorkItem.id == item_id).values(deletion_requested=True))
+        await session.rollback()
+    await store.request_delete(item_id, client_id=owner)
+    async with sessions() as session:
+        with pytest.raises(IntegrityError, match="ck_work_items_deletion_requires_cancellation"):
+            await session.execute(update(WorkItem).where(WorkItem.id == item_id).values(cancellation_requested=False))
+        await session.rollback()
+
+
+@pytest.mark.parametrize("status", [WorkItemStatus.DISPATCHED, WorkItemStatus.RUNNING, WorkItemStatus.COMPLETED])
+async def test_cancellation_intent_preserves_lifecycle_and_claim_timestamp(controls, status):
+    store, sessions, owner = controls
+    item_id = uuid4()
+    claimed_at = datetime.now(UTC)
+    async with sessions.begin() as session:
+        session.add(WorkItem(id=item_id, client_id=owner, status=status, created_at=claimed_at, claimed_at=claimed_at))
+    await store.request_cancel(item_id, client_id=owner)
+    await store.reconcile_control_requests()
+    item = await store.get(item_id, client_id=owner)
+    assert item.cancellation_requested is True
+    assert item.deletion_requested is False
+    assert item.status is status
+    assert item.claimed_at == claimed_at

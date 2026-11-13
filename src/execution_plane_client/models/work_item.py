@@ -36,7 +36,6 @@ class WorkItemStatus(StrEnum):
     CLAIMED = "claimed"
     DISPATCHED = "dispatched"
     RUNNING = "running"
-    CANCEL_REQUESTED = "cancel_requested"
     RECONCILIATION_REQUIRED = "reconciliation_required"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -50,6 +49,23 @@ class WorkItemRead(BaseModel):
 
     id: UUID = Field(description="Work item unique identifier")
     status: WorkItemStatus = Field(description="Work item lifecycle status")
+    cancellation_requested: bool = Field(
+        default=False,
+        description=(
+            "Whether cancellation intent has been persisted. A true value does not confirm that execution "
+            "has stopped: status remains dispatched or running until an outcome is known. A result may "
+            "win the cancellation race. This flag remains true after completion and is also set by deletion."
+        ),
+    )
+    deletion_requested: bool = Field(
+        default=False,
+        description=(
+            "Whether deletion intent has been persisted. Always implies cancellation_requested=true. "
+            "Active work is cancelled asynchronously, and the record remains readable until resource "
+            "cleanup is confirmed and the record is removed. This flag does not change an existing "
+            "terminal outcome or confirm that deletion has completed."
+        ),
+    )
     result: dict[str, Any] | None = Field(default=None, description="Work execution result payload")
     result_omitted: bool = Field(default=False, description="Whether result was omitted due to size")
     result_size_bytes: int | None = Field(default=None, description="Size of the result in bytes")

@@ -143,6 +143,8 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     work_id = UUID(message["command_id"])
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "pending"
+    assert read.json()["cancellation_requested"] is False
+    assert read.json()["deletion_requested"] is False
     duplicate = await client.post("/v1/commands", json=message)
     assert duplicate.status_code == 409
     cancel = await client.post(
@@ -151,6 +153,8 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     assert cancel.status_code == 202
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "pending"
+    assert read.json()["cancellation_requested"] is True
+    assert read.json()["deletion_requested"] is False
     from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
 
@@ -166,6 +170,10 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     deletion = command_message("work.delete", {"work_item_id": str(work_id)})
     receipt = await client.post("/v1/commands", json=deletion)
     assert receipt.status_code == 202
+    deletion_read = await client.get(f"/v1/work-items/{work_id}")
+    assert deletion_read.json()["cancellation_requested"] is True
+    assert deletion_read.json()["deletion_requested"] is True
+    assert deletion_read.json()["status"] == "cancelled"
     assert receipt.json()["resource"]["resource_id"] == str(work_id)
     async with sessions() as session:
         assert (await session.get(WorkItem, work_id)).deletion_requested is True
