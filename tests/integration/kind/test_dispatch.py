@@ -585,7 +585,8 @@ async def test_work_item_cancel_reaches_cancelled(
                 )
 
                 cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
-                assert cancel_requested.status is WorkItemStatus.CANCEL_REQUESTED
+                assert cancel_requested.cancellation_requested is True
+                assert cancel_requested.status is WorkItemStatus.RUNNING
                 assert running_item.status is WorkItemStatus.RUNNING
 
                 await processing_task
@@ -752,7 +753,8 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
                 )
 
                 cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
-                assert cancel_requested.status is WorkItemStatus.CANCEL_REQUESTED
+                assert cancel_requested.cancellation_requested is True
+                assert cancel_requested.status is WorkItemStatus.DISPATCHED
                 assert dispatched_item.status is WorkItemStatus.DISPATCHED
 
                 execute_release.set()

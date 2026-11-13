@@ -16,7 +16,6 @@ REFRESHABLE_CLAIM_STATUSES = frozenset(
         WorkItemStatus.CLAIMED,
         WorkItemStatus.DISPATCHED,
         WorkItemStatus.RUNNING,
-        WorkItemStatus.CANCEL_REQUESTED,
         WorkItemStatus.RECONCILIATION_REQUIRED,
     }
 )

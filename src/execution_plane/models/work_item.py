@@ -37,6 +37,10 @@ class WorkItem(SQLModel, table=True):
     __sortable_fields__: ClassVar[list[str]] = WORK_ITEM_SORTABLE_FIELDS
     __filterable_fields__: ClassVar[list[str]] = WORK_ITEM_FILTERABLE_FIELDS
     __table_args__ = (
+        sa.CheckConstraint(
+            "NOT deletion_requested OR cancellation_requested",
+            name="ck_work_items_deletion_requires_cancellation",
+        ),
         sa.Index("ix_work_items_execution_target_status", "execution_target_id", "status"),
         sa.Index("ix_work_items_status", "status"),
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),
@@ -64,6 +68,13 @@ class WorkItem(SQLModel, table=True):
             ),
             nullable=False,
         ),
+    )
+
+    cancellation_requested: bool = Field(
+        default=False, sa_column=Column(sa.Boolean, nullable=False, server_default=sa.false())
+    )
+    deletion_requested: bool = Field(
+        default=False, sa_column=Column(sa.Boolean, nullable=False, server_default=sa.false())
     )
 
     # Set when a worker claims this item.

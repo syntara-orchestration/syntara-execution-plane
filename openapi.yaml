@@ -1049,6 +1049,23 @@ components:
         status:
           $ref: '#/components/schemas/WorkItemStatus'
           description: Work item lifecycle status
+        cancellation_requested:
+          type: boolean
+          title: Cancellation Requested
+          description: 'Whether cancellation intent has been persisted. A true value
+            does not confirm that execution has stopped: status remains dispatched
+            or running until an outcome is known. A result may win the cancellation
+            race. This flag remains true after completion and is also set by deletion.'
+          default: false
+        deletion_requested:
+          type: boolean
+          title: Deletion Requested
+          description: Whether deletion intent has been persisted. Always implies
+            cancellation_requested=true. Active work is cancelled asynchronously,
+            and the record remains readable until resource cleanup is confirmed and
+            the record is removed. This flag does not change an existing terminal
+            outcome or confirm that deletion has completed.
+          default: false
         result:
           anyOf:
           - additionalProperties: true
@@ -1112,7 +1129,6 @@ components:
       - claimed
       - dispatched
       - running
-      - cancel_requested
       - reconciliation_required
       - completed
       - failed
@@ -1251,6 +1267,7 @@ components:
       - $ref: '#/components/schemas/TargetHealthCommandV1'
       - $ref: '#/components/schemas/TargetRegisterCommandV1'
       - $ref: '#/components/schemas/TargetUpdateCommandV1'
+      - $ref: '#/components/schemas/WorkDeleteCommandV1'
       - $ref: '#/components/schemas/WorkExecuteCommandV1'
       title: Command
       description: A command type and revision paired with its corresponding payload.
@@ -1265,6 +1282,7 @@ components:
           execution_target.health: '#/components/schemas/TargetHealthCommandV1'
           execution_target.register: '#/components/schemas/TargetRegisterCommandV1'
           execution_target.update: '#/components/schemas/TargetUpdateCommandV1'
+          work.delete: '#/components/schemas/WorkDeleteCommandV1'
           work.execute: '#/components/schemas/WorkExecuteCommandV1'
     CommandScope:
       properties:
@@ -1629,6 +1647,19 @@ components:
       - credential_ref
       title: WorkCredentialBinding
       description: One Plugin SDK recipe-to-AO credential mapping for a work item.
+    WorkDelete:
+      properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+      additionalProperties: false
+      type: object
+      required:
+      - work_item_id
+      title: WorkDelete
+      description: Request asynchronous cancellation, resource cleanup, and removal
+        of owned work.
     WorkExecute:
       properties:
         image:
@@ -2003,6 +2034,40 @@ components:
       - payload
       - occurred_at
       title: TargetUpdateCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    WorkDeleteCommandV1:
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          title: Command Id
+        parent_command_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Parent Command Id
+        command_type:
+          type: string
+          const: work.delete
+        command_revision:
+          type: integer
+          const: 1
+        payload:
+          $ref: '#/components/schemas/WorkDelete'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_id
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: WorkDeleteCommandV1
       description: One versioned operation; participants persist only its domain effects.
     WorkExecuteCommandV1:
       properties:

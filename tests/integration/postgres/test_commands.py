@@ -27,6 +27,7 @@ async def command_client(migrated_database):
         scopes=frozenset(
             {
                 "work.execute",
+                "work.delete",
                 "command.cancel",
                 "cluster.register",
                 "cluster.update",
@@ -124,7 +125,7 @@ async def test_work_queries_recover_large_results_without_command_history(comman
 
 
 async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command_client):
-    client, _ = command_client
+    client, sessions = command_client
     message = command_message(
         "work.execute",
         {
@@ -142,6 +143,8 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     work_id = UUID(message["command_id"])
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "pending"
+    assert read.json()["cancellation_requested"] is False
+    assert read.json()["deletion_requested"] is False
     duplicate = await client.post("/v1/commands", json=message)
     assert duplicate.status_code == 409
     cancel = await client.post(
@@ -149,9 +152,35 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     )
     assert cancel.status_code == 202
     read = await client.get(f"/v1/work-items/{work_id}")
+    assert read.json()["status"] == "pending"
+    assert read.json()["cancellation_requested"] is True
+    assert read.json()["deletion_requested"] is False
+    from execution_plane.models.work_item import WorkItem
+    from execution_plane.work_item.work_item_store import WorkStore
+
+    async with sessions() as session:
+        assert (await session.get(WorkItem, work_id)).cancellation_requested is True
+    async with sessions() as session:
+        assert await WorkStore.from_session(session).mark_dispatched(work_id) is False
+    read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "cancelled"
     missing = await client.post("/v1/commands", json=command_message())
     assert missing.status_code == 404
+
+    deletion = command_message("work.delete", {"work_item_id": str(work_id)})
+    receipt = await client.post("/v1/commands", json=deletion)
+    assert receipt.status_code == 202
+    deletion_read = await client.get(f"/v1/work-items/{work_id}")
+    assert deletion_read.json()["cancellation_requested"] is True
+    assert deletion_read.json()["deletion_requested"] is True
+    assert deletion_read.json()["status"] == "cancelled"
+    assert receipt.json()["resource"]["resource_id"] == str(work_id)
+    async with sessions() as session:
+        assert (await session.get(WorkItem, work_id)).deletion_requested is True
+    async with sessions() as session:
+        await WorkStore.from_session(session).purge_deleted_work()
+    assert (await client.get(f"/v1/work-items/{work_id}")).status_code == 404
+    assert (await client.post("/v1/commands", json=deletion)).status_code == 202
 
 
 async def test_concurrent_cluster_creates_result_in_exactly_one_cluster(command_client):

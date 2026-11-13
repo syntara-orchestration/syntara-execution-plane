@@ -312,7 +312,8 @@ async def test_reserve_one_requeues_expired_uncertain_dispatch() -> None:
     """Expired uncertain dispatches become reconciliation work before a new claim is made."""
     owner_id = uuid.uuid4()
     item = _work_item(
-        status=WorkItemStatus.CANCEL_REQUESTED,
+        status=WorkItemStatus.DISPATCHED,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=2,
         claimed_at=datetime.now(UTC),
@@ -590,7 +591,7 @@ async def test_mark_dispatched_rejects_cancelled_or_terminal_work() -> None:
     """Cancellation and terminal states win over a late dispatch confirmation."""
     owner_id = uuid.uuid4()
     statuses = [
-        WorkItemStatus.CANCEL_REQUESTED,
+        WorkItemStatus.DISPATCHED,
         WorkItemStatus.COMPLETED,
         WorkItemStatus.PENDING,
     ]
@@ -601,6 +602,7 @@ async def test_mark_dispatched_rejects_cancelled_or_terminal_work() -> None:
     for status in statuses:
         item = _work_item(
             status=status,
+            cancellation_requested=status is WorkItemStatus.DISPATCHED,
             claim_owner_id=owner_id if status is not WorkItemStatus.PENDING else None,
             claim_generation=1,
         )
@@ -642,7 +644,7 @@ async def test_mark_running_rejects_cancellation_and_non_dispatched_work() -> No
     """Cancellation and every state other than DISPATCHED win over a late start."""
     owner_id = uuid.uuid4()
     statuses = [
-        WorkItemStatus.CANCEL_REQUESTED,
+        WorkItemStatus.DISPATCHED,
         WorkItemStatus.CLAIMED,
         WorkItemStatus.PENDING,
     ]
@@ -653,6 +655,7 @@ async def test_mark_running_rejects_cancellation_and_non_dispatched_work() -> No
     for status in statuses:
         item = _work_item(
             status=status,
+            cancellation_requested=status is WorkItemStatus.DISPATCHED,
             claim_owner_id=owner_id,
             claim_generation=1,
         )
@@ -669,7 +672,8 @@ async def test_refresh_claim_renews_lease_and_reports_cancellation() -> None:
     owner_id = uuid.uuid4()
     claimed = _work_item(status=WorkItemStatus.CLAIMED, claim_owner_id=owner_id, claim_generation=1)
     cancel_requested = _work_item(
-        status=WorkItemStatus.CANCEL_REQUESTED,
+        status=WorkItemStatus.DISPATCHED,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=1,
         claimed_at=datetime(2020, 1, 1, tzinfo=UTC),
@@ -869,8 +873,8 @@ async def test_set_result_rejects_missing_and_stale_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_cancel_cancels_unclaimed_work() -> None:
-    """Work that has not started is cancelled immediately with a completion notification."""
+async def test_request_cancel_persists_intent_for_unclaimed_work() -> None:
+    """Request handling records intent without finalizing queued work."""
     item = _work_item(status=WorkItemStatus.PENDING)
     store = _store()
     session = _Session()
@@ -880,9 +884,10 @@ async def test_request_cancel_cancels_unclaimed_work() -> None:
     cancelled = await store.request_cancel(item.id, client_id=item.client_id)
 
     assert cancelled is item
-    assert item.status is WorkItemStatus.CANCELLED
-    assert item.result == {"cancelled": True, "execution_started": False}
-    assert item.completion_notification_state is CompletionNotificationState.PENDING
+    assert item.status is WorkItemStatus.PENDING
+    assert item.cancellation_requested is True
+    assert item.result is None
+    assert item.completion_notification_state is None
     assert session.commits == 1
     await store.close()
 
@@ -899,8 +904,8 @@ async def test_request_cancel_requests_termination_after_dispatch() -> None:
     requested = await store.request_cancel(item.id, client_id=item.client_id)
 
     assert requested is item
-    assert item.status is WorkItemStatus.CANCEL_REQUESTED
-    assert item.claimed_at is not None
+    assert item.cancellation_requested is True
+    assert item.claimed_at is None
     assert session.added == []
     assert session.commits == 1
     assert session.execute.await_count == 2
@@ -924,17 +929,17 @@ async def test_request_cancel_requests_termination_after_running() -> None:
     requested = await store.request_cancel(item.id, client_id=item.client_id)
 
     assert requested is item
-    assert item.status is WorkItemStatus.CANCEL_REQUESTED
+    assert item.cancellation_requested is True
     assert item.claim_owner_id == owner_id
-    assert item.claimed_at is not None
+    assert item.claimed_at is None
     assert session.added == []
     assert session.commits == 1
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_request_cancel_is_noop_for_terminal_work() -> None:
-    """Terminal work cannot be cancelled again."""
+async def test_request_cancel_records_intent_without_rewriting_terminal_work() -> None:
+    """A new request records the client fact without changing the terminal outcome."""
     item = _work_item(status=WorkItemStatus.CANCELLED, result={"cancelled": True})
     store = _store()
     session = _Session()
@@ -945,6 +950,7 @@ async def test_request_cancel_is_noop_for_terminal_work() -> None:
 
     assert result is item
     assert item.status is WorkItemStatus.CANCELLED
+    assert item.cancellation_requested is True
     assert session.added == []
     assert session.commits == 1
     await store.close()
@@ -1008,7 +1014,8 @@ async def test_requeue_pre_execute_failure_cancels_requested_work() -> None:
     """A pre-execute cancellation request becomes a durable cancellation."""
     owner_id = uuid.uuid4()
     item = _work_item(
-        status=WorkItemStatus.CANCEL_REQUESTED,
+        status=WorkItemStatus.DISPATCHED,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=1,
     )
@@ -1062,12 +1069,23 @@ async def test_requeue_pre_execute_failure_returns_dispatched_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_requeue_pre_execute_failure_never_requeues_running_work() -> None:
+@pytest.mark.parametrize(
+    "status",
+    [
+        WorkItemStatus.RUNNING,
+        WorkItemStatus.COMPLETED,
+        WorkItemStatus.FAILED,
+        WorkItemStatus.CANCELLED,
+        WorkItemStatus.RECONCILIATION_REQUIRED,
+    ],
+)
+async def test_requeue_pre_execute_failure_preserves_non_dispatched_outcomes(status: WorkItemStatus) -> None:
     """A failure observed after RUNNING cannot launch a duplicate execution."""
     owner_id = uuid.uuid4()
     target_id = uuid.uuid4()
     item = _work_item(
-        status=WorkItemStatus.RUNNING,
+        status=status,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=1,
         execution_target_id=target_id,
@@ -1085,7 +1103,7 @@ async def test_requeue_pre_execute_failure_never_requeues_running_work() -> None
     )
 
     assert result is item
-    assert item.status is WorkItemStatus.RUNNING
+    assert item.status is status
     assert item.execution_target_id == target_id
     assert item.claim_owner_id == owner_id
     assert session.commits == 0
@@ -1262,3 +1280,41 @@ async def test_check_ready_propagates_database_errors() -> None:
 
     with pytest.raises(RuntimeError, match="connection refused"):
         await store.check_ready()
+
+
+@pytest.mark.asyncio
+async def test_reserve_one_returns_one_cancelled_item() -> None:
+    cancelled = _work_item(cancellation_requested=True)
+    store = _store()
+    session = _Session()
+    session.execute.side_effect = [_ClaimResult(None), _ClaimResult(cancelled)]
+    store._session_factory = _SessionFactory(session)
+
+    assert await store.reserve_one() is cancelled
+    assert cancelled.status is WorkItemStatus.CANCELLED
+    assert cancelled.result == {"cancelled": True, "execution_started": False}
+    assert cancelled.claim_owner_id is None
+    assert cancelled.execution_target_id is None
+    assert cancelled.completion_notification_state is CompletionNotificationState.PENDING
+    assert session.execute.await_count == 2
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_guard_finishes_cancellation_after_claim() -> None:
+    owner = uuid.uuid4()
+    item = _work_item(
+        status=WorkItemStatus.CLAIMED, cancellation_requested=True, claim_owner_id=owner, claim_generation=1
+    )
+    store = _store()
+    session = _Session()
+    session.items[WorkItem] = item
+    store._session_factory = _SessionFactory(session)
+
+    assert await store.mark_dispatched(item.id, claim_owner_id=owner, claim_generation=1) is False
+    assert item.status is WorkItemStatus.CANCELLED
+    assert item.result == {"cancelled": True, "execution_started": False}
+    assert item.claim_owner_id is None
+    assert item.completion_notification_state is CompletionNotificationState.PENDING
+    assert session.commits == 1
+    await store.close()
