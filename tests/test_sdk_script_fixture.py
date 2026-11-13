@@ -5,27 +5,57 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import sys
 import time
 import tomllib
 from pathlib import Path
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from syntara_plugin.runtime import ContainerInvocation
+from syntara_plugin.contracts import canonical_json_bytes
+from syntara_plugin.runtime import ContainerInvocation, ExecutionContext, invoke
 
 if TYPE_CHECKING:
-    from types import ModuleType
+    from collections.abc import Callable, Mapping
 
 
-def _load_worker() -> ModuleType:
+def _load_worker() -> Any:  # noqa: ANN401
     path = Path(__file__).parent / "fixtures" / "sdk_script" / "worker.py"
     spec = importlib.util.spec_from_file_location("sdk_script_worker", path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+class _ScopedRecordingCredentialProvider:
+    def __init__(self, documents: dict[str, dict[str, str]], reads: list[str]) -> None:
+        self._documents = documents
+        self._reads = reads
+
+    def read(self, name: str) -> dict[str, str]:
+        self._reads.append(name)
+        return self._documents[name]
+
+    def close(self) -> None:
+        return None
+
+
+class _RecordingCredentialProvider:
+    def __init__(self, documents: dict[str, dict[str, str]]) -> None:
+        self._documents = documents
+        self.reads: list[str] = []
+
+    def restrict(
+        self,
+        names: frozenset[str],
+        on_read: Callable[[Mapping[str, Any]], None],
+    ) -> _ScopedRecordingCredentialProvider:
+        assert names == {"syntara.e2e.bearer-token"}
+        return _ScopedRecordingCredentialProvider(self._documents, self.reads)
 
 
 def test_sdk_script_image_matches_ep_contracts_release() -> None:
@@ -123,3 +153,112 @@ def test_perf_worker_timestamps_omitted_by_default() -> None:
     result = worker.execute(invocation)
 
     assert "EP_PERF_TIMINGS=" not in result.output["stderr"]
+
+
+def test_script_timeout_is_enforced_locally() -> None:
+    worker = _load_worker()
+    invocation = ContainerInvocation(
+        invocation_id="test-invocation",
+        step_revision_id="script.v1",
+        inputs={"language": "bash", "code": "sleep 2"},
+        timeout_seconds=1,
+        cancellation=Event(),
+    )
+
+    result = worker.execute(invocation)
+
+    assert result.output["return_code"] != 0
+
+
+def test_failed_script_returns_terminal_failure() -> None:
+    worker = _load_worker()
+    invocation = ContainerInvocation(
+        invocation_id="test-invocation",
+        step_revision_id="script.v1",
+        inputs={"language": "bash", "code": "exit 7"},
+        timeout_seconds=10,
+        cancellation=Event(),
+    )
+
+    result = worker.execute(invocation)
+
+    assert result.status_code == 1
+    assert result.output["return_code"] == 7
+    assert result.error_result is not None
+    assert result.error_result["code"] == "SCRIPT_FAILED"
+
+
+def test_credential_is_not_requested_without_opt_in() -> None:
+    worker = _load_worker()
+    provider = _RecordingCredentialProvider({"syntara.e2e.bearer-token": {"bearer_token": "secret"}})
+    context = ExecutionContext(
+        invocation_id="test-invocation",
+        credential_provider=provider,
+    )
+
+    outcome = invoke(
+        worker.script_binding(),
+        {"language": "bash", "code": "echo hi"},
+        context,
+    )
+
+    assert outcome.status_code == 0
+    assert provider.reads == []
+
+
+def test_opt_in_credential_read_emits_digest_without_secret() -> None:
+    worker = _load_worker()
+    document = {"auth_type": "bearer", "bearer_token": "e2e-secret-token"}
+    provider = _RecordingCredentialProvider({"syntara.e2e.bearer-token": document})
+    context = ExecutionContext(
+        invocation_id="test-invocation",
+        credential_provider=provider,
+    )
+
+    outcome = invoke(
+        worker.script_binding(),
+        {
+            "language": "bash",
+            "code": "echo hi",
+            "environment": {"EP_E2E_USE_CREDENTIAL": "1"},
+        },
+        context,
+    )
+
+    assert outcome.status_code == 0
+    assert provider.reads == ["syntara.e2e.bearer-token"]
+    result = outcome.result
+    assert result is not None
+    assert result["stdout"] == f"hi\nEP_E2E_CREDENTIAL_SHA256={_sha256(document)}\n"
+    assert "e2e-secret-token" not in result["stderr"]
+
+
+def test_opt_in_credential_read_preserves_python_stdout_json() -> None:
+    worker = _load_worker()
+    document = {"auth_type": "bearer", "bearer_token": "e2e-secret-token"}
+    provider = _RecordingCredentialProvider({"syntara.e2e.bearer-token": document})
+    context = ExecutionContext(
+        invocation_id="test-invocation",
+        credential_provider=provider,
+    )
+
+    outcome = invoke(
+        worker.script_binding(),
+        {
+            "language": "python",
+            "code": "import json; print(json.dumps({'answer': 42}))",
+            "environment": {"EP_E2E_USE_CREDENTIAL": "1"},
+        },
+        context,
+    )
+
+    assert outcome.status_code == 0
+    result = outcome.result
+    assert result is not None
+    assert result["stdout_json"] == {"answer": 42}
+
+
+def _sha256(document: dict[str, str]) -> str:
+    import hashlib
+
+    return hashlib.sha256(canonical_json_bytes(document)).hexdigest()

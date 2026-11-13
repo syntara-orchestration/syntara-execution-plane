@@ -100,7 +100,7 @@ def _monitor(
         cluster_store,  # type: ignore[arg-type]
         ep_settings,
         probe=probe,  # type: ignore[arg-type]
-        credential_resolver=resolver,  # type: ignore[arg-type]
+        cluster_credential_resolver=resolver,  # type: ignore[arg-type]
         interval=0.01,
     )
     return monitor, target_store, cluster_store
@@ -144,7 +144,7 @@ async def test_monitor_resolves_the_cluster_reference_before_probing() -> None:
         settings(),
         probe=probe,  # type: ignore[arg-type]
         interval=0.01,
-        credential_resolver=resolver,  # type: ignore[arg-type]
+        cluster_credential_resolver=resolver,  # type: ignore[arg-type]
     )
 
     await monitor.scan()

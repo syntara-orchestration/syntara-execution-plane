@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Callable
 
+    from syntara_plugin.runtime.container import CredentialResolver
+
     from execution_plane_client.commands.work import WorkloadInvocation
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -302,6 +304,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
     on_resource: Callable[[str, str | None, str, str | None], None],
     runtime_context: dict[str, object] | None = None,
     on_execute_submitted: Callable[[], None] | None = None,
+    credential_handler: CredentialResolver,
     node_selectors: list[str] | None = None,
     tolerations: list[str] | None = None,
     allowed_egress_cidrs: list[str] | None = None,
@@ -509,6 +512,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                                 startup=min(2, max(0.1, grpc_deadline - time.monotonic())),
                                 grace=grace,
                                 on_execute_submitted=mark_submitted,
+                                credential_handler=credential_handler,
                             )
                             on_result(frame)
                             return frame

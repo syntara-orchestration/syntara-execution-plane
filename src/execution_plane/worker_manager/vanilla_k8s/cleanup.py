@@ -15,7 +15,7 @@ from execution_plane_client.models.execution_target import BackendType, Kubernet
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
-    from execution_plane.credential_resolution.resolver import CredentialResolver
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.work_item import WorkItem
@@ -99,7 +99,7 @@ async def cleanup_requested_work_item_resources(
     work_store: WorkStore,
     target_store: ExecutionTargetStore,
     cluster_store: ClusterStore,
-    resolver: CredentialResolver,
+    resolver: ClusterCredentialResolver,
 ) -> None:
     """Retry backend cleanup without inferring an execution outcome from resource absence."""
     after_id = None

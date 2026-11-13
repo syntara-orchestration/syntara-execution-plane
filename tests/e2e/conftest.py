@@ -158,6 +158,25 @@ class AoClient:
             pytest.fail(f"unexpected activities payload: {body!r}")
         return [item for item in resources if isinstance(item, dict)]
 
+    def list_credential_types(self) -> list[dict[str, Any]]:
+        body = self._json(self._client.get(f"{self.api}/credential_types", headers=self._headers()))
+        resources = body.get("resources") if isinstance(body, dict) else None
+        if not isinstance(resources, list):
+            pytest.fail(f"unexpected credential-type payload: {body!r}")
+        return [item for item in resources if isinstance(item, dict)]
+
+    def create_credential(self, body: dict[str, Any]) -> dict[str, Any]:
+        created = self._json(
+            self._client.post(
+                f"{self.api}/credentials",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json=body,
+            )
+        )
+        if not isinstance(created, dict) or not created.get("id"):
+            pytest.fail(f"failed to create credential: {created!r}")
+        return created
+
 
 class EpClient:
     """Talk to a live Execution Plane API with an AO-signed service JWT."""

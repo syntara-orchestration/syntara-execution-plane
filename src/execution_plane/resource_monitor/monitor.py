@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.execution_target.execution_target_store import ExecutionTargetNotFoundError
 from execution_plane.resource_monitor.probes import DispatchingTargetProbe, ProbeResult
 from execution_plane_client.models.execution_target import TargetStatus
@@ -16,6 +16,7 @@ from execution_plane_client.models.execution_target import TargetStatus
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
     from execution_plane.config.settings import Settings
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
@@ -36,14 +37,14 @@ class ResourceMonitor:
         settings: Settings,
         *,
         probe: TargetProbe | None = None,
-        credential_resolver: CredentialResolver | None = None,
+        cluster_credential_resolver: ClusterCredentialResolver,
         interval: float | None = None,
     ) -> None:
         """Create a monitor using Cluster and ExecutionTarget stores and EP settings."""
         self._target_queries = target_queries
         self._cluster_credentials = cluster_credentials
         self._probe = probe or DispatchingTargetProbe(timeout_seconds=settings.resource_monitor_probe_timeout_seconds)
-        self._credential_resolver = credential_resolver or CredentialResolver(settings)
+        self._cluster_credential_resolver = cluster_credential_resolver
         self._interval = settings.resource_monitor_interval_seconds if interval is None else interval
         self._failure_threshold = settings.resource_monitor_failure_threshold
         self._success_threshold = settings.resource_monitor_success_threshold
@@ -88,7 +89,7 @@ class ResourceMonitor:
             result = ProbeResult(healthy=False, message="Cluster credential could not be resolved")
         else:
             try:
-                credential = await self._credential_resolver.resolve(
+                credential = await self._cluster_credential_resolver.resolve(
                     cluster.credential_ref,
                     client_id=cluster.source_client_id,
                 )

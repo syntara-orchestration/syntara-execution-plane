@@ -18,14 +18,16 @@ from syntara_plugin.runtime import (
     ContainerRemoteError,
     ContainerResult,
 )
-from syntara_plugin.runtime.container import ANY_STEP_REVISION
-
-from execution_plane.credential_resolution.sdk_resolver import CredentialResolver
+from syntara_plugin.runtime.container import (
+    ANY_STEP_REVISION,
+    CredentialResolver,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import grpc
+    from syntara_plugin.runtime.container import CredentialResolver
 
     from execution_plane_client.commands.work import WorkloadInvocation
 
@@ -125,6 +127,7 @@ def invoke(  # noqa: C901
     startup: float = 120,
     grace: int = 30,
     on_execute_submitted: Callable[[], None] | None = None,
+    credential_handler: CredentialResolver,
 ) -> dict[str, Any]:
     """Negotiate the SDK service, execute once, and consume its entire stream."""
     request = ContainerInvocation(
@@ -158,7 +161,7 @@ def invoke(  # noqa: C901
         for event in client.stream(
             request,
             timeout_seconds=invocation.timeout_seconds,
-            credential_handler=CredentialResolver(invocation.credential_bindings),
+            credential_handler=credential_handler,
         ):
             if result is not None:
                 message = "Workload returned events after its terminal result"
