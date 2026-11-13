@@ -1,4 +1,4 @@
-"""Finish explicitly requested WorkItem deletion after a controller loses its job."""
+"""Clean backend resources for deletion requests and abandoned cancellations."""
 
 from __future__ import annotations
 
@@ -95,15 +95,15 @@ def delete_work_item_resources(  # noqa: C901, PLR0911 - verify each resource bo
         return True
 
 
-async def cleanup_requested_work_item_deletions(
+async def cleanup_requested_work_item_resources(
     work_store: WorkStore,
     target_store: ExecutionTargetStore,
     cluster_store: ClusterStore,
     resolver: CredentialResolver,
 ) -> None:
-    """Retry resource cleanup for existing WorkItems with explicit deletion intent."""
+    """Retry backend cleanup without inferring an execution outcome from resource absence."""
     after_id = None
-    while items := await work_store.deletions_awaiting_cleanup(after_id=after_id):
+    while items := await work_store.work_awaiting_requested_cleanup(after_id=after_id):
         for item in items:
             try:
                 if item.execution_target_id is None or item.backend_resource_name is None:
@@ -128,7 +128,7 @@ async def cleanup_requested_work_item_deletions(
                         claim_owner_id=None,
                         claim_generation=item.claim_generation,
                     )
-            except Exception as exc:  # noqa: BLE001 - retain intent and continue other explicit deletions
+            except Exception as exc:  # noqa: BLE001 - retain intent and continue other explicit requests
                 logger.warning(
                     "Requested WorkItem resource cleanup will retry",
                     work_item_id=item.id,

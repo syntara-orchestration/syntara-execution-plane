@@ -938,8 +938,8 @@ async def test_request_cancel_requests_termination_after_running() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_cancel_is_noop_for_terminal_work() -> None:
-    """Terminal work cannot be cancelled again."""
+async def test_request_cancel_records_intent_without_rewriting_terminal_work() -> None:
+    """A new request records the client fact without changing the terminal outcome."""
     item = _work_item(status=WorkItemStatus.CANCELLED, result={"cancelled": True})
     store = _store()
     session = _Session()
@@ -950,6 +950,7 @@ async def test_request_cancel_is_noop_for_terminal_work() -> None:
 
     assert result is item
     assert item.status is WorkItemStatus.CANCELLED
+    assert item.cancellation_requested is True
     assert session.added == []
     assert session.commits == 1
     await store.close()
@@ -1068,12 +1069,23 @@ async def test_requeue_pre_execute_failure_returns_dispatched_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_requeue_pre_execute_failure_never_requeues_running_work() -> None:
+@pytest.mark.parametrize(
+    "status",
+    [
+        WorkItemStatus.RUNNING,
+        WorkItemStatus.COMPLETED,
+        WorkItemStatus.FAILED,
+        WorkItemStatus.CANCELLED,
+        WorkItemStatus.RECONCILIATION_REQUIRED,
+    ],
+)
+async def test_requeue_pre_execute_failure_preserves_non_dispatched_outcomes(status: WorkItemStatus) -> None:
     """A failure observed after RUNNING cannot launch a duplicate execution."""
     owner_id = uuid.uuid4()
     target_id = uuid.uuid4()
     item = _work_item(
-        status=WorkItemStatus.RUNNING,
+        status=status,
+        cancellation_requested=True,
         claim_owner_id=owner_id,
         claim_generation=1,
         execution_target_id=target_id,
@@ -1091,7 +1103,7 @@ async def test_requeue_pre_execute_failure_never_requeues_running_work() -> None
     )
 
     assert result is item
-    assert item.status is WorkItemStatus.RUNNING
+    assert item.status is status
     assert item.execution_target_id == target_id
     assert item.claim_owner_id == owner_id
     assert session.commits == 0

@@ -111,7 +111,7 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
             claim_owner_id=claim_owner_id,
             claim_generation=claim_generation,
         )
-        logger.warning("Worker dispatch will retry", work_item_id=wi_id, error=str(exc))
+        logger.warning("Worker dispatch encountered a pre-execution failure", work_item_id=wi_id, error=str(exc))
     except WorkItemPayloadError as exc:
         await work_progress.set_result(
             item.id,

@@ -91,7 +91,7 @@ async def test_running_deletion_retains_work_until_resource_cleanup_is_confirmed
     )
     await store.reconcile_control_requests()
     assert await store.get(item_id, client_id=owner) is not None
-    assert item_id in [item.id for item in await store.deletions_awaiting_cleanup()]
+    assert item_id in [item.id for item in await store.work_awaiting_requested_cleanup()]
     await store.update_backend_resource(
         item_id,
         resource_name="owned-job",
@@ -155,3 +155,125 @@ async def test_cancellation_intent_preserves_lifecycle_and_claim_timestamp(contr
     assert item.deletion_requested is False
     assert item.status is status
     assert item.claimed_at == claimed_at
+
+
+@pytest.mark.parametrize("status", list(WorkItemStatus))
+@pytest.mark.parametrize("operation", ["cancel", "delete"])
+async def test_request_records_intent_unconditionally_and_changes_no_outcome(controls, status, operation):
+    store, sessions, owner = controls
+    item_id = uuid4()
+    now = datetime.now(UTC)
+    async with sessions.begin() as session:
+        session.add(
+            WorkItem(
+                id=item_id,
+                client_id=owner,
+                status=status,
+                created_at=now,
+                claimed_at=now,
+                completed_at=now,
+                result={"existing": "outcome"},
+            )
+        )
+    before = (await store.get(item_id, client_id=owner)).model_dump()
+    for _ in range(2):
+        if operation == "cancel":
+            await store.request_cancel(item_id, client_id=owner)
+        else:
+            await store.request_delete(item_id, client_id=owner)
+        after = (await store.get(item_id, client_id=owner)).model_dump()
+        assert after == {**before, "cancellation_requested": True, "deletion_requested": operation == "delete"}
+
+
+@pytest.mark.parametrize("dispatch_first", [False, True])
+async def test_queued_cancellation_fences_dispatch_but_never_cancels_allocated_work(controls, dispatch_first):
+    from execution_plane.store_errors import StaleClaimError
+
+    store, sessions, owner = controls
+    item_id, claim_owner = uuid4(), uuid4()
+    async with sessions.begin() as session:
+        session.add(
+            WorkItem(
+                id=item_id,
+                client_id=owner,
+                status=WorkItemStatus.CLAIMED,
+                created_at=datetime.now(UTC),
+                claim_owner_id=claim_owner,
+                claim_generation=1,
+            )
+        )
+    if dispatch_first:
+        assert await store.mark_dispatched(item_id, claim_owner_id=claim_owner, claim_generation=1)
+    await store.request_cancel(item_id, client_id=owner)
+    await store.reconcile_control_requests()
+    item = await store.get(item_id, client_id=owner)
+    if dispatch_first:
+        assert item.status is WorkItemStatus.DISPATCHED
+        assert item.result is None
+        assert item.completion_notification_state is None
+        assert item.claim_owner_id == claim_owner
+    else:
+        assert item.status is WorkItemStatus.CANCELLED
+        assert item.result == {"cancelled": True, "execution_started": False}
+        with pytest.raises(StaleClaimError):
+            await store.mark_dispatched(item_id, claim_owner_id=claim_owner, claim_generation=1)
+
+
+async def test_unconfirmed_pre_execute_cleanup_retains_uncertainty_and_cancel_intent(controls):
+    store, sessions, owner = controls
+    item_id, claim_owner = uuid4(), uuid4()
+    async with sessions.begin() as session:
+        session.add(
+            WorkItem(
+                id=item_id,
+                client_id=owner,
+                status=WorkItemStatus.DISPATCHED,
+                created_at=datetime.now(UTC),
+                claim_owner_id=claim_owner,
+                claim_generation=1,
+                backend_resource_name="owned-job",
+                resource_cleanup_status="failed",
+            )
+        )
+    await store.request_cancel(item_id, client_id=owner)
+    await store.requeue_pre_execute_failure(item_id, claim_owner_id=claim_owner, claim_generation=1)
+    item = await store.get(item_id, client_id=owner)
+    assert item.status is WorkItemStatus.RECONCILIATION_REQUIRED
+    assert item.cancellation_requested is True
+    assert item.deletion_requested is False
+    assert item_id in [row.id for row in await store.work_awaiting_requested_cleanup()]
+    await store.update_backend_resource(
+        item_id,
+        resource_name="owned-job",
+        resource_uid=None,
+        cleanup_status="complete",
+        claim_owner_id=None,
+        claim_generation=1,
+    )
+    await store.reconcile_control_requests()
+    after = await store.get(item_id, client_id=owner)
+    assert after.status is WorkItemStatus.RECONCILIATION_REQUIRED
+    assert after.result == item.result
+    assert item_id not in [row.id for row in await store.work_awaiting_requested_cleanup()]
+
+
+async def test_queued_state_with_unconfirmed_resources_is_not_declared_cancelled(controls):
+    store, sessions, owner = controls
+    item_id = uuid4()
+    async with sessions.begin() as session:
+        session.add(
+            WorkItem(
+                id=item_id,
+                client_id=owner,
+                status=WorkItemStatus.PENDING,
+                created_at=datetime.now(UTC),
+                backend_resource_name="unconfirmed-job",
+                resource_cleanup_status="failed",
+            )
+        )
+    await store.request_cancel(item_id, client_id=owner)
+    await store.reconcile_control_requests()
+    item = await store.get(item_id, client_id=owner)
+    assert item.status is WorkItemStatus.PENDING
+    assert item.result is None
+    assert item.completion_notification_state is None
