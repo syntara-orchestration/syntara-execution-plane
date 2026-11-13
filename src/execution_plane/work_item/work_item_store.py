@@ -179,7 +179,8 @@ class WorkStore(StoreBase):
                     item = result.scalars().first()
                     if item is None:
                         return None
-                    if self._complete_unstarted_cancellation(item):
+                    if item.cancellation_requested:
+                        self._mark_cancelled(item, execution_started=False)
                         await session.commit()
                         continue
                     if item.status is WorkItemStatus.PENDING:
@@ -269,7 +270,15 @@ class WorkStore(StoreBase):
                 if item is None:
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
                 self._validate_claim(item, claim_owner_id, claim_generation)
-                if self._complete_unstarted_cancellation(item):
+                if (
+                    item.cancellation_requested
+                    and item.status in {WorkItemStatus.PENDING, WorkItemStatus.CLAIMED}
+                    and (
+                        item.resource_cleanup_status == "complete"
+                        or (item.backend_resource_name is None and item.resource_cleanup_status == "not_required")
+                    )
+                ):
+                    self._mark_cancelled(item, execution_started=False)
                     await session.commit()
                     return False
                 if item.cancellation_requested or item.status in {
@@ -566,14 +575,7 @@ class WorkStore(StoreBase):
                     item.completed_at = now
                     self._initialize_completion_notification_fields(item, now)
                 elif item.cancellation_requested:
-                    now = datetime.now(UTC)
-                    result = {"cancelled": True, "execution_started": False}
-                    item.result = result
-                    item.status = WorkItemStatus.CANCELLED
-                    item.completed_at = now
-                    item.claimed_at = None
-                    item.claim_owner_id = None
-                    self._initialize_completion_notification_fields(item, now)
+                    self._mark_cancelled(item, execution_started=False)
                 else:
                     item.status = WorkItemStatus.PENDING
                     item.execution_target_id = None
@@ -585,22 +587,19 @@ class WorkStore(StoreBase):
                 await session.rollback()
                 raise
 
-    def _complete_unstarted_cancellation(self, item: WorkItem) -> bool:
-        """Under the dispatch row lock, record cancellation only if work cannot have started."""
-        if not item.cancellation_requested or item.status not in {WorkItemStatus.PENDING, WorkItemStatus.CLAIMED}:
-            return False
-        if item.resource_cleanup_status != "complete" and (
-            item.backend_resource_name is not None or item.resource_cleanup_status != "not_required"
-        ):
-            return False
+    def _mark_cancelled(self, item: WorkItem, *, execution_started: bool) -> None:
+        """Set the cancelled outcome, clear the claim, and initialize completion delivery.
+
+        The caller holds the row lock and has established that cancellation is
+        safe to record. Eligibility checks and transaction commit belong to it.
+        """
         now = datetime.now(UTC)
         item.status = WorkItemStatus.CANCELLED
-        item.result = {"cancelled": True, "execution_started": False}
+        item.result = {"cancelled": True, "execution_started": execution_started}
         item.completed_at = now
         item.claimed_at = None
         item.claim_owner_id = None
         self._initialize_completion_notification_fields(item, now)
-        return True
 
     @staticmethod
     def _initialize_completion_notification_fields(item: WorkItem, now: datetime) -> None:
