@@ -433,7 +433,24 @@ class WorkStore(StoreBase):
                 await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
 
     async def reconcile_control_requests(self, *, limit: int = 100) -> None:
-        """Cancel work fenced before dispatch, then purge confirmed-clean deletions."""
+        """Apply two database-only batches, each in its own transaction.
+
+        First, lock cancellation-requested PENDING/CLAIMED rows whose resources
+        are confirmed cleaned up, or which have no recorded allocation and need
+        no cleanup. Set status to CANCELLED, replace result with
+        {"cancelled": True, "execution_started": False}, set completed_at, and
+        clear claimed_at and claim_owner_id. Initialize completion delivery if
+        not already initialized and deletion was not requested. The row lock
+        serializes this transition with mark_dispatched, preventing a late start.
+
+        Second, delete deletion-requested rows with a terminal or
+        RECONCILIATION_REQUIRED status, no claim owner, and cleanup status
+        complete/not_required. Rows cancelled in the first batch may qualify.
+
+        Each batch processes at most limit rows and skips locked rows. Intent
+        flags are unchanged. This method does not contact Kubernetes or cancel
+        dispatched/running work; the backend must establish those outcomes.
+        """
         async with self._session_context() as session:
             async with session.begin():
                 result = await session.execute(
