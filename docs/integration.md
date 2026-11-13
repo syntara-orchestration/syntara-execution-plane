@@ -101,15 +101,8 @@ target directly, promote a replacement first. See
 [cluster and target services](cluster-and-target-services.md) for lifecycle rules.
 
 Unknown work cancellation returns 404. No cancellation command is retained for
-work that has not arrived. Cancellation persists intent on the WorkItem and
-notifies the worker before returning; lifecycle transitions and resource cleanup
-run asynchronously. Observe resource state or completion commands for the outcome.
-
-`work.delete` requires the `work.delete` scope. Its receipt acknowledges persisted
-intent, not completed deletion. Active work is cancelled in the background and
-the row is retained until resource cleanup is confirmed. Missing or foreign-owned
-IDs are accepted as no-ops, so retries are safe without revealing ownership.
-Deletion suppresses new completion deliveries for that work.
+work that has not arrived. Cancellation sets `cancellation_requested` and is
+processed asynchronously; observe resource state or completion commands for the outcome.
 
 ## Resource queries
 

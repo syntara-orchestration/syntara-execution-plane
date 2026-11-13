@@ -103,8 +103,3 @@ GET /v1/work-items?status[in]=pending,failed&claimed_at[isnull]=true&limit=20
 ## OpenAPI spec
 
 The read endpoints described here and the command ingestion endpoint (`POST /v1/commands`) share a single spec file committed at [`openapi.yaml`](../openapi.yaml) — there is no separate spec for reads vs. commands. The spec is generated automatically by FastAPI from route decorators and Pydantic type annotations.
-
-`cancellation_requested` and `deletion_requested` describe persisted intent, independently
-of lifecycle status. Deletion always implies cancellation intent. Neither flag
-confirms completion: running work retains its lifecycle status until its outcome
-is known, and deletion retains the record until resource cleanup is confirmed.
