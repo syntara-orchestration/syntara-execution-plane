@@ -60,9 +60,13 @@ Script environment variables are ordinary inputs. Optional `credential_bindings`
 map `credential_recipe_id` to an AO `credential_ref` UUID. EP accepts up to 16
 bindings with distinct recipe IDs and keeps them outside `inputs` and
 `runtime_context`. The SDK stream receives a credential handler configured with
-these bindings. The handler rejects unbound recipes as `missing` and bound
-recipes as `unavailable`; it does not resolve or deliver workload credentials.
-Cluster API authentication uses a separate resolver for the Cluster credential.
+these bindings. The handler rejects unbound recipes as `missing`, checks the
+request against the active invocation and attempt, and resolves approved recipes
+by sending `credential.resolve.workload` to AO with the work item as its parent
+command. It discards late responses after cancellation or deadline expiry,
+bounds concurrent reads, maps callback failures to safe `unavailable` errors,
+and neither caches nor persists credential documents. Cluster API
+authentication uses a separate resolver for the Cluster credential.
 
 ## Execution and outcomes
 

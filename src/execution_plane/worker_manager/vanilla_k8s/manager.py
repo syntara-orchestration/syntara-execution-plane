@@ -21,7 +21,8 @@ import structlog
 from pydantic import ValidationError
 from syntara_plugin.runtime import ContainerResult
 
-from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.credential_resolution.errors import CredentialResolutionError
+from execution_plane.credential_resolution.sdk_resolver import SDKCredentialResolver
 from execution_plane.worker_manager.base import (
     ExecutionStartPersistenceError,
     ExecutionStartRejectedError,
@@ -35,8 +36,12 @@ from execution_plane_client.models.work_item import WorkItemStatus
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from syntara_plugin.runtime.container import CredentialResolver
+
     from execution_plane.cluster.cluster_store import ClusterStore
     from execution_plane.config.settings import Settings
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+    from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
@@ -62,6 +67,7 @@ class _DispatchContext:
     target_config: dict[str, Any]
     cancelled: threading.Event
     execution_start: Callable[[], None]
+    credential_handler: CredentialResolver
 
 
 class RetryableDispatchError(Exception):
@@ -118,14 +124,17 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         cluster_credentials: ClusterStore,
         work_progress: WorkStore,
         settings: Settings,
-        credential_resolver: CredentialResolver | None = None,
+        *,
+        cluster_credential_resolver: ClusterCredentialResolver,
+        workload_credential_resolver: WorkloadCredentialResolver,
     ) -> None:
         """Bind this backend to EP-owned stores and cold-start settings."""
         super().__init__(work_progress)
         self._target_credentials = target_credentials
         self._cluster_credentials = cluster_credentials
         self._settings = settings
-        self._credential_resolver = credential_resolver or CredentialResolver(settings)
+        self._cluster_credential_resolver = cluster_credential_resolver
+        self._workload_credential_resolver = workload_credential_resolver
 
     async def _dispatch(self, work_item: WorkItem) -> dict[str, Any]:
         """Allocate the worker, stream its result, and persist the WorkItem outcome.
@@ -168,6 +177,16 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
 
         identity = str(work_item.id)
         attempt_id = f"{identity}-{work_item.claim_generation}"
+        credential_handler = SDKCredentialResolver(
+            command.invocation.credential_bindings,
+            self._workload_credential_resolver,
+            loop=asyncio.get_running_loop(),
+            parent_command_id=work_item.id,
+            attempt_id=attempt_id,
+            invocation_id=attempt_id,
+            workflow_run_id=command.invocation.workflow_run_id,
+            step_revision_id=command.invocation.step_revision_id,
+        )
         return _DispatchContext(
             image=command.image,
             invocation=command.invocation,
@@ -177,6 +196,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             target_config=self._k8s_target(target, cluster, credential),
             cancelled=threading.Event(),
             execution_start=self.execution_start_callback(work_item),
+            credential_handler=credential_handler,
         )
 
     async def _run_transport(
@@ -233,6 +253,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 on_result=on_result,
                 on_resource=on_resource,
                 on_execute_submitted=partial(self._mark_execute_submitted, context),
+                credential_handler=context.credential_handler,
                 node_selectors=context.target_config["node_selectors"],
                 tolerations=context.target_config["tolerations"],
                 allowed_egress_cidrs=self._settings.workload_allowed_egress_cidrs,
@@ -394,7 +415,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             message = "Assigned cluster has no credential-resolution client"
             raise RetryableDispatchError(message)
         try:
-            return await self._credential_resolver.resolve(
+            return await self._cluster_credential_resolver.resolve(
                 cluster.credential_ref,
                 client_id=cluster.source_client_id,
             )

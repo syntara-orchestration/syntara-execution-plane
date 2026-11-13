@@ -12,15 +12,19 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from execution_plane import worker as worker_module
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.config.settings import get_settings
+from execution_plane.credential_resolution.client import CredentialResolutionClient
+from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
 from execution_plane.models.cluster import Cluster, ClusterStatus
-from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
-from execution_plane.models.work_item import WorkItem, WorkItemStatus
+from execution_plane.models.execution_target import ExecutionTarget
+from execution_plane.models.work_item import WorkItem
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.worker_manager.vanilla_k8s import manager as manager_module
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
-from execution_plane_client.models.execution_target import KubernetesPlacement
+from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement, TargetStatus
+from execution_plane_client.models.work_item import WorkItemStatus
 
 pytestmark = pytest.mark.integration
 
@@ -89,17 +93,25 @@ async def _process(engine, item_id) -> WorkItem:
     target_store = ExecutionTargetStore.from_engine(engine)
     cluster_store = ClusterStore.from_engine(engine)
     settings = get_settings()
-    registry = WorkerManagerRegistry()
-    registry.register(
-        BackendType.KUBERNETES,
-        VanillaK8sWorkerManager(target_store, cluster_store, store, settings),
-    )
-    sessions = async_sessionmaker(engine, expire_on_commit=False)
-    async with sessions() as session:
-        item = await session.get(WorkItem, item_id)
-    await worker_module._process_item(item, store, target_store, registry, settings)
-    async with sessions() as session:
-        return await session.get(WorkItem, item_id)
+    async with CredentialResolutionClient(settings) as credential_client:
+        registry = WorkerManagerRegistry()
+        registry.register(
+            BackendType.KUBERNETES,
+            VanillaK8sWorkerManager(
+                target_store,
+                cluster_store,
+                store,
+                settings,
+                cluster_credential_resolver=ClusterCredentialResolver(settings, credential_client),
+                workload_credential_resolver=WorkloadCredentialResolver(settings, credential_client),
+            ),
+        )
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as session:
+            item = await session.get(WorkItem, item_id)
+        await worker_module._process_item(item, store, target_store, registry, settings)
+        async with sessions() as session:
+            return await session.get(WorkItem, item_id)
 
 
 async def test_missing_payload_fields_fail_the_work_item(engine, monkeypatch):

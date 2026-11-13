@@ -27,21 +27,22 @@ from execution_plane.config.settings import Settings, get_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
-from execution_plane.models.execution_target import BackendType
-from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
-from execution_plane_client.models.execution_target import KubernetesPlacement
+from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
+from execution_plane_client.models.work_item import WorkItemStatus
 from tools.work_item_client import build_payload, default_node_image
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
-    from execution_plane.credential_resolution.resolver import CredentialResolver
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+    from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
+    from execution_plane.models.work_item import WorkItem
 
 _NODE_IMAGE = default_node_image()
 _WORKLOAD_WAIT_SECONDS = 5
@@ -165,7 +166,8 @@ async def _work_service(
     cluster_store: ClusterStore,
     target_store: ExecutionTargetStore,
     settings: Settings,
-    credential_resolver: CredentialResolver,
+    cluster_credential_resolver: ClusterCredentialResolver,
+    workload_credential_resolver: WorkloadCredentialResolver,
 ) -> AsyncIterator[_WorkFixture]:
     worker_managers = WorkerManagerRegistry()
     placement_resolver = build_placement_resolver(cluster_store, target_store, worker_managers)
@@ -176,7 +178,8 @@ async def _work_service(
             cluster_store,
             work_item_store,
             settings,
-            credential_resolver=credential_resolver,
+            cluster_credential_resolver=cluster_credential_resolver,
+            workload_credential_resolver=workload_credential_resolver,
         )
         worker_managers.register(BackendType.KUBERNETES, workload_manager)
         yield _WorkFixture(work_item_store, work_scheduler, worker_managers)
@@ -317,7 +320,8 @@ async def _assert_job_cleaned_up(
 @pytest.mark.asyncio
 async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
     ep_cluster: Cluster,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """Submit a script work item and assert it completes through a single dispatch cycle.
 
@@ -339,6 +343,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             dispatched = await _dispatch_item(
                 work,
@@ -366,7 +371,8 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
 @pytest.mark.asyncio
 async def test_work_item_dispatch_teardown_does_not_wait_out_the_grace_period(
     ep_cluster: Cluster,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """Assert the node exits on SIGTERM instead of surviving to the grace SIGKILL.
 
@@ -396,6 +402,7 @@ async def test_work_item_dispatch_teardown_does_not_wait_out_the_grace_period(
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             dispatched = await _dispatch_item(
                 work,
@@ -432,7 +439,8 @@ async def test_work_item_dispatch_teardown_does_not_wait_out_the_grace_period(
 async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_pod_spec(
     ep_cluster: Cluster,
     kubernetes_batch_api: BatchV1Api,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """AAP-97337: configured node selectors must reach the dispatched PodSpec."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
@@ -465,6 +473,7 @@ async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_po
                 target_store,
                 settings,
                 integration_credential_resolver,
+                integration_workload_credential_resolver,
             ) as work:
                 dispatched = await _dispatch_item(
                     work,
@@ -532,7 +541,8 @@ async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_po
 async def test_work_item_cancel_reaches_cancelled(
     ep_cluster: Cluster,
     kubernetes_batch_api: BatchV1Api,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """AAP-95962: cancel a running script work item and confirm it reaches CANCELLED."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
@@ -553,6 +563,7 @@ async def test_work_item_cancel_reaches_cancelled(
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             dispatched = await _dispatch_item(
                 work,
@@ -621,7 +632,8 @@ _PARALLEL_SLEEP_SECONDS = 4
 @pytest.mark.asyncio
 async def test_multiple_work_items_dispatch_concurrently(
     ep_cluster: Cluster,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """Two sleep workloads dispatched concurrently must complete faster than sequential would allow.
 
@@ -643,6 +655,7 @@ async def test_multiple_work_items_dispatch_concurrently(
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             payload = build_payload(
                 language="bash",
@@ -680,7 +693,8 @@ async def test_multiple_work_items_dispatch_concurrently(
 async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelled(
     ep_cluster: Cluster,
     kubernetes_batch_api: BatchV1Api,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cancel after external dispatch but before Execute reaches CANCELLED safely."""
@@ -720,6 +734,7 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             dispatched = await _dispatch_item(
                 work,

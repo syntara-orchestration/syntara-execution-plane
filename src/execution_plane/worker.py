@@ -13,7 +13,9 @@ from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.completion_notifier.notifier import CompletionNotifier
 from execution_plane.config.database import to_asyncpg_url
 from execution_plane.config.settings import get_settings
-from execution_plane.credential_resolution.resolver import CredentialResolver
+from execution_plane.credential_resolution.client import CredentialResolutionClient
+from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
 from execution_plane.database.engine import create_pooled_engine
 from execution_plane.database.ssl import ssl_connect_args_from_env
 from execution_plane.drain_monitor import DrainMonitor
@@ -278,7 +280,9 @@ async def run_worker(database_url: str) -> None:
         work_item_store = await resources.enter_async_context(WorkStore.from_engine(engine))
         cluster_store = await resources.enter_async_context(ClusterStore.from_engine(engine))
         target_store = await resources.enter_async_context(ExecutionTargetStore.from_engine(engine))
-        credential_resolver = await resources.enter_async_context(CredentialResolver(settings))
+        credential_client = await resources.enter_async_context(CredentialResolutionClient(settings))
+        cluster_credential_resolver = ClusterCredentialResolver(settings, credential_client)
+        workload_credential_resolver = WorkloadCredentialResolver(settings, credential_client)
         event_delivery = CompletionNotifier(settings)
         resources.push_async_callback(event_delivery.close)
         worker_managers = WorkerManagerRegistry()
@@ -289,7 +293,8 @@ async def run_worker(database_url: str) -> None:
             cluster_store,
             work_item_store,
             settings,
-            credential_resolver=credential_resolver,
+            cluster_credential_resolver=cluster_credential_resolver,
+            workload_credential_resolver=workload_credential_resolver,
         )
         worker_managers.register(BackendType.KUBERNETES, workload_manager)
         drain_monitor = DrainMonitor(target_store, cluster_store, work_item_store)
@@ -297,7 +302,7 @@ async def run_worker(database_url: str) -> None:
             target_store,
             cluster_store,
             settings,
-            credential_resolver=credential_resolver,
+            cluster_credential_resolver=cluster_credential_resolver,
         )
         logger.debug(
             "ExecutionTarget reconciler constructed",
@@ -329,7 +334,7 @@ async def run_worker(database_url: str) -> None:
                     target_store,
                     cluster_store,
                     work_item_store,
-                    credential_resolver,
+                    cluster_credential_resolver,
                 ),
                 name="ep-k8s-policy-reconciler",
             )

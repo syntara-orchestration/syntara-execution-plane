@@ -18,7 +18,7 @@ from execution_plane.commands.targets import (
     TargetRegisterCommandHandler,
     TargetUpdateCommandHandler,
 )
-from execution_plane.credential_resolution.resolver import CredentialResolutionError
+from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     ExecutionTargetStore,
@@ -345,7 +345,8 @@ async def test_target_health_resolves_cluster_credential_and_probes_target(
     store = _FakeStore(target=target)
     probe_result = ProbeResult(healthy=True)
     resolver = _ScopedCredentialResolver()
-    monkeypatch.setattr(targets_module, "CredentialResolver", lambda _settings: resolver)
+    monkeypatch.setattr(targets_module, "CredentialResolutionClient", lambda _settings: resolver)
+    monkeypatch.setattr(targets_module, "ClusterCredentialResolver", lambda _settings, _client: resolver)
     monkeypatch.setattr(targets_module, "DispatchingTargetProbe", lambda **_kwargs: _FakeProbe(probe_result))
     handler = TargetHealthCommandHandler()
 
@@ -377,7 +378,8 @@ async def test_target_health_reports_resolution_failure(
     store = _FakeStore(target=target)
 
     resolver = _ScopedCredentialResolver(error=CredentialResolutionError())
-    monkeypatch.setattr(targets_module, "CredentialResolver", lambda _settings: resolver)
+    monkeypatch.setattr(targets_module, "CredentialResolutionClient", lambda _settings: resolver)
+    monkeypatch.setattr(targets_module, "ClusterCredentialResolver", lambda _settings, _client: resolver)
     monkeypatch.setattr(
         targets_module,
         "DispatchingTargetProbe",

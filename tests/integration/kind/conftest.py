@@ -36,7 +36,9 @@ from kubernetes import client as kubernetes_client
 from kubernetes.client import BatchV1Api
 
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+from execution_plane.credential_resolution.errors import CredentialResolutionError
+from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
 from execution_plane.models.cluster import ClusterStatus
 
 if TYPE_CHECKING:
@@ -63,7 +65,7 @@ _CREDENTIAL_REF = (
 )
 
 
-class StaticCredentialResolver(CredentialResolver):
+class StaticCredentialResolver(ClusterCredentialResolver):
     """Return the live test-cluster token without requiring an AO callback."""
 
     def __init__(self, credential: str) -> None:
@@ -79,6 +81,21 @@ class StaticCredentialResolver(CredentialResolver):
 
     async def close(self) -> None:
         """Keep the test credential in memory only."""
+
+
+class StaticWorkloadCredentialResolver(WorkloadCredentialResolver):
+    """Reject workload credential requests in integration dispatch tests."""
+
+    def __init__(self) -> None:
+        """Keep the AO-free workload resolver independent of callback wiring."""
+
+    async def resolve_workload(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> dict[str, str]:
+        message = "Integration workload credential resolution is not configured"
+        raise CredentialResolutionError(message)
 
 
 def ep_cluster_configured() -> bool:
@@ -134,6 +151,12 @@ async def kubernetes_batch_api(ep_cluster: Cluster) -> AsyncGenerator[BatchV1Api
 
 
 @pytest.fixture(scope="session")
-def integration_credential_resolver(ep_cluster: Cluster) -> CredentialResolver:
+def integration_credential_resolver(ep_cluster: Cluster) -> ClusterCredentialResolver:
     """Provide an AO-free resolver for the live integration Cluster."""
     return StaticCredentialResolver(os.environ[_EP_IT_TOKEN])
+
+
+@pytest.fixture(scope="session")
+def integration_workload_credential_resolver() -> WorkloadCredentialResolver:
+    """Provide an AO-free workload resolver for integration dispatch tests."""
+    return StaticWorkloadCredentialResolver()

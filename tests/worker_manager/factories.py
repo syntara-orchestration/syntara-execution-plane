@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from execution_plane.credential_resolution.client import CredentialResolutionClient
+from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
 from execution_plane.models.cluster import Cluster, ClusterStatus
 from execution_plane.models.execution_target import BackendType, ExecutionTarget, TargetStatus
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
@@ -13,8 +17,9 @@ from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerM
 from execution_plane_client.models.execution_target import KubernetesPlacement
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from execution_plane.config.settings import Settings
-    from execution_plane.credential_resolution.resolver import CredentialResolver
 
 
 class TargetStoreStub:
@@ -113,9 +118,22 @@ def vanilla_k8s_resources() -> tuple[Cluster, ExecutionTarget, WorkItem]:
     return cluster, target, work_item
 
 
+@asynccontextmanager
+async def vanilla_k8s_credential_resolvers(
+    settings: Settings,
+) -> AsyncIterator[tuple[ClusterCredentialResolver, WorkloadCredentialResolver]]:
+    """Create non-owning command resolvers around one closed callback client."""
+    async with CredentialResolutionClient(settings) as credential_client:
+        yield (
+            ClusterCredentialResolver(settings, credential_client),
+            WorkloadCredentialResolver(settings, credential_client),
+        )
+
+
 def vanilla_k8s_manager(
     settings: Settings,
-    resolver: CredentialResolver,
+    cluster_resolver: ClusterCredentialResolver,
+    workload_resolver: WorkloadCredentialResolver,
     resources: tuple[Cluster, ExecutionTarget, WorkItem],
     work_store: WorkStoreStub | None = None,
 ) -> VanillaK8sWorkerManager:
@@ -125,5 +143,6 @@ def vanilla_k8s_manager(
         ClusterStoreStub(cluster),
         work_store or WorkStoreStub(),
         settings,
-        credential_resolver=resolver,
+        cluster_credential_resolver=cluster_resolver,
+        workload_credential_resolver=workload_resolver,
     )
