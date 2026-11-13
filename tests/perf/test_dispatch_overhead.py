@@ -26,22 +26,13 @@ Run with:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import statistics
-import time
-import uuid
-from contextlib import suppress
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import delete, func, select
-from sqlmodel import col
 
-from execution_plane.models.work_item import WorkItem, WorkItemStatus
-from execution_plane.work_item.work_item_store import WorkStore
-from tools.work_item_client import DEFAULT_JWT_CLIENT_ID, build_payload, submit_work_item
+from .runner import percentile, run_sequential_batch, trend_ratio
 
 if TYPE_CHECKING:
     from kubernetes.client import CoreV1Api
@@ -60,265 +51,11 @@ TARGET_TREND_RATIO_MAX = 1.10
 # The perf plan also asks for 50-run batches: set EP_PERF_BATCH_SIZE=50.
 BATCH_SIZE = int(os.environ.get("EP_PERF_BATCH_SIZE", "100"))
 
-# COMPLETED is persisted before Job/pod teardown. Sequential runs mean only the
-# last item can still be cleaning up. Default node grace is 30 s; transport waits
-# ~grace+10 for Job delete confirmation — settle past that before deleting rows.
-CLEANUP_SETTLE_SECONDS = 40
-
-# Must match the JWT client_id used by submit_work_item / ep_service_token so
-# WorkStore.get() finds rows the API persisted. Same source as the token mint.
-CLIENT_ID = os.environ.get("EP_AO_CLIENT_ID", DEFAULT_JWT_CLIENT_ID)
-
-PERF_TIMINGS_PREFIX = "EP_PERF_TIMINGS="
+WORKFLOW_PREFIX = "perf-dispatch-overhead"
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def percentile(data: list[float], p: int) -> float:
-    """Return the p-th percentile of *data* via ``statistics.quantiles``."""
-    return statistics.quantiles(data, n=100, method="inclusive")[p - 1]
-
-
-class TrendResult(NamedTuple):
-    """Latency trend across a batch: ratio and the two half-means (ms)."""
-
-    ratio: float
-    first_mean: float
-    second_mean: float
-
-
-def trend_ratio(data: list[float]) -> TrendResult:
-    """Return second-half-mean / first-half-mean and the two half-means.
-
-    A ratio of 1.0 means no drift; > 1.0 means overhead grew over the batch.
-    """
-    midpoint = len(data) // 2
-    first_mean = statistics.mean(data[:midpoint]) if data[:midpoint] else 0.0
-    second_mean = statistics.mean(data[midpoint:]) if data[midpoint:] else 0.0
-    ratio = second_mean / first_mean if first_mean > 0 else 1.0
-    return TrendResult(ratio=ratio, first_mean=first_mean, second_mean=second_mean)
-
-
-def post_pod_ms_from_result(result: dict[str, Any] | None) -> float:
-    """Parse ``post_pod_overhead_ms`` from the worker's stderr timings marker."""
-    if result is None:
-        msg = "work item result is missing; cannot read post-pod timings"
-        raise ValueError(msg)
-    output = result.get("output") or {}
-    stderr = output.get("stderr") or ""
-    for line in stderr.splitlines():
-        if line.startswith(PERF_TIMINGS_PREFIX):
-            payload = json.loads(line.removeprefix(PERF_TIMINGS_PREFIX))
-            return float(payload["post_pod_overhead_ms"])
-    msg = f"EP_PERF_TIMINGS marker not found in work item result stderr: {stderr!r}"
-    raise ValueError(msg)
-
-
-async def poll_job_created(work_store: WorkStore, work_id: uuid.UUID) -> tuple[float, float]:
-    """Poll until ``backend_resource_uid`` is set; return pre-pod ms and uid-seen mono time.
-
-    Pre-pod uses database clocks only: ``created_at`` (API accept) to ``now()`` on
-    the same poll query. Excludes the submit HTTP round-trip from the runner.
-
-    poll_interval=25 ms — remaining bias is claim latency + one poll gap.
-    timeout=30 s is generous; Job creation normally completes in < 1 s.
-    """
-    poll_interval = 0.025  # 25 ms
-    timeout = 30
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        async with work_store._session_context() as session:
-            row = await session.execute(
-                select(WorkItem.created_at, WorkItem.backend_resource_uid, func.now()).where(
-                    col(WorkItem.id) == work_id,
-                    col(WorkItem.client_id) == CLIENT_ID,
-                )
-            )
-            result = row.first()
-        if result is not None:
-            created_at, uid, db_now = result
-            if uid is not None and created_at is not None:
-                t_detected = time.monotonic()
-                return (db_now - created_at).total_seconds() * 1000.0, t_detected
-        await asyncio.sleep(poll_interval)
-    msg = f"Kubernetes Job not created within {timeout} s for {work_id}"
-    raise TimeoutError(msg)
-
-
-async def poll_pod_running(
-    k8s_core: CoreV1Api,
-    work_id: uuid.UUID,
-    namespace: str,
-    *,
-    t_uid_detected: float,
-) -> float:
-    """Poll until the worker pod is Running; return approximate scheduling ms.
-
-    Start is runner mono when the DB poll first saw ``backend_resource_uid``, not
-    true Job-created time — so this includes poll overshoot and is informational
-    only (not asserted for test 1.1 / 1.2). Overlaps the COMPLETED wait so it does
-    not extend the critical path.
-    """
-    label_selector = f"execution-plane.syntara.io/work-item={work_id}"
-    poll_interval = 0.100
-    timeout = 120
-    deadline = time.monotonic() + timeout
-
-    while time.monotonic() < deadline:
-        pods = await asyncio.to_thread(
-            k8s_core.list_namespaced_pod,
-            namespace,
-            label_selector=label_selector,
-            _request_timeout=15,
-        )
-        for pod in pods.items:
-            if pod.status and pod.status.phase == "Running":
-                return (time.monotonic() - t_uid_detected) * 1000.0
-        await asyncio.sleep(poll_interval)
-    msg = f"Worker pod for work item {work_id} did not enter Running phase within {timeout} s"
-    raise TimeoutError(msg)
-
-
-async def wait_completed(
-    work_store: WorkStore,
-    work_id: uuid.UUID,
-    *,
-    scenario: str,
-    run_index: int,
-    timeout_seconds: float = 120,
-) -> WorkItem:
-    """Poll until the work item is COMPLETED with created_at/completed_at set."""
-    terminal = {
-        WorkItemStatus.COMPLETED,
-        WorkItemStatus.FAILED,
-        WorkItemStatus.CANCELLED,
-        WorkItemStatus.RECONCILIATION_REQUIRED,
-    }
-    item = None
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        item = await work_store.get(work_id, client_id=CLIENT_ID)
-        if item is not None and item.status in terminal:
-            break
-        await asyncio.sleep(0.025)
-
-    if item is None or item.status not in terminal:
-        msg = (
-            f"[{scenario}] run {run_index}: work item {work_id} did not reach "
-            f"a terminal state within {timeout_seconds} s"
-        )
-        raise TimeoutError(msg)
-
-    assert item.status is WorkItemStatus.COMPLETED, (
-        f"[{scenario}] run {run_index}: expected COMPLETED, got {item.status}; result={item.result}"
-    )
-    if item.created_at is None or item.completed_at is None:
-        msg = f"[{scenario}] run {run_index}: missing created_at/completed_at on {work_id}"
-        raise RuntimeError(msg)
-    return item
-
-
-def post_pod_ms_or_stale_image(
-    result: dict[str, Any] | None,
-    *,
-    scenario: str,
-    run_index: int,
-) -> float:
-    """Parse post-pod ms; on the first item, name a stale worker image explicitly."""
-    try:
-        return post_pod_ms_from_result(result)
-    except ValueError as exc:
-        if run_index == 0:
-            msg = (
-                f"[{scenario}] EP_PERF_TIMINGS missing on first work item — "
-                "deployed worker image likely lacks EP_PERF_WORKER_TIMESTAMPS "
-                "support; rebuild/redeploy EP_NODE_IMAGE"
-            )
-            raise AssertionError(msg) from exc
-        raise
-
-
-async def run_sequential_batch(
-    database_url: str,
-    api_url: str,
-    token: str,
-    k8s_core: CoreV1Api,
-    namespace: str,
-    *,
-    batch_size: int,
-    scenario: str,
-) -> tuple[list[float], list[float], list[float], list[float]]:
-    """Submit *batch_size* work items via the deployed EP API one-at-a-time.
-
-    Returns ``(pre_pod_ms, pod_scheduling_ms, post_pod_ms, full_cycle_ms)``:
-
-    1. pre_pod_ms — ``created_at`` → DB ``now()`` when ``backend_resource_uid`` appears
-    2. scheduling_ms — uid first seen → pod Running (approx; informational; concurrent)
-    3. post_pod_ms — pod worker marker (listening → Execute entered)
-    4. full_cycle_ms — ``completed_at - created_at`` from the work-item row
-    """
-    pre_pod_ms: list[float] = []
-    pod_scheduling_ms: list[float] = []
-    post_pod_ms: list[float] = []
-    full_cycle_ms: list[float] = []
-    submitted_ids: list[uuid.UUID] = []
-    run_id = uuid.uuid4()
-
-    async with WorkStore.from_database_url(database_url) as work_store:
-        try:
-            for run_index in range(batch_size):
-                work_id = uuid.uuid4()
-                # Timings are written to stderr; build_payload must keep stderr in
-                # output_config or post_pod_ms_from_result will not see EP_PERF_TIMINGS.
-                payload = build_payload(
-                    language="bash",
-                    code="echo 'Hello, Execution Plane!'",
-                    timeout_seconds=120,
-                    environment={"EP_PERF_WORKER_TIMESTAMPS": "1"},
-                    # EP validates workflow_run_id against ^[A-Za-z0-9._:-]+$ — no "/".
-                    workflow_run_id=f"perf-dispatch-overhead:{run_id}:{run_index}",
-                )
-
-                await asyncio.to_thread(submit_work_item, api_url, token, work_id=work_id, payload=payload)
-                submitted_ids.append(work_id)
-
-                pre_pod_elapsed, t_uid_detected = await poll_job_created(work_store, work_id)
-                pre_pod_ms.append(pre_pod_elapsed)
-
-                # Informational scheduling overlaps COMPLETED wait — wall-clock is
-                # the slower of the two, not their sum.
-                sched_task = asyncio.create_task(
-                    poll_pod_running(k8s_core, work_id, namespace, t_uid_detected=t_uid_detected)
-                )
-                try:
-                    item = await wait_completed(work_store, work_id, scenario=scenario, run_index=run_index)
-                    sched_elapsed = await sched_task
-                except BaseException:
-                    sched_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await sched_task
-                    raise
-
-                pod_scheduling_ms.append(sched_elapsed)
-                post_pod_ms.append(post_pod_ms_or_stale_image(item.result, scenario=scenario, run_index=run_index))
-                full_cycle_ms.append((item.completed_at - item.created_at).total_seconds() * 1000.0)
-        finally:
-            if submitted_ids:
-                await asyncio.sleep(CLEANUP_SETTLE_SECONDS)
-            await _cleanup_submitted_work_items(work_store, submitted_ids)
-
-    return pre_pod_ms, pod_scheduling_ms, post_pod_ms, full_cycle_ms
-
-
-async def _cleanup_submitted_work_items(work_store: WorkStore, work_ids: list[uuid.UUID]) -> None:
-    """Delete work-item rows created by this batch from the shared perf database."""
-    if not work_ids:
-        return
-    async with work_store._session_context() as session:
-        await session.execute(delete(WorkItem).where(col(WorkItem.id).in_(work_ids)))
-        await session.commit()
 
 
 def assert_dispatch_overhead(
@@ -413,7 +150,7 @@ class TestDispatchOverhead:
         perf_ep_namespace: str,
     ) -> None:
         """Test 1.1: p99 pre-pod ≤ 500 ms and test 1.2: p99 post-pod ≤ 300 ms."""
-        pre_pod_ms, pod_scheduling_ms, post_pod_ms, full_cycle_ms = await run_sequential_batch(
+        batch = await run_sequential_batch(
             perf_database_url,
             perf_api_url,
             perf_token,
@@ -421,8 +158,19 @@ class TestDispatchOverhead:
             perf_ep_namespace,
             batch_size=BATCH_SIZE,
             scenario="default",
+            workflow_prefix=WORKFLOW_PREFIX,
+            measure_pre_pod=True,
+            measure_scheduling=True,
+            measure_post_pod=True,
+            measure_pod_lifecycle=False,
         )
-        assert_dispatch_overhead(pre_pod_ms, pod_scheduling_ms, post_pod_ms, full_cycle_ms, scenario="default")
+        assert_dispatch_overhead(
+            batch.pre_pod_ms,
+            batch.pod_scheduling_ms,
+            batch.post_pod_ms,
+            batch.full_cycle_ms,
+            scenario="default",
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.skip(
@@ -442,7 +190,7 @@ class TestDispatchOverhead:
         cluster_load_80pct,
     ) -> None:
         """Test 1.1 / 1.2 under 80 % cluster load — skipped until load fixture exists."""
-        pre_pod_ms, pod_scheduling_ms, post_pod_ms, full_cycle_ms = await run_sequential_batch(
+        batch = await run_sequential_batch(
             perf_database_url,
             perf_api_url,
             perf_token,
@@ -450,5 +198,14 @@ class TestDispatchOverhead:
             perf_ep_namespace,
             batch_size=BATCH_SIZE,
             scenario="loaded",
+            workflow_prefix=WORKFLOW_PREFIX,
+            measure_pre_pod=True,
+            measure_scheduling=True,
+            measure_post_pod=True,
+            measure_pod_lifecycle=False,
         )
+        pre_pod_ms = batch.pre_pod_ms
+        pod_scheduling_ms = batch.pod_scheduling_ms
+        post_pod_ms = batch.post_pod_ms
+        full_cycle_ms = batch.full_cycle_ms
         assert_dispatch_overhead(pre_pod_ms, pod_scheduling_ms, post_pod_ms, full_cycle_ms, scenario="loaded")
