@@ -254,6 +254,8 @@ async def _poll_loop(
                 logger.exception("Error claiming work item, will retry")
             if item is None:
                 break
+            if item.status is WorkItemStatus.CANCELLED:
+                continue
             logger.info("Claimed work item", work_item_id=str(item.id))
             await slots.acquire()
             task_group.create_task(

@@ -306,7 +306,7 @@ async def test_worker_awaits_dispatch_cleanup_before_closing_resources(
 
     class Scheduler:
         async def claim_and_place_work(self) -> SimpleNamespace | None:
-            return SimpleNamespace(id=uuid4())
+            return SimpleNamespace(id=uuid4(), status=WorkItemStatus.CLAIMED)
 
     async def process_item(item, *_args: object) -> None:
         started.set()
@@ -403,12 +403,17 @@ async def test_poll_loop_bounds_claims_and_reuses_slots_without_waiting_for_poll
     peak = 0
 
     class Scheduler:
+        returned_cancelled = False
+
         async def claim_and_place_work(self) -> SimpleNamespace | None:
+            if not self.returned_cancelled:
+                self.returned_cancelled = True
+                return SimpleNamespace(id=-1, status=WorkItemStatus.CANCELLED)
             if len(claims) == 3:
                 return None
             index = len(claims)
             claims.append(index)
-            return SimpleNamespace(id=index)
+            return SimpleNamespace(id=index, status=WorkItemStatus.CLAIMED)
 
     async def process_item(item, *_args: object) -> None:
         nonlocal active, peak

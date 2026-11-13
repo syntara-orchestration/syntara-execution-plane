@@ -1283,21 +1283,20 @@ async def test_check_ready_propagates_database_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reserve_one_finishes_queued_cancellation_and_continues_to_live_work() -> None:
+async def test_reserve_one_returns_one_cancelled_item() -> None:
     cancelled = _work_item(cancellation_requested=True)
-    live = _work_item()
     store = _store()
     session = _Session()
-    session.execute.side_effect = [_ClaimResult(None), _ClaimResult(cancelled), _ClaimResult(live)]
+    session.execute.side_effect = [_ClaimResult(None), _ClaimResult(cancelled)]
     store._session_factory = _SessionFactory(session)
 
-    assert await store.reserve_one() is live
+    assert await store.reserve_one() is cancelled
     assert cancelled.status is WorkItemStatus.CANCELLED
     assert cancelled.result == {"cancelled": True, "execution_started": False}
     assert cancelled.claim_owner_id is None
     assert cancelled.execution_target_id is None
     assert cancelled.completion_notification_state is CompletionNotificationState.PENDING
-    assert live.status is WorkItemStatus.CLAIMED
+    assert session.execute.await_count == 2
     await store.close()
 
 

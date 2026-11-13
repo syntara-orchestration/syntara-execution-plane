@@ -116,7 +116,7 @@ class WorkStore(StoreBase):
             return result.scalar_one()
 
     async def reserve_one(self) -> WorkItem | None:
-        """Finish never-started cancellations while reserving the next runnable item."""
+        """Reserve one item, or mark it cancelled and return it before placement."""
         lease_expiry = datetime.now(UTC) - timedelta(seconds=60)
         async with self._session_context() as session:
             try:
@@ -147,49 +147,48 @@ class WorkStore(StoreBase):
                     self._initialize_completion_notification_fields(uncertain, now)
                 await session.commit()
 
-                while True:
-                    result = await session.execute(
-                        select(WorkItem)
-                        .where(
-                            or_(
-                                col(WorkItem.status) == WorkItemStatus.PENDING,
-                                and_(
-                                    col(WorkItem.status) == WorkItemStatus.CLAIMED,
-                                    col(WorkItem.claimed_at) < lease_expiry,
-                                ),
-                            )
+                result = await session.execute(
+                    select(WorkItem)
+                    .where(
+                        or_(
+                            col(WorkItem.status) == WorkItemStatus.PENDING,
+                            and_(
+                                col(WorkItem.status) == WorkItemStatus.CLAIMED,
+                                col(WorkItem.claimed_at) < lease_expiry,
+                            ),
                         )
-                        .where(
-                            or_(
-                                col(WorkItem.cancellation_requested).is_(False),
-                                col(WorkItem.resource_cleanup_status) == "complete",
-                                and_(
-                                    col(WorkItem.backend_resource_name).is_(None),
-                                    col(WorkItem.resource_cleanup_status) == "not_required",
-                                ),
-                            )
-                        )
-                        .order_by(
-                            case((col(WorkItem.status) == WorkItemStatus.PENDING, 0), else_=1),
-                            col(WorkItem.created_at),
-                        )
-                        .limit(1)
-                        .with_for_update(skip_locked=True)
                     )
-                    item = result.scalars().first()
-                    if item is None:
-                        return None
-                    if item.cancellation_requested:
-                        self._mark_cancelled(item, execution_started=False)
-                        await session.commit()
-                        continue
-                    if item.status is WorkItemStatus.PENDING:
-                        item.status = WorkItemStatus.CLAIMED
-                    item.claimed_at = datetime.now(UTC)
-                    item.claim_owner_id = uuid.uuid4()
-                    item.claim_generation += 1
+                    .where(
+                        or_(
+                            col(WorkItem.cancellation_requested).is_(False),
+                            col(WorkItem.resource_cleanup_status) == "complete",
+                            and_(
+                                col(WorkItem.backend_resource_name).is_(None),
+                                col(WorkItem.resource_cleanup_status) == "not_required",
+                            ),
+                        )
+                    )
+                    .order_by(
+                        case((col(WorkItem.status) == WorkItemStatus.PENDING, 0), else_=1),
+                        col(WorkItem.created_at),
+                    )
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+                item = result.scalars().first()
+                if item is None:
+                    return None
+                if item.cancellation_requested:
+                    self._mark_cancelled(item, execution_started=False)
                     await session.commit()
                     return item
+                if item.status is WorkItemStatus.PENDING:
+                    item.status = WorkItemStatus.CLAIMED
+                item.claimed_at = datetime.now(UTC)
+                item.claim_owner_id = uuid.uuid4()
+                item.claim_generation += 1
+                await session.commit()
+                return item
             except Exception:
                 await session.rollback()
                 raise

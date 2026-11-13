@@ -299,8 +299,10 @@ async def test_normal_claim_path_finishes_cancellation_before_placement(controls
     await store.purge_deleted_work()
     assert (await store.get(cancelled_id, client_id=owner)).status is WorkItemStatus.PENDING
 
+    cancelled_reservation = await store.reserve_one()
+    assert cancelled_reservation.id == cancelled_id
+    assert cancelled_reservation.status is WorkItemStatus.CANCELLED
     claimed = await store.reserve_one()
-
     assert claimed.id == live_id
     cancelled = await store.get(cancelled_id, client_id=owner)
     assert cancelled.status is WorkItemStatus.CANCELLED
