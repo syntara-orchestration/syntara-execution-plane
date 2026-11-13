@@ -14,16 +14,16 @@ commands or provide command-status or command-children endpoints.
 ```json
 {
   "message_id": "00000000-0000-0000-0000-000000000001",
-  "command_id": "00000000-0000-0000-0000-000000000002",
   "source_id": "syntara-orchestration",
   "destination_id": "execution-plane",
   "scope": {"client_id": "syntara-orchestration"},
   "command": {
-    "command_id": "00000000-0000-0000-0000-000000000002",
     "command_type": "work.execute",
-    "command_revision": 1,
+    "command_revision": 2,
     "occurred_at": "2026-10-14T08:00:00Z",
     "payload": {
+      "work_item_id": "00000000-0000-0000-0000-000000000002",
+      "metadata": {"project_id": "caller-project", "workflow_id": "caller-workflow"},
       "image": "registry.example/node:latest",
       "invocation": {
         "workflow_run_id": "workflow-1",
@@ -37,8 +37,8 @@ commands or provide command-status or command-children endpoints.
 }
 ```
 
-The envelope and nested command IDs must match. Work commands use that UUID as
-`WorkItem.id`. HTTP 202 returns `received`, `message_id` and an optional `resource`
+`payload.work_item_id` supplies `WorkItem.id`. The independent `message_id`
+correlates this delivery with its receipt; it does not deduplicate requests. HTTP 202 returns `received`, `message_id` and an optional `resource`
 reference. It confirms application of the domain request, not completion of a
 job, cluster setup or draining.
 
@@ -65,9 +65,10 @@ resource by its stable UUID before deciding whether to submit again.
 Python callers can instantiate a command from `execution_plane_client.commands`
 and call `to_message(source_id=..., destination_id=..., client_id=...)` to build
 the envelope. The command supplies its type and revision. Each call generates a
-new command UUID and timestamp unless explicitly provided, and the message ID
-defaults to the command ID. Retain the message for retries, or pass the original
-`command_id`, `occurred_at` and, if different, `message_id` when rebuilding it.
+new message UUID and timestamp unless explicitly provided. Retain the message
+for retries, or pass the original `message_id` and `occurred_at` when rebuilding
+that delivery. Rebuilt submissions must retain the same `work_item_id` even
+when they use a fresh `message_id`.
 Use `message.model_dump(mode="json")` as the body for the application's HTTP
 client. See the [client README](../src/execution_plane_client/README.md) for an example.
 
@@ -75,14 +76,14 @@ The generated OpenAPI document exposes `MessageEnvelope` and a `Command` schema
 whose `oneOf` lists EP's installed command variants, discriminated by `command_type`.
 Each variant fixes its type and revision and references its typed payload component.
 The outbound `work.execute.completed` command is documented separately under
-`webhooks`, including its required parent work UUID and receipt response.
+`webhooks`, including its required work-item UUID and receipt response.
 
 ## Installed commands
 
-| Type (revision 1) | Payload and effect |
+| Type (revision 1 unless specified) | Payload and effect |
 | --- | --- |
-| `work.execute` | `WorkExecute`: image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
-| `command.cancel` | `target_command_id`: existing work UUID; request cancellation through `WorkStore` |
+| `work.execute` (revision 2) | `WorkExecute`: required `work_item_id`, optional metadata, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
+| `work.cancel` | `work_item_id`: existing work UUID; request cancellation through `WorkStore` |
 | `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_id`, explicitly changed Cluster fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
 | `cluster.delete` | `resource_id`; request draining of a Cluster |
@@ -144,18 +145,19 @@ delivery acknowledgement and the delivery lease. EP's
 Completion Notifier sends a `work.execute.completed` command to Syntara at
 `EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
-The `Completion` payload contains `status`, `result`, an optional `resource`
-reference and optional `error_code`. EP's notifier sets `resource` to
-`{"kind": "work_item", "resource_id": "<work UUID>"}`. Status is `completed`,
-`failed`, `cancelled` or `reconciliation_required`. Syntara's request size limit should
-accommodate the work invocation's output limit.
+The revision-2 `Completion` payload contains required `work_item_id`, `status`,
+`result`, caller `metadata`, and optional `error_code`. Status is `completed`,
+`failed`, `cancelled` or `reconciliation_required`. `occurred_at` is the work's
+completion time. Syntara's request size limit should accommodate the work
+invocation's output limit.
 
-`parent_command_id` identifies the WorkItem, and `occurred_at` is its completion time.
-
-Syntara registers a handler for `CommandCatalog().definition("work.execute.completed", 1)`
+Syntara registers a handler for `CommandCatalog().definition("work.execute.completed", 2)`
 in its `CommandRegistry`. Syntara authenticates EP's client certificate and
-authorizes the command's source, destination and client scope. Its handler uses
-`parent_command_id` to find and complete or fail the originating Temporal activity.
+authorizes the command's source, destination and client scope. Both completion
+and revision-2 `credential.resolve.workload` use `payload.work_item_id` to look
+up the corresponding AO ActivityExecution. Credential resolution also validates
+the activity state, workflow-node credential binding, and persisted project
+ownership; caller metadata never supplies authorization.
 After handling the callback, Syntara returns a successful HTTP status and a
 `TransportReceipt` containing its `message_id`.
 
@@ -165,3 +167,42 @@ EP retries failed requests and invalid receipts with backoff and reclaims expire
 delivery leases.
 
 See [cold-start-node-dispatch.md](cold-start-node-dispatch.md) for execution and recovery.
+
+## Caller metadata
+
+`WorkExecute.metadata` is an optional finite JSON object (default `{}`), bounded
+by the ordinary payload limit. EP retains it with the encrypted work payload,
+exposes it in client-scoped work-item reads, and echoes it on completion. It is
+non-secret descriptive context, immutable after submission: a duplicate work
+request returns 409 rather than overwriting the original context.
+
+AO supplies its project, workflow, and execution IDs as metadata. EP does not
+interpret those keys. Metadata does not select targets, identify work, authorize
+credential access, or alter lifecycle decisions. Target labels and work selectors
+keep their placement role. `invocation.runtime_context` remains workload-visible;
+work-item metadata is never automatically forwarded to plugins. Metadata has no
+filter, index, or update API.
+
+## Coordinated protocol upgrade
+
+Capabilities advertise protocol revision 2. The envelope no longer accepts
+`command_id` or `parent_command_id`. Work execution, completion, and workload
+credential resolution use command revision 2; cancellation is `work.cancel`
+revision 1 with `work_item_id`. Other resource command payload revisions remain
+unchanged. All participants and token scopes must be upgraded together; there
+are no legacy wire aliases. Message IDs remain receipt correlation only.
+
+Deploy AO with the matching released `execution-plane-client` package and EP
+service. Do not deploy the AO changes with the older client distribution. The
+release must update AO's dependency constraint, lockfile, and exported hashed
+requirements to the actual published version.
+
+Existing work rows retain their IDs, results, claims, and notification state.
+Workers recover identity from `WorkItem.id` when validating stored payloads,
+including payloads saved before this protocol revision. Missing metadata reads
+as `{}`. This requires no database schema migration.
+
+Cancellation and deletion use work-item identity, not command ancestry. The
+separate cancellation/deletion implementation can retain `WorkDelete.work_item_id`
+and adopt `WorkCancel` without changing cancellation intent, cleanup fencing,
+callback suppression, reconciliation, or purge semantics.

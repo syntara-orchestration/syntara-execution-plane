@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -14,27 +14,24 @@ from execution_plane.commands.targets import TargetHealthCommandHandler, TargetU
 from execution_plane.execution_target.execution_target_store import TargetNotEligibleForDefaultError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane_client.commands.base import CommandPayload
-from execution_plane_client.commands.control import CancelCommand
+from execution_plane_client.commands.control import WorkCancel
 from execution_plane_client.commands.results import TargetHealthCommandResult
 from execution_plane_client.commands.work import WorkExecute
 from execution_plane_client.handlers import HandlingResult
 from execution_plane_client.protocol import ResourceReference
 
 
-def command_message(kind="command.cancel", payload=None):
-    command_id = uuid4()
+def command_message(kind="work.cancel", payload=None):
     return {
         "message_id": str(uuid4()),
-        "command_id": str(command_id),
         "source_id": "ao",
         "destination_id": "execution-plane",
         "scope": {"client_id": "ao"},
         "command": {
-            "command_id": str(command_id),
             "command_type": kind,
-            "command_revision": 1,
+            "command_revision": 2 if kind == "work.execute" else 1,
             "occurred_at": datetime.now(UTC).isoformat(),
-            "payload": payload if payload is not None else {"target_command_id": str(uuid4())},
+            "payload": payload if payload is not None else {"work_item_id": str(uuid4())},
         },
     }
 
@@ -56,11 +53,12 @@ def test_only_command_mutations_and_resource_queries_are_exposed():
         assert f"/v1/{resource}/{{resource_id}}" in paths
 
 
-@pytest.mark.parametrize("command_type", [WorkExecute, CancelCommand])
+@pytest.mark.parametrize("command_type", [WorkExecute, WorkCancel])
 async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, command_type):
     work_id = uuid4()
     payload = (
         {
+            "work_item_id": str(work_id),
             "image": "node:test",
             "invocation": {
                 "workflow_run_id": "workflow-1",
@@ -70,11 +68,9 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
             },
         }
         if command_type is WorkExecute
-        else {"target_command_id": str(work_id)}
+        else {"work_item_id": str(work_id)}
     )
     message = command_message(command_type.command_type, payload)
-    if command_type is WorkExecute:
-        work_id = UUID(message["command_id"])
     store = AsyncMock(spec=WorkStore)
     store.dispatch.return_value = store.request_cancel.return_value = SimpleNamespace(id=work_id)
     monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: store)
@@ -111,7 +107,7 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
 )
 async def test_ingress_rejects_before_domain_effects(change, status):
     app = create_app()
-    scopes = frozenset() if change == "permission" else frozenset({"command.cancel"})
+    scopes = frozenset() if change == "permission" else frozenset({"work.cancel"})
     app.dependency_overrides[get_service_identity] = lambda: ServiceIdentity(client_id="ao", scopes=scopes)
     message = command_message()
     if change == "owner":
@@ -218,5 +214,5 @@ async def test_capabilities_do_not_advertise_uninstalled_completion_handlers():
     commands = response.json()["commands"]
     assert len(commands) == 9
     assert "cluster.provision" not in commands
-    assert commands["command.cancel"] == [1]
+    assert commands["work.cancel"] == [1]
     assert "work.execute.completed" not in commands

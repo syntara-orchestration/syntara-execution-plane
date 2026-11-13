@@ -23,10 +23,11 @@ class CredentialResolve(CommandPayload):
 
 
 class CredentialResolveWorkload(CommandPayload):
-    """Resolve one credential reference for the work item named by its parent command."""
+    """Resolve one credential reference for the identified work item."""
 
     command_type: ClassVar[str] = "credential.resolve.workload"
-    requires_parent: ClassVar[bool] = True
+    command_revision: ClassVar[int] = 2
+    work_item_id: UUID = Field(description="Identifier of the work item requesting the credential.")
     attempt_id: Identifier = Field(description="Execution attempt that owns the workload invocation.")
     credential_ref: UUID = Field(
         repr=False,

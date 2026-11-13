@@ -21,7 +21,7 @@ def _payload(**invocation_overrides: object) -> dict[str, Any]:
         "timeout_seconds": 60,
     }
     invocation.update(invocation_overrides)
-    return {"invocation": invocation, "image": "registry.example/node:latest"}
+    return {"work_item_id": str(uuid4()), "invocation": invocation, "image": "registry.example/node:latest"}
 
 
 def test_work_item_submit_accepts_a_versioned_node_invocation() -> None:
@@ -123,6 +123,7 @@ def test_work_item_read_excludes_completion_delivery_internals() -> None:
     read = WorkItemRead.model_validate(item)
 
     assert set(read.model_dump()) == {
+        "metadata",
         "id",
         "status",
         "result",

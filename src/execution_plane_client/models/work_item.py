@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from execution_plane_client.models.shared import _SORT_PATTERN, EPListParams, ResourcesResponse
+from execution_plane_client.models.work_metadata import WorkMetadata
 
 # Work item query metadata - single source of truth for EP and client
 WORK_ITEM_FILTERABLE_FIELDS = [
@@ -48,7 +49,8 @@ class WorkItemRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID = Field(description="Work item unique identifier")
+    id: UUID = Field(description="Caller-assigned work item identifier")
+    metadata: WorkMetadata = Field(default_factory=dict)
     status: WorkItemStatus = Field(description="Work item lifecycle status")
     result: dict[str, Any] | None = Field(default=None, description="Work execution result payload")
     result_omitted: bool = Field(default=False, description="Whether result was omitted due to size")

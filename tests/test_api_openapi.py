@@ -50,6 +50,7 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
         (
             "work.execute",
             {
+                "work_item_id": str(uuid4()),
                 "image": "node:test",
                 "invocation": {
                     "workflow_run_id": "workflow-1",
@@ -59,7 +60,7 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
                 },
             },
         ),
-        ("command.cancel", {"target_command_id": str(uuid4())}),
+        ("work.cancel", {"work_item_id": str(uuid4())}),
         ("cluster.update", {"resource_id": str(uuid4()), "name": "renamed"}),
         ("cluster.delete", {"resource_id": str(uuid4())}),
         (
@@ -83,24 +84,23 @@ def test_command_schema_validates_the_other_installed_commands(kind, payload) ->
     _validator(create_app().openapi()).validate(command_message(kind, payload))
 
 
-def test_completion_schema_requires_parent_and_is_not_accepted_as_an_inbound_command() -> None:
+def test_completion_schema_requires_work_item_id_and_is_not_accepted_as_an_inbound_command() -> None:
     document = create_app().openapi()
     message = (
-        Completion(status=CompletionStatus.COMPLETED, result={"stdout": "done"})
+        Completion(work_item_id=uuid4(), status=CompletionStatus.COMPLETED, result={"stdout": "done"})
         .to_message(
             source_id="ep",
             destination_id="ao",
             client_id="ao",
-            parent_command_id=uuid4(),
         )
         .model_dump(mode="json")
     )
     validator = _validator(document, "CompletionMessageEnvelope")
     validator.validate(message)
     assert not _validator(document).is_valid(message)
-    del message["command"]["parent_command_id"]
+    del message["command"]["payload"]["work_item_id"]
     assert not validator.is_valid(message)
-    message["command"]["parent_command_id"] = None
+    message["command"]["payload"]["work_item_id"] = None
     assert not validator.is_valid(message)
 
 
@@ -121,7 +121,7 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     command = components["Command"]
     expected_payloads = {
         "work.execute": "WorkExecute",
-        "command.cancel": "CancelCommand",
+        "work.cancel": "WorkCancel",
         "cluster.register": "ClusterRegister",
         "cluster.update": "ClusterUpdate",
         "cluster.delete": "ClusterDelete",
@@ -138,7 +138,7 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     for kind, payload_name in expected_payloads.items():
         variant = components[mapping[kind].rsplit("/", 1)[-1]]
         assert variant["properties"]["command_type"]["const"] == kind
-        assert variant["properties"]["command_revision"]["const"] == 1
+        assert variant["properties"]["command_revision"]["const"] == (2 if kind == "work.execute" else 1)
         assert variant["properties"]["payload"] == {"$ref": f"#/components/schemas/{payload_name}"}
         assert {"command_type", "command_revision", "payload"} <= set(variant["required"])
         assert components[payload_name]["additionalProperties"] is False
@@ -182,8 +182,7 @@ def test_completion_is_documented_as_an_outbound_command() -> None:
     command = components[command_ref.rsplit("/", 1)[-1]]
     assert command["properties"]["command_type"]["const"] == "work.execute.completed"
     assert command["properties"]["payload"] == {"$ref": "#/components/schemas/Completion"}
-    assert command["properties"]["parent_command_id"]["type"] == "string"
-    assert "parent_command_id" in command["required"]
+    assert "work_item_id" in components["Completion"]["required"]
     receipt = webhook["responses"]["2XX"]["content"]["application/json"]["schema"]
     assert receipt == {"$ref": "#/components/schemas/TransportReceipt"}
 
@@ -218,7 +217,7 @@ def test_credential_resolution_payloads_are_documented_without_ingress_handlers(
     document = create_app().openapi()
     components = document["components"]["schemas"]
     cluster_command = components["CredentialResolveCommandV1"]
-    command = components["CredentialResolveWorkloadCommandV1"]
+    command = components["CredentialResolveWorkloadCommandV2"]
     payload = command["properties"]["payload"]
     command_mapping = components["Command"]["discriminator"]["mapping"]
 
@@ -227,9 +226,9 @@ def test_credential_resolution_payloads_are_documented_without_ingress_handlers(
     assert set(components["CredentialResolve"]["required"]) == {"credential_ref"}
     assert command["properties"]["command_type"] == {"const": "credential.resolve.workload", "type": "string"}
     assert {"command_type", "command_revision", "payload"} <= set(command["required"])
-    assert "parent_command_id" in command["required"]
     assert payload["$ref"] == "#/components/schemas/CredentialResolveWorkload"
     assert set(components["CredentialResolveWorkload"]["required"]) == {
+        "work_item_id",
         "attempt_id",
         "credential_ref",
         "credential_recipe_id",

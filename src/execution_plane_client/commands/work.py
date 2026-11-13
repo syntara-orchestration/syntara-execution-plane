@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import Field, StrictStr, field_validator
 
 from execution_plane_client.commands.base import CommandPayload
+from execution_plane_client.models.work_metadata import WorkMetadata
 from execution_plane_client.protocol import PositiveInt, WireModel, validate_json
 
 StepIdentity = Annotated[StrictStr, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._:-]+$")]
@@ -82,6 +83,15 @@ class WorkExecute(CommandPayload):
     """Schedule one workload implementing the SDK container service."""
 
     command_type: ClassVar[str] = "work.execute"
+    command_revision: ClassVar[int] = 2
+
+    work_item_id: UUID = Field(
+        description=(
+            "Caller-assigned identifier of the Execution Plane work item. Reuse this identifier "
+            "when retrying submission and when addressing the same work."
+        )
+    )
+    metadata: WorkMetadata = Field(default_factory=dict, repr=False)
 
     image: Annotated[
         StrictStr,

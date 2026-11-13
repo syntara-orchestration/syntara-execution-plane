@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 from uuid import UUID  # noqa: TC003 - Pydantic resolves these model fields at runtime.
 
-from pydantic import BaseModel, Field, StrictInt, StrictStr, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictInt, StrictStr, ValidationInfo, field_validator
 
 MAX_PAYLOAD_BYTES = 512 * 1024
 Identifier = Annotated[StrictStr, Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_.:@/-]+$")]
@@ -56,8 +56,6 @@ class CommandScope(WireModel):
 class Command(WireModel):
     """One versioned operation; participants persist only its domain effects."""
 
-    command_id: UUID
-    parent_command_id: UUID | None = None
     command_type: Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")]
     command_revision: PositiveInt
     payload: dict[str, object] = Field(repr=False)
@@ -79,34 +77,19 @@ class Command(WireModel):
             raise ValueError(message)
         return value.astimezone(UTC)
 
-    @model_validator(mode="after")
-    def check_parent(self) -> Self:
-        """Reject a command naming itself as its parent."""
-        if self.parent_command_id == self.command_id:
-            message = "A command cannot be its own parent"
-            raise ValueError(message)
-        return self
-
 
 class MessageEnvelope(WireModel):
     """Participant identity around one logical command."""
 
-    message_id: UUID
+    message_id: UUID = Field(
+        description="Delivery message identifier echoed in its receipt; not a work identifier or deduplication key."
+    )
     message_type: Literal["command.submit"] = "command.submit"
-    command_id: UUID
     sequence: Sequence = 0
     source_id: Identifier
     destination_id: Identifier
     scope: CommandScope
     command: Command
-
-    @model_validator(mode="after")
-    def check_identity(self) -> Self:
-        """Keep the envelope and nested command identity consistent."""
-        if self.command_id != self.command.command_id:
-            message = "Envelope command_id must match command.command_id"
-            raise ValueError(message)
-        return self
 
 
 class ResourceReference(WireModel):
@@ -121,5 +104,5 @@ class ResourceReference(WireModel):
 class CapabilitiesRead(WireModel):
     """Command revisions installed by this participant."""
 
-    protocol_revision: Literal[1] = 1
+    protocol_revision: Literal[2] = 2
     commands: dict[str, list[int]]
