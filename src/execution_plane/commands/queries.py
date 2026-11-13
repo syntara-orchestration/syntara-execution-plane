@@ -57,9 +57,10 @@ class EPResourceQueries:
         if parsed_cursor and parsed_cursor["direction"] == "prev":
             items.reverse()
         return [
-            WorkItemRead.model_validate(item).model_copy(
-                update={"result": None, "result_omitted": item.result is not None}
-            )
+            WorkItemRead.model_validate(
+                item.model_dump(include=set(WorkItemRead.model_fields) - {"metadata"})
+                | {"metadata": (item.payload or {}).get("metadata", {})}
+            ).model_copy(update={"result": None, "result_omitted": item.result is not None})
             for item in items
         ]
 
@@ -72,7 +73,10 @@ class EPResourceQueries:
         item = await self._work.get(resource_id, client_id=self._client_id)
         if item is None:
             raise ResourceNotFoundError
-        read = WorkItemRead.model_validate(item)
+        read = WorkItemRead.model_validate(
+            item.model_dump(include=set(WorkItemRead.model_fields) - {"metadata"})
+            | {"metadata": (item.payload or {}).get("metadata", {})}
+        )
         if item.result is not None:
             read.result_size_bytes = len(json.dumps(item.result, ensure_ascii=False).encode())
         return read

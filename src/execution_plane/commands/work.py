@@ -15,13 +15,14 @@ class WorkCommandHandler:
     async def handle(
         self, message: MessageEnvelope, payload: CommandPayload, context: EPCommandContext
     ) -> HandlingResult:
-        """Use the caller's command UUID as the work item's stable UUID."""
+        """Persist the caller's explicit work-item identity."""
+        del message
         if not isinstance(payload, WorkExecute):
             raise UnsupportedCommand
         work_store = WorkStore.from_engine(context.engine)
         item = await work_store.dispatch(
             client_id=context.client_id,
-            item_id=message.command_id,
+            item_id=payload.work_item_id,
             payload=payload.model_dump(mode="json"),
         )
         return HandlingResult(ResourceReference(kind="work_item", resource_id=item.id))

@@ -563,9 +563,9 @@ components:
       properties:
         protocol_revision:
           type: integer
-          const: 1
+          const: 2
           title: Protocol Revision
-          default: 1
+          default: 2
         commands:
           additionalProperties:
             items:
@@ -700,9 +700,9 @@ components:
           default: credential.resolve.workload
         command_revision:
           type: integer
-          const: 1
+          const: 2
           title: Command Revision
-          default: 1
+          default: 2
         credential:
           additionalProperties:
             type: string
@@ -1045,7 +1045,14 @@ components:
           type: string
           format: uuid
           title: Id
-          description: Work item unique identifier
+          description: Caller-assigned work item identifier
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: Non-secret caller-owned context retained with this work item.
+            Execution Plane does not interpret these values for identity, authorization,
+            placement, or lifecycle decisions.
         status:
           $ref: '#/components/schemas/WorkItemStatus'
           description: Work item lifecycle status
@@ -1119,18 +1126,6 @@ components:
       - cancelled
       title: WorkItemStatus
       description: Lifecycle states of a dispatched work item.
-    CancelCommand:
-      properties:
-        target_command_id:
-          type: string
-          format: uuid
-          title: Target Command Id
-      additionalProperties: false
-      type: object
-      required:
-      - target_command_id
-      title: CancelCommand
-      description: Cancel an existing work command, whose UUID is its work-item UUID.
     ClusterDelete:
       properties:
         resource_id:
@@ -1246,12 +1241,12 @@ components:
       - $ref: '#/components/schemas/ClusterDeleteCommandV1'
       - $ref: '#/components/schemas/ClusterRegisterCommandV1'
       - $ref: '#/components/schemas/ClusterUpdateCommandV1'
-      - $ref: '#/components/schemas/CancelCommandV1'
       - $ref: '#/components/schemas/TargetDeleteCommandV1'
       - $ref: '#/components/schemas/TargetHealthCommandV1'
       - $ref: '#/components/schemas/TargetRegisterCommandV1'
       - $ref: '#/components/schemas/TargetUpdateCommandV1'
-      - $ref: '#/components/schemas/WorkExecuteCommandV1'
+      - $ref: '#/components/schemas/WorkCancelCommandV1'
+      - $ref: '#/components/schemas/WorkExecuteCommandV2'
       title: Command
       description: A command type and revision paired with its corresponding payload.
       discriminator:
@@ -1260,12 +1255,12 @@ components:
           cluster.delete: '#/components/schemas/ClusterDeleteCommandV1'
           cluster.register: '#/components/schemas/ClusterRegisterCommandV1'
           cluster.update: '#/components/schemas/ClusterUpdateCommandV1'
-          command.cancel: '#/components/schemas/CancelCommandV1'
           execution_target.delete: '#/components/schemas/TargetDeleteCommandV1'
           execution_target.health: '#/components/schemas/TargetHealthCommandV1'
           execution_target.register: '#/components/schemas/TargetRegisterCommandV1'
           execution_target.update: '#/components/schemas/TargetUpdateCommandV1'
-          work.execute: '#/components/schemas/WorkExecuteCommandV1'
+          work.cancel: '#/components/schemas/WorkCancelCommandV1'
+          work.execute: '#/components/schemas/WorkExecuteCommandV2'
     CommandScope:
       properties:
         client_id:
@@ -1283,16 +1278,24 @@ components:
         caller.
     Completion:
       properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+          description: Identifier of the work item whose outcome is reported.
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: Non-secret caller-owned context retained with this work item.
+            Execution Plane does not interpret these values for identity, authorization,
+            placement, or lifecycle decisions.
         status:
           $ref: '#/components/schemas/CompletionStatus'
         result:
           additionalProperties: true
           type: object
           title: Result
-        resource:
-          anyOf:
-          - $ref: '#/components/schemas/ResourceReference'
-          - type: 'null'
         error_code:
           anyOf:
           - type: string
@@ -1301,6 +1304,7 @@ components:
       additionalProperties: false
       type: object
       required:
+      - work_item_id
       - status
       title: Completion
       description: Terminal or uncertain work outcome delivered to the initiating
@@ -1329,6 +1333,11 @@ components:
       description: Resolve an opaque credential reference into a short-lived value.
     CredentialResolveWorkload:
       properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+          description: Identifier of the work item requesting the credential.
         attempt_id:
           type: string
           maxLength: 255
@@ -1365,14 +1374,14 @@ components:
       additionalProperties: false
       type: object
       required:
+      - work_item_id
       - attempt_id
       - credential_ref
       - credential_recipe_id
       - workflow_run_id
       - step_revision_id
       title: CredentialResolveWorkload
-      description: Resolve one credential reference for the work item named by its
-        parent command.
+      description: Resolve one credential reference for the identified work item.
     ClientKubernetesPlacement:
       properties:
         type:
@@ -1408,15 +1417,13 @@ components:
           type: string
           format: uuid
           title: Message Id
+          description: Delivery message identifier echoed in its receipt; not a work
+            identifier or deduplication key.
         message_type:
           type: string
           const: command.submit
           title: Message Type
           default: command.submit
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
         sequence:
           type: integer
           minimum: 0.0
@@ -1442,7 +1449,6 @@ components:
       type: object
       required:
       - message_id
-      - command_id
       - source_id
       - destination_id
       - scope
@@ -1606,6 +1612,19 @@ components:
       - resource_id
       title: TargetUpdate
       description: Mutable target fields; `is_default=true` promotes this target.
+    WorkCancel:
+      properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+          description: Identifier of the existing work item to cancel.
+      additionalProperties: false
+      type: object
+      required:
+      - work_item_id
+      title: WorkCancel
+      description: Request cancellation of an existing work item.
     WorkCredentialBinding:
       properties:
         credential_recipe_id:
@@ -1631,6 +1650,20 @@ components:
       description: One Plugin SDK recipe-to-AO credential mapping for a work item.
     WorkExecute:
       properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+          description: Caller-assigned identifier of the Execution Plane work item.
+            Reuse this identifier when retrying submission and when addressing the
+            same work.
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: Non-secret caller-owned context retained with this work item.
+            Execution Plane does not interpret these values for identity, authorization,
+            placement, or lifecycle decisions.
         image:
           type: string
           maxLength: 2048
@@ -1667,6 +1700,7 @@ components:
       additionalProperties: false
       type: object
       required:
+      - work_item_id
       - image
       - invocation
       title: WorkExecute
@@ -1734,16 +1768,6 @@ components:
         claim that arbitrary file paths have been mounted by EP.'
     ClusterDeleteCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: cluster.delete
@@ -1759,7 +1783,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1768,16 +1791,6 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     ClusterRegisterCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: cluster.register
@@ -1793,7 +1806,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1802,16 +1814,6 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     ClusterUpdateCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: cluster.update
@@ -1827,59 +1829,14 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
       title: ClusterUpdateCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    CancelCommandV1:
-      properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
-        command_type:
-          type: string
-          const: command.cancel
-        command_revision:
-          type: integer
-          const: 1
-        payload:
-          $ref: '#/components/schemas/CancelCommand'
-        occurred_at:
-          type: string
-          format: date-time
-          title: Occurred At
-      additionalProperties: false
-      type: object
-      required:
-      - command_id
-      - command_type
-      - command_revision
-      - payload
-      - occurred_at
-      title: CancelCommandV1
-      description: One versioned operation; participants persist only its domain effects.
     TargetDeleteCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.delete
@@ -1895,7 +1852,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1904,16 +1860,6 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     TargetHealthCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.health
@@ -1929,7 +1875,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1938,16 +1883,6 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     TargetRegisterCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.register
@@ -1963,7 +1898,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1972,16 +1906,6 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     TargetUpdateCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.update
@@ -1997,31 +1921,43 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
       title: TargetUpdateCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    WorkExecuteCommandV1:
+    WorkCancelCommandV1:
       properties:
-        command_id:
+        command_type:
           type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
+          const: work.cancel
+        command_revision:
+          type: integer
+          const: 1
+        payload:
+          $ref: '#/components/schemas/WorkCancel'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: WorkCancelCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    WorkExecuteCommandV2:
+      properties:
         command_type:
           type: string
           const: work.execute
         command_revision:
           type: integer
-          const: 1
+          const: 2
         payload:
           $ref: '#/components/schemas/WorkExecute'
         occurred_at:
@@ -2031,28 +1967,20 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
-      title: WorkExecuteCommandV1
+      title: WorkExecuteCommandV2
       description: One versioned operation; participants persist only its domain effects.
-    CompletionCommandV1:
+    CompletionCommandV2:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          type: string
-          format: uuid
         command_type:
           type: string
           const: work.execute.completed
         command_revision:
           type: integer
-          const: 1
+          const: 2
         payload:
           $ref: '#/components/schemas/Completion'
         occurred_at:
@@ -2062,26 +1990,14 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
-      - parent_command_id
-      title: CompletionCommandV1
+      title: CompletionCommandV2
       description: One versioned operation; participants persist only its domain effects.
     CredentialResolveCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: credential.resolve
@@ -2097,28 +2013,20 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
       title: CredentialResolveCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    CredentialResolveWorkloadCommandV1:
+    CredentialResolveWorkloadCommandV2:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          type: string
-          format: uuid
         command_type:
           type: string
           const: credential.resolve.workload
         command_revision:
           type: integer
-          const: 1
+          const: 2
         payload:
           $ref: '#/components/schemas/CredentialResolveWorkload'
         occurred_at:
@@ -2128,13 +2036,11 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
-      - parent_command_id
-      title: CredentialResolveWorkloadCommandV1
+      title: CredentialResolveWorkloadCommandV2
       description: One versioned operation; participants persist only its domain effects.
     CompletionMessageEnvelope:
       properties:
@@ -2142,15 +2048,13 @@ components:
           type: string
           format: uuid
           title: Message Id
+          description: Delivery message identifier echoed in its receipt; not a work
+            identifier or deduplication key.
         message_type:
           type: string
           const: command.submit
           title: Message Type
           default: command.submit
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
         sequence:
           type: integer
           minimum: 0.0
@@ -2171,12 +2075,11 @@ components:
         scope:
           $ref: '#/components/schemas/CommandScope'
         command:
-          $ref: '#/components/schemas/CompletionCommandV1'
+          $ref: '#/components/schemas/CompletionCommandV2'
       additionalProperties: false
       type: object
       required:
       - message_id
-      - command_id
       - source_id
       - destination_id
       - scope

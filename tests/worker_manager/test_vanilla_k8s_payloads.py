@@ -174,6 +174,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
     )
     item = WorkItem(
+        id=uuid4(),
         client_id="ao",
         execution_target_id=uuid4(),
         claim_owner_id=uuid4(),

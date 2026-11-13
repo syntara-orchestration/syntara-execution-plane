@@ -40,7 +40,7 @@ DEFAULT_TOKEN_TTL = timedelta(hours=8)
 DEFAULT_TOKEN_SCOPES = (
     "work-items:read",
     "work.execute",
-    "command.cancel",
+    "work.cancel",
     "execution-targets:read",
     "clusters:read",
     "cluster.register",
@@ -262,12 +262,11 @@ def submit_work_item(
     """POST a work.execute command and return its acknowledgement."""
     client_id = os.environ.get("EP_AO_CLIENT_ID", DEFAULT_JWT_CLIENT_ID)
     body = (
-        WorkExecute.model_validate(payload)
+        WorkExecute.model_validate({**payload, "work_item_id": work_id})
         .to_message(
             source_id=client_id,
             destination_id=os.environ.get("EP_SERVICE_JWT_AUDIENCE", DEFAULT_JWT_AUDIENCE),
             client_id=client_id,
-            command_id=work_id,
         )
         .model_dump(mode="json")
     )

@@ -151,7 +151,7 @@ the certificate material for it.
 | Direction | Command family | Purpose |
 | --- | --- | --- |
 | AO → EP | `work.execute` | Submit one container workload with a stable UUID. |
-| AO → EP | `command.cancel` | Request cooperative cancellation of an existing work item. |
+| AO → EP | `work.cancel` | Request cooperative cancellation of an existing work item. |
 | AO → EP | `cluster.*` | Register, update, or drain a Cluster. |
 | AO → EP | `execution_target.*` | Register, update, delete, or health-check an execution target. |
 | EP → AO | `credential.resolve` | Resolve an opaque cluster or target credential reference. |
@@ -245,7 +245,7 @@ sequenceDiagram
     participant Kube as Kubernetes API
     participant DB as PostgreSQL
 
-    AO->>EP: command.cancel with work UUID
+    AO->>EP: work.cancel with work UUID
     EP->>DB: persist cancel-requested state
     EP->>Workload: gRPC Cancel
     alt Cooperative stop confirmed

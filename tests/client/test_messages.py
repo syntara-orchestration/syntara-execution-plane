@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.commands import clusters, control, targets, work
-from execution_plane_client.errors import ProtocolConflict
 from execution_plane_client.protocol import MessageEnvelope
 
 RESOURCE_ID = "00000000-0000-0000-0000-000000000001"
@@ -28,6 +27,7 @@ CLUSTER = {
             "WorkExecute",
             "work.execute",
             {
+                "work_item_id": RESOURCE_ID,
                 "image": "node:test",
                 "invocation": {
                     "workflow_run_id": "workflow-1",
@@ -41,9 +41,9 @@ CLUSTER = {
             control,
             "Completion",
             "work.execute.completed",
-            {"status": control.CompletionStatus.COMPLETED, "result": {"stdout": "done"}},
+            {"work_item_id": RESOURCE_ID, "status": control.CompletionStatus.COMPLETED, "result": {"stdout": "done"}},
         ),
-        (control, "CancelCommand", "command.cancel", {"target_command_id": RESOURCE_ID}),
+        (control, "WorkCancel", "work.cancel", {"work_item_id": RESOURCE_ID}),
         (clusters, "ClusterRegister", "cluster.register", CLUSTER),
         (
             clusters,
@@ -77,12 +77,10 @@ def test_typed_commands_supply_type_revision_and_consistent_envelope(module, nam
         source_id="ao",
         destination_id="ep",
         client_id="ao",
-        parent_command_id=uuid4(),
     )
     assert message.command.command_type == kind
-    assert message.command.command_revision == 1
-    assert isinstance(message.command_id, UUID)
-    assert message.message_id == message.command_id == message.command.command_id
+    assert message.command.command_revision == command.command_revision
+    assert isinstance(message.message_id, UUID)
     assert before <= message.command.occurred_at <= datetime.now(UTC)
     assert message.source_id == "ao"
     assert message.destination_id == "ep"
@@ -97,31 +95,31 @@ def test_typed_commands_supply_type_revision_and_consistent_envelope(module, nam
 
 
 def test_completion_preserves_explicit_identity_and_time_across_reconstruction():
-    command_id, parent_id = uuid4(), uuid4()
+    message_id, work_item_id = uuid4(), uuid4()
     occurred_at = datetime(2026, 10, 14, 10, tzinfo=timezone(timedelta(hours=1)))
     messages = [
         control.Completion(
+            work_item_id=work_item_id,
             status=control.CompletionStatus.COMPLETED,
             result={"stdout": "x" * (600 * 1024)},
         ).to_message(
             source_id="ep",
             destination_id="ao",
             client_id="ao",
-            command_id=command_id,
-            parent_command_id=parent_id,
+            message_id=message_id,
             occurred_at=occurred_at,
         )
         for _ in range(2)
     ]
     assert messages[0] == messages[1]
-    assert messages[0].message_id == command_id
-    assert messages[0].command.parent_command_id == parent_id
+    assert messages[0].message_id == message_id
+    assert messages[0].command.payload["work_item_id"] == str(work_item_id)
     assert messages[0].command.occurred_at == datetime(2026, 10, 14, 9, tzinfo=UTC)
     assert len(messages[0].command.payload["result"]["stdout"]) == 600 * 1024
 
 
-def test_completion_requires_parent_before_it_can_be_sent():
-    with pytest.raises(ProtocolConflict):
+def test_completion_requires_work_item_identity():
+    with pytest.raises(ValidationError, match="work_item_id"):
         control.Completion(status="failed").to_message(source_id="ep", destination_id="ao", client_id="ao")
 
 
@@ -206,17 +204,15 @@ def test_target_patch_can_change_enabled_state() -> None:
 
 
 def test_message_can_have_an_explicit_transport_identity():
-    message_id, command_id = uuid4(), uuid4()
-    message = control.CancelCommand(target_command_id=uuid4()).to_message(
+    message_id = uuid4()
+    message = control.WorkCancel(work_item_id=uuid4()).to_message(
         source_id="ao",
         destination_id="ep",
         client_id="ao",
-        command_id=command_id,
         message_id=message_id,
         sequence=2,
     )
     assert message.message_id == message_id
-    assert message.command_id == command_id
     assert message.sequence == 2
 
 
@@ -230,6 +226,6 @@ def test_message_can_have_an_explicit_transport_identity():
 )
 def test_message_helper_retains_envelope_validation(metadata):
     with pytest.raises(ValidationError):
-        control.CancelCommand(target_command_id=uuid4()).to_message(
+        control.WorkCancel(work_item_id=uuid4()).to_message(
             **{"source_id": "ao", "destination_id": "ep", "client_id": "ao", **metadata},
         )
