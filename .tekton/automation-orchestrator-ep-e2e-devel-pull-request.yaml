@@ -49,7 +49,7 @@ spec:
     - name: ao-git-url
       value: https://github.com/syntara-orchestration/syntara.git
     - name: ao-revision
-      value: feat/ANSTRAT-1803
+      value: feat/execution-plane-cancel-delete
     - name: ao-operator-git-url
       value: https://github.com/automation-nexus/automation-orchestrator-operator.git
     - name: ao-operator-revision

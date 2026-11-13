@@ -217,3 +217,18 @@ async def test_assigned_candidate_is_returned_without_release():
     assert store.assigned_target_ids == [target.id]
     assert store.released_claims == []
     assert store.results == []
+
+
+async def test_cancelled_reservation_returns_without_placement():
+    item = _reserved_item()
+    item.status = WorkItemStatus.CANCELLED
+    item.claim_owner_id = None
+    store = _WorkStore(item, {})
+    resolver = _PlacementResolver(ReconcileResult([], [], ResolveOutcome.NO_MATCHING_TARGETS))
+    scheduler = WorkScheduler(store, resolver)
+
+    assert await scheduler.claim_and_place_work() is item
+    assert resolver.requirements == []
+    assert store.assigned_target_ids == []
+    assert store.results == []
+    assert store.released_claims == []

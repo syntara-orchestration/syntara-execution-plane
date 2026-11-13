@@ -125,6 +125,8 @@ def test_work_item_read_excludes_completion_delivery_internals() -> None:
         "runtime_context",
         "id",
         "status",
+        "cancellation_requested",
+        "deletion_requested",
         "result",
         "result_omitted",
         "result_size_bytes",
