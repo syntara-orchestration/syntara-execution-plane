@@ -134,7 +134,7 @@ flowchart LR
 
     Requester -- "user session / SSO" --> AO
     AO -- "HTTPS + service JWT<br/>command envelope" --> EP
-    EP -- "HTTPS + deployment-configured mTLS<br/>credential.resolve / work.execute.completed" --> AO
+    EP -- "HTTPS + deployment-configured mTLS<br/>credential.resolve / credential.resolve.workload / work.execute.completed" --> AO
     EP -- "TLS + database credentials<br/>encrypted work payloads" --> DB
     EP -- "HTTPS + bearer token<br/>Job, Pod, NetworkPolicy, port-forward" --> Kube
     EP -- "gRPC over Kubernetes API port-forward<br/>Health / Execute / Cancel" --> Workload
@@ -155,6 +155,7 @@ the certificate material for it.
 | AO → EP | `cluster.*` | Register, update, or drain a Cluster. |
 | AO → EP | `execution_target.*` | Register, update, delete, or health-check an execution target. |
 | EP → AO | `credential.resolve` | Resolve an opaque cluster or target credential reference. |
+| EP → AO | `credential.resolve.workload` | Resolve an approved recipe for the active work-item attempt. |
 | EP → AO | `work.execute.completed` | Deliver a terminal or uncertain outcome from EP to AO. |
 
 ## End-to-end work execution

@@ -14,12 +14,13 @@ import structlog
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 
-from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.store_errors import StaleClaimError
 from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
@@ -124,7 +125,7 @@ async def run_orphan_policy_reconciler(  # noqa: C901 - isolate cleanup failures
     target_cleanup: ExecutionTargetStore,
     cluster_credentials: ClusterStore,
     work_progress: WorkStore,
-    credential_resolver: CredentialResolver,
+    cluster_credential_resolver: ClusterCredentialResolver,
 ) -> None:
     """Periodically clean up aged policies left by a worker crash or API outage."""
     while True:
@@ -140,7 +141,7 @@ async def run_orphan_policy_reconciler(  # noqa: C901 - isolate cleanup failures
                 if cluster.source_client_id is None:
                     continue
                 try:
-                    credential = await credential_resolver.resolve(
+                    credential = await cluster_credential_resolver.resolve(
                         cluster.credential_ref,
                         client_id=cluster.source_client_id,
                     )

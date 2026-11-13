@@ -17,12 +17,11 @@ from execution_plane.config.settings import get_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.types import IneligibilityReason, ResolveOutcome, WorkRequirements
-from execution_plane.models.execution_target import BackendType, TargetStatus
 from execution_plane.resource_monitor.monitor import ResourceMonitor
-from execution_plane_client.models.execution_target import KubernetesPlacement
+from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement, TargetStatus
 
 if TYPE_CHECKING:
-    from execution_plane.credential_resolution.resolver import CredentialResolver
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
     from execution_plane.models.cluster import Cluster
 
 _ACTOR_ID = uuid.UUID(int=0)
@@ -32,7 +31,7 @@ _ACTOR_ID = uuid.UUID(int=0)
 @pytest.mark.asyncio
 async def test_resource_monitor_excludes_a_missing_namespace_on_kind(
     ep_cluster: Cluster,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
 ) -> None:
     """Probe the live Kind API: a missing namespace becomes DEGRADED and HEALTH-ineligible."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
@@ -71,7 +70,7 @@ async def test_resource_monitor_excludes_a_missing_namespace_on_kind(
                 target_store,
                 cluster_store,
                 settings,
-                credential_resolver=integration_credential_resolver,
+                cluster_credential_resolver=integration_credential_resolver,
                 interval=0.01,
             )
 

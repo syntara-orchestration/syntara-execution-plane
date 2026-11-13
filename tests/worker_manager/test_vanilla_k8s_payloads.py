@@ -171,7 +171,8 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         SimpleNamespace(get_with_credentials=AsyncMock(return_value=cluster)),
         SimpleNamespace(set_result=persist, mark_dispatched=mark_dispatched),
         Settings(),
-        credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
+        cluster_credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
+        workload_credential_resolver=SimpleNamespace(resolve_workload=AsyncMock(return_value={})),
     )
     item = WorkItem(
         client_id="ao",

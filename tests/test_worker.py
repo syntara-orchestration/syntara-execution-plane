@@ -47,7 +47,7 @@ class _StoreContext:
         self.events.append(f"{self.name}:stop")
 
 
-class _CredentialResolver:
+class _CredentialResolutionClient:
     def __init__(self, events: list[str] | None = None) -> None:
         self.events = events
 
@@ -196,7 +196,9 @@ def worker_events(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         lambda target, cluster, settings, **_kwargs: _ResourceMonitor(target, cluster, settings, events),
     )
     monkeypatch.setattr(worker, "CompletionNotifier", lambda settings: _CompletionDelivery(settings, events))
-    monkeypatch.setattr(worker, "CredentialResolver", lambda _settings: _CredentialResolver(events))
+    monkeypatch.setattr(worker, "CredentialResolutionClient", lambda _settings: _CredentialResolutionClient(events))
+    monkeypatch.setattr(worker, "ClusterCredentialResolver", lambda _settings, _client: object())
+    monkeypatch.setattr(worker, "WorkloadCredentialResolver", lambda _settings, _client: object())
     monkeypatch.setattr(worker, "VanillaK8sWorkerManager", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(worker, "build_placement_resolver", lambda *_args: object())
     monkeypatch.setattr(worker, "_listen_loop", _finished_listener)

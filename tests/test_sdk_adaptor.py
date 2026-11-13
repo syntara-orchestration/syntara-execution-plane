@@ -1,6 +1,6 @@
 """Exercise EP against the installed SDK's actual protobuf service."""
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Event, Thread
@@ -13,10 +13,12 @@ from syntara_plugin.runtime import (
     ContainerInvocationError,
     ContainerResult,
     CredentialAccessError,
+    CredentialRequestContext,
     FailureCode,
     StepRegistry,
     add_container_runtime_service,
 )
+from syntara_plugin.runtime.container import CredentialResolver
 from syntara_plugin.runtime.protocol import container_pb2 as pb
 from syntara_plugin.runtime.protocol import container_pb2_grpc as rpc
 
@@ -52,12 +54,19 @@ def _invoke(
     credential_bindings: list[dict[str, object]] | None = None,
     **overrides: object,
 ) -> dict[str, Any]:
+    approved_recipes = {binding["credential_recipe_id"] for binding in credential_bindings or []}
+
+    def reject_credential(context: CredentialRequestContext) -> dict[str, str]:
+        reason = "missing" if context.name not in approved_recipes else "unavailable"
+        raise CredentialAccessError(reason)
+
     kwargs = {
         "identity": "work-1-attempt-2",
         "progress": lambda _event: None,
         "cancelled": Event(),
         "startup": 0.2,
         "grace": 1,
+        "credential_handler": reject_credential,
     }
     kwargs.update(overrides)
     invocation = {
@@ -74,6 +83,33 @@ def _invoke(
         WorkloadInvocation.model_validate(invocation),
         **kwargs,
     )
+
+
+def test_invoke_passes_the_host_credential_handler_to_the_sdk_stream():
+    channel = Mock()
+    captured_handler: CredentialResolver | None = None
+
+    def mock_stream(
+        _request: object,
+        *,
+        timeout_seconds: float | None = None,
+        credential_handler: CredentialResolver | None = None,
+    ) -> Iterator[ContainerResult]:
+        nonlocal captured_handler
+        captured_handler = credential_handler
+        yield ContainerResult("sha256:" + "a" * 64, output={"result": "done"})
+
+    mock_client = Mock()
+    mock_client.stream = mock_stream
+    mock_client.health = Mock(return_value=["script.v1"])
+
+    def host_handler(_context: CredentialRequestContext) -> Mapping[str, Any]:
+        return {"token": "resolved-token"}
+
+    with patch("execution_plane.worker_manager.vanilla_k8s.sdk_adaptor.ContainerClient", return_value=mock_client):
+        _invoke(channel, credential_handler=host_handler)
+
+    assert captured_handler is host_handler
 
 
 @pytest.mark.parametrize(
@@ -385,7 +421,12 @@ def test_stream_timeout_should_match_contract_timeout_not_contract_plus_grace():
     # Track what timeout_seconds is actually passed to client.stream()
     actual_timeout = None
 
-    def mock_stream(request, *, timeout_seconds=None, credential_handler=None) -> Iterator[ContainerResult]:
+    def mock_stream(
+        _request: object,
+        *,
+        timeout_seconds: float | None = None,
+        credential_handler: CredentialResolver | None = None,
+    ) -> Iterator[ContainerResult]:
         nonlocal actual_timeout
         actual_timeout = timeout_seconds
         # Return a valid result
