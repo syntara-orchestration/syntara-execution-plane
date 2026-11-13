@@ -19,11 +19,14 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1" >&2; }
 
 restore_requirements_backup() {
-    local backup="$PROJECT_ROOT/requirements.txt.bak"
-    if [ -f "$backup" ]; then
-        log_info "Restoring requirements.txt from backup"
-        mv "$backup" "$PROJECT_ROOT/requirements.txt"
-    fi
+    local requirements backup
+    for requirements in requirements.txt requirements-vcs.txt; do
+        backup="$PROJECT_ROOT/$requirements.bak"
+        if [ -f "$backup" ]; then
+            log_info "Restoring $requirements from backup"
+            mv "$backup" "$PROJECT_ROOT/$requirements"
+        fi
+    done
 }
 
 trap restore_requirements_backup EXIT

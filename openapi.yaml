@@ -42,6 +42,10 @@ paths:
   /v1/work-items:
     get:
       summary: Work Items
+      description: List client-owned work. runtime_context[key]=value matches an exact
+        JSON string; an empty value checks key existence. Keys are literal top-level
+        keys and multiple keys are ANDed. Filters apply before pagination and total
+        counts.
       operationId: work_items_v1_work_items_get
       security:
       - HTTPBearer: []
@@ -1046,13 +1050,14 @@ components:
           format: uuid
           title: Id
           description: Caller-assigned work item identifier
-        metadata:
+        runtime_context:
           additionalProperties: true
           type: object
-          title: Metadata
-          description: Non-secret caller-owned context retained with this work item.
-            Execution Plane does not interpret these values for identity, authorization,
-            placement, or lifecycle decisions.
+          title: Runtime Context
+          description: Non-secret caller-owned runtime context, stored once with the
+            work item and passed to the plugin. Available in reads, completion notifications,
+            and runtime_context[key] filters. Execution Plane does not interpret these
+            values for identity, authorization, placement, or lifecycle.
         status:
           $ref: '#/components/schemas/WorkItemStatus'
           description: Work item lifecycle status
@@ -1283,13 +1288,14 @@ components:
           format: uuid
           title: Work Item Id
           description: Identifier of the work item whose outcome is reported.
-        metadata:
+        runtime_context:
           additionalProperties: true
           type: object
-          title: Metadata
-          description: Non-secret caller-owned context retained with this work item.
-            Execution Plane does not interpret these values for identity, authorization,
-            placement, or lifecycle decisions.
+          title: Runtime Context
+          description: Non-secret caller-owned runtime context, stored once with the
+            work item and passed to the plugin. Available in reads, completion notifications,
+            and runtime_context[key] filters. Execution Plane does not interpret these
+            values for identity, authorization, placement, or lifecycle.
         status:
           $ref: '#/components/schemas/CompletionStatus'
         result:
@@ -1357,13 +1363,6 @@ components:
           pattern: ^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$
           title: Credential Recipe Id
           description: Logical Plugin SDK recipe requested by the workload.
-        workflow_run_id:
-          type: string
-          maxLength: 256
-          minLength: 1
-          pattern: ^[A-Za-z0-9._:-]+$
-          title: Workflow Run Id
-          description: Caller-owned workflow run containing the active step.
         step_revision_id:
           type: string
           maxLength: 256
@@ -1378,7 +1377,6 @@ components:
       - attempt_id
       - credential_ref
       - credential_recipe_id
-      - workflow_run_id
       - step_revision_id
       title: CredentialResolveWorkload
       description: Resolve one credential reference for the identified work item.
@@ -1657,13 +1655,14 @@ components:
           description: Caller-assigned identifier of the Execution Plane work item.
             Reuse this identifier when retrying submission and when addressing the
             same work.
-        metadata:
+        runtime_context:
           additionalProperties: true
           type: object
-          title: Metadata
-          description: Non-secret caller-owned context retained with this work item.
-            Execution Plane does not interpret these values for identity, authorization,
-            placement, or lifecycle decisions.
+          title: Runtime Context
+          description: Non-secret caller-owned runtime context, stored once with the
+            work item and passed to the plugin. Available in reads, completion notifications,
+            and runtime_context[key] filters. Execution Plane does not interpret these
+            values for identity, authorization, placement, or lifecycle.
         image:
           type: string
           maxLength: 2048
@@ -1707,13 +1706,6 @@ components:
       description: Schedule one workload implementing the SDK container service.
     WorkloadInvocation:
       properties:
-        workflow_run_id:
-          type: string
-          maxLength: 256
-          minLength: 1
-          pattern: ^[A-Za-z0-9._:-]+$
-          title: Workflow Run Id
-          description: Caller-owned identity of the workflow run containing this step.
         step_revision_id:
           type: string
           maxLength: 256
@@ -1728,12 +1720,6 @@ components:
           title: Inputs
           description: Step inputs defined by the selected workload; never use this
             field for credential bindings.
-        runtime_context:
-          additionalProperties: true
-          type: object
-          title: Runtime Context
-          description: Non-secret execution context supplied to the workload; not
-            for credential bindings.
         credential_bindings:
           items:
             $ref: '#/components/schemas/WorkCredentialBinding'
@@ -1752,7 +1738,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - workflow_run_id
       - step_revision_id
       - inputs
       - timeout_seconds

@@ -47,9 +47,12 @@ Protocol revision 2 has no command IDs or parent command IDs. `WorkExecute`,
 `Completion`, and `CredentialResolveWorkload` use revision 2 and require
 `work_item_id`; `WorkCancel` uses `work.cancel` revision 1 with the same field.
 Resources retain their IDs across deliveries and retries. Work execution also
-accepts optional caller-owned `metadata`, exposed by reads and completion but
-never used for authorization, placement, or plugin invocation. Upgrade the EP
-service and AO together with the matching client distribution.
+accepts optional non-secret caller-owned `runtime_context`, passed to the SDK,
+exposed by reads and completion, and filterable with `runtime_context[key]=value`.
+EP stores context once, outside encrypted invocation data. It never uses context
+for authorization, placement, or work identity. `step_revision_id` still selects
+the container handler; `workflow_run_id` is no longer a dedicated required field.
+Upgrade EP, AO, and plugin runtimes together with the matching distributions.
 
 ## Handling messages
 

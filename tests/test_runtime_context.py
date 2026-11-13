@@ -15,13 +15,19 @@ from execution_plane.models.work_item import WorkItem
     [
         {},
         {
-            "metadata": {"project_id": "project", "nested": {"tags": ["one", "two"]}},
+            "runtime_context": {"project_id": "project", "nested": {"tags": ["one", "two"]}},
             "invocation": {"inputs": {"private": "hidden"}},
         },
     ],
 )
-async def test_queries_project_metadata_without_exposing_invocation(payload):
-    item = WorkItem(id=uuid4(), client_id="ao", payload=payload, created_at=datetime.now(UTC))
+async def test_queries_project_runtime_context_without_exposing_invocation(payload):
+    item = WorkItem(
+        id=uuid4(),
+        client_id="ao",
+        payload={"invocation": {"inputs": {"private": "hidden"}}},
+        runtime_context=payload.get("runtime_context", {}),
+        created_at=datetime.now(UTC),
+    )
     queries = object.__new__(EPResourceQueries)
     queries._client_id = "ao"
     queries._work = AsyncMock()
@@ -29,7 +35,7 @@ async def test_queries_project_metadata_without_exposing_invocation(payload):
     queries._work.list_for_client.return_value = [item]
     read = await queries.work_item(item.id)
     listed = await queries.work_items(10)
-    assert read.metadata == payload.get("metadata", {})
-    assert listed[0].metadata == read.metadata
+    assert read.runtime_context == payload.get("runtime_context", {})
+    assert listed[0].runtime_context == read.runtime_context
     assert "invocation" not in read.model_dump()
     queries._work.get.assert_awaited_once_with(item.id, client_id="ao")

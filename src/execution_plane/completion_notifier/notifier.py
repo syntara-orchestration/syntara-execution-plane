@@ -77,7 +77,7 @@ class CompletionNotifier:
                 "status": statuses[WorkItemStatus(item.status)],
                 "result": item.result,
                 "work_item_id": item.id,
-                "metadata": (item.payload or {}).get("metadata", {}),
+                "runtime_context": item.runtime_context,
             }
         )
         body = completion.to_message(

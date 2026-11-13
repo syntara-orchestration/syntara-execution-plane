@@ -56,6 +56,7 @@ class _DispatchContext:
 
     image: str
     invocation: WorkloadInvocation
+    runtime_context: dict[str, object]
     output_config: dict[str, str] | None
     identity: str
     attempt_id: str
@@ -172,6 +173,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         return _DispatchContext(
             image=command.image,
             invocation=command.invocation,
+            runtime_context=work_item.runtime_context,
             output_config=command.output_config,
             identity=identity,
             attempt_id=attempt_id,
@@ -225,6 +227,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 target=context.target_config,
                 image=context.image,
                 invocation=context.invocation,
+                runtime_context=context.runtime_context,
                 identity=context.identity,
                 attempt_id=context.attempt_id,
                 startup=self._settings.node_startup_seconds,

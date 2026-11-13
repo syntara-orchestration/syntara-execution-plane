@@ -42,9 +42,9 @@ def test_completion_notification_client_loads_identity_into_ca_context(monkeypat
     assert "cert" not in client_factory.call_args.kwargs
 
 
-@pytest.mark.parametrize("metadata", [None, {"project_id": "project", "nested": {"tags": ["one"]}}])
+@pytest.mark.parametrize("runtime_context", [None, {"project_id": "project", "nested": {"tags": ["one"]}}])
 @pytest.mark.parametrize("lose_first_acknowledgement", [False, True])
-async def test_completion_retries_correlate_with_work_item(lose_first_acknowledgement, metadata):
+async def test_completion_retries_correlate_with_work_item(lose_first_acknowledgement, runtime_context):
     """Repeated deliveries identify the same work and preserve its completion content."""
     from datetime import UTC, datetime
     from uuid import uuid4
@@ -77,7 +77,7 @@ async def test_completion_retries_correlate_with_work_item(lose_first_acknowledg
         id=uuid4(),
         client_id="ao",
         status=WorkItemStatus.COMPLETED,
-        payload={} if metadata is None else {"metadata": metadata},
+        runtime_context=runtime_context or {},
         result={"stdout": "done"},
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
@@ -93,7 +93,7 @@ async def test_completion_retries_correlate_with_work_item(lose_first_acknowledg
         await delivery.close()
     assert len(bodies) == 2
     assert bodies[0].message_id != bodies[1].message_id
-    assert bodies[0].command.payload["metadata"] == (metadata or {})
+    assert bodies[0].command.payload["runtime_context"] == (runtime_context or {})
     assert bodies[0].command.payload == bodies[1].command.payload
     for body in bodies:
         assert body.command.command_type == "work.execute.completed"

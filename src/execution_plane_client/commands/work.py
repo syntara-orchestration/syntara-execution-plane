@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import Field, StrictStr, field_validator
 
 from execution_plane_client.commands.base import CommandPayload
-from execution_plane_client.models.work_metadata import WorkMetadata
+from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.protocol import PositiveInt, WireModel, validate_json
 
 StepIdentity = Annotated[StrictStr, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._:-]+$")]
@@ -37,16 +37,11 @@ class WorkloadInvocation(WireModel):
     claim that arbitrary file paths have been mounted by EP.
     """
 
-    workflow_run_id: StepIdentity = Field(description="Caller-owned identity of the workflow run containing this step.")
     step_revision_id: StepIdentity = Field(
         description="Workload-advertised revision of the step implementation to execute."
     )
     inputs: dict[str, object] = Field(
         description="Step inputs defined by the selected workload; never use this field for credential bindings."
-    )
-    runtime_context: dict[str, object] = Field(
-        default_factory=dict,
-        description="Non-secret execution context supplied to the workload; not for credential bindings.",
     )
     credential_bindings: list[WorkCredentialBinding] = Field(
         default_factory=list,
@@ -62,7 +57,7 @@ class WorkloadInvocation(WireModel):
         ),
     ]
 
-    @field_validator("inputs", "runtime_context", mode="before")
+    @field_validator("inputs", mode="before")
     @classmethod
     def check_json(cls, value: object) -> object:
         """Keep nested invocation data finite, portable, and bounded."""
@@ -91,7 +86,7 @@ class WorkExecute(CommandPayload):
             "when retrying submission and when addressing the same work."
         )
     )
-    metadata: WorkMetadata = Field(default_factory=dict, repr=False)
+    runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
 
     image: Annotated[
         StrictStr,

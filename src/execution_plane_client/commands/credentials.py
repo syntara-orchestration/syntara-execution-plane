@@ -34,5 +34,4 @@ class CredentialResolveWorkload(CommandPayload):
         description="Opaque AO credential reference bound to the requested recipe.",
     )
     credential_recipe_id: CredentialRecipeId = Field(description="Logical Plugin SDK recipe requested by the workload.")
-    workflow_run_id: StepIdentity = Field(description="Caller-owned workflow run containing the active step.")
     step_revision_id: StepIdentity = Field(description="Workload revision that requested the credential.")

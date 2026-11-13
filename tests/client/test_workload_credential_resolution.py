@@ -18,7 +18,6 @@ def _command() -> CredentialResolveWorkload:
         attempt_id=f"{uuid4()}-2",
         credential_ref=uuid4(),
         credential_recipe_id="acme.echo.api-token",
-        workflow_run_id="workflow-1",
         step_revision_id="script.v1",
     )
 

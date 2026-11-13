@@ -59,12 +59,11 @@ def _invoke(
         "startup": 0.2,
         "grace": 1,
     }
+    kwargs["runtime_context"] = {"driver": "test"}
     kwargs.update(overrides)
     invocation = {
-        "workflow_run_id": "workflow-1",
         "step_revision_id": "script.v1",
         "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
-        "runtime_context": {"driver": "test"},
         "timeout_seconds": 2,
     }
     if credential_bindings is not None:
@@ -93,7 +92,7 @@ def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests(
 
     def handler(invocation) -> ContainerResult:
         assert invocation.invocation_id == "work-1-attempt-2"
-        assert invocation.workflow_run_id == "workflow-1"
+
         assert invocation.step_revision_id == "script.v1"
         assert invocation.inputs["environment"] == {"GREETING": "hello"}
         assert invocation.inputs["large_integer"] == 2**60
