@@ -56,9 +56,6 @@ def _command_schemas(
         command["properties"]["command_type"] = {"type": "string", "const": definition.command_type}
         command["properties"]["command_revision"] = {"type": "integer", "const": definition.revision}
         command["properties"]["payload"] = references[definition.payload_schema, "validation"]
-        if definition.payload_schema.requires_parent:
-            command["properties"]["parent_command_id"] = {"type": "string", "format": "uuid"}
-            command["required"].append("parent_command_id")
         schemas[name] = command
         if definition not in outbound:
             mapping[definition.command_type] = _ref(name)
@@ -104,7 +101,7 @@ def configure_command_openapi(
         for kind, revisions in capabilities.commands.items()
         for revision in revisions
     ]
-    completion = catalog.definition("work.execute.completed", 1)
+    completion = catalog.definition("work.execute.completed", 2)
     original_openapi = app.openapi
 
     def command_openapi() -> JsonSchemaValue:

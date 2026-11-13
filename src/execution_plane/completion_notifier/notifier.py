@@ -13,7 +13,6 @@ from execution_plane.callback_client import CallbackHTTPClient
 from execution_plane_client.commands.control import Completion, CompletionStatus
 from execution_plane_client.commands.results import TransportReceipt
 from execution_plane_client.models.work_item import WorkItemStatus
-from execution_plane_client.protocol import ResourceReference
 
 if TYPE_CHECKING:
     from execution_plane.config.settings import Settings
@@ -77,14 +76,14 @@ class CompletionNotifier:
             {
                 "status": statuses[WorkItemStatus(item.status)],
                 "result": item.result,
-                "resource": ResourceReference(kind="work_item", resource_id=item.id).model_dump(mode="json"),
+                "work_item_id": item.id,
+                "metadata": (item.payload or {}).get("metadata", {}),
             }
         )
         body = completion.to_message(
             source_id=self._local_id,
             destination_id=item.client_id,
             client_id=item.client_id,
-            parent_command_id=item.id,
             occurred_at=item.completed_at or item.created_at,
         )
         try:
