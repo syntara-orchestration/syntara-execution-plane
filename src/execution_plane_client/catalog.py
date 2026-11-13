@@ -7,7 +7,7 @@ from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegis
 from execution_plane_client.commands.control import CancelCommand, Completion
 from execution_plane_client.commands.credentials import CredentialResolve, CredentialResolveWorkload
 from execution_plane_client.commands.targets import TargetDelete, TargetHealth, TargetRegister, TargetUpdate
-from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.commands.work import WorkDelete, WorkExecute
 from execution_plane_client.errors import UnsupportedCommand
 from execution_plane_client.protocol import MessageEnvelope
 
@@ -28,6 +28,7 @@ class CommandCatalog:
         """Install version-one work, resource and completion contracts."""
         payloads = (
             WorkExecute,
+            WorkDelete,
             Completion,
             CredentialResolve,
             CredentialResolveWorkload,

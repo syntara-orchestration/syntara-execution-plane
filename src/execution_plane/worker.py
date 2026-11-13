@@ -26,6 +26,8 @@ from execution_plane.execution_target_reconciler.placement import WorkerManagerR
 from execution_plane.logging.lifecycle import start_loggers, stop_loggers
 from execution_plane.resource_monitor.monitor import ResourceMonitor
 from execution_plane.runtime import run_until_shutdown
+from execution_plane.store_errors import StaleClaimError
+from execution_plane.work_item.errors import WorkItemNotFoundError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.worker_manager.vanilla_k8s.manager import (
@@ -175,6 +177,10 @@ async def _dispatch_item(
     """Release the reserved dispatch slot on completion, failure, or cancellation."""
     try:
         await _process_item(item, work_progress, target_queries, worker_managers, settings)
+    except (WorkItemNotFoundError, StaleClaimError):
+        # Cancellation/deletion may retire a claim while its dispatch task is
+        # still unwinding. That task must not stop the worker's other loops.
+        logger.info("Work item dispatch claim was retired", work_item_id=str(item.id))
     finally:
         slots.release()
         dispatch_event.set()
@@ -234,6 +240,10 @@ async def _poll_loop(
     slots = asyncio.BoundedSemaphore(settings.max_concurrent_dispatches)
     while True:
         dispatch_event.clear()
+        try:
+            await work_progress.reconcile_control_requests()
+        except Exception:
+            logger.exception("Work-item cancellation/deletion reconciliation failed, will retry")
 
         # Claim while a dispatch slot is free and work is queued.
         while not slots.locked():

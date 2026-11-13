@@ -16,7 +16,7 @@ from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.control import CancelCommand
 from execution_plane_client.commands.results import TargetHealthCommandResult
-from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.commands.work import WorkDelete, WorkExecute
 from execution_plane_client.handlers import HandlingResult
 from execution_plane_client.protocol import ResourceReference
 
@@ -56,7 +56,7 @@ def test_only_command_mutations_and_resource_queries_are_exposed():
         assert f"/v1/{resource}/{{resource_id}}" in paths
 
 
-@pytest.mark.parametrize("command_type", [WorkExecute, CancelCommand])
+@pytest.mark.parametrize("command_type", [WorkExecute, CancelCommand, WorkDelete])
 async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, command_type):
     work_id = uuid4()
     payload = (
@@ -72,6 +72,8 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
         if command_type is WorkExecute
         else {"target_command_id": str(work_id)}
     )
+    if command_type is WorkDelete:
+        payload = {"work_item_id": str(work_id)}
     message = command_message(command_type.command_type, payload)
     if command_type is WorkExecute:
         work_id = UUID(message["command_id"])
@@ -102,6 +104,8 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
         store.dispatch.assert_awaited_once_with(
             client_id="ao", item_id=work_id, payload=parsed_payloads[0].model_dump(mode="json")
         )
+    elif command_type is WorkDelete:
+        store.request_delete.assert_awaited_once_with(work_id, client_id="ao")
     else:
         store.request_cancel.assert_awaited_once_with(work_id, client_id="ao")
 
@@ -216,7 +220,8 @@ async def test_capabilities_do_not_advertise_uninstalled_completion_handlers():
         response = await client.get("/v1/capabilities")
     assert response.status_code == 200
     commands = response.json()["commands"]
-    assert len(commands) == 9
+    assert len(commands) == 10
+    assert commands["work.delete"] == [1]
     assert "cluster.provision" not in commands
     assert commands["command.cancel"] == [1]
     assert "work.execute.completed" not in commands

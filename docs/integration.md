@@ -83,6 +83,7 @@ The outbound `work.execute.completed` command is documented separately under
 | --- | --- |
 | `work.execute` | `WorkExecute`: image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
 | `command.cancel` | `target_command_id`: existing work UUID; request cancellation through `WorkStore` |
+| `work.delete` | `work_item_id`: persist deletion and cancellation intent for caller-owned work; remove it after background resource cleanup |
 | `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_id`, explicitly changed Cluster fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
 | `cluster.delete` | `resource_id`; request draining of a Cluster |
@@ -100,8 +101,15 @@ target directly, promote a replacement first. See
 [cluster and target services](cluster-and-target-services.md) for lifecycle rules.
 
 Unknown work cancellation returns 404. No cancellation command is retained for
-work that has not arrived. Cancellation of dispatched work is asynchronous;
-observe its resource state or completion command for the final outcome.
+work that has not arrived. Cancellation persists intent on the WorkItem and
+notifies the worker before returning; lifecycle transitions and resource cleanup
+run asynchronously. Observe resource state or completion commands for the outcome.
+
+`work.delete` requires the `work.delete` scope. Its receipt acknowledges persisted
+intent, not completed deletion. Active work is cancelled in the background and
+the row is retained until resource cleanup is confirmed. Missing or foreign-owned
+IDs are accepted as no-ops, so retries are safe without revealing ownership.
+Deletion suppresses new completion deliveries for that work.
 
 ## Resource queries
 

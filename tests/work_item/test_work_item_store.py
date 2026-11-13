@@ -869,8 +869,8 @@ async def test_set_result_rejects_missing_and_stale_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_cancel_cancels_unclaimed_work() -> None:
-    """Work that has not started is cancelled immediately with a completion notification."""
+async def test_request_cancel_persists_intent_for_unclaimed_work() -> None:
+    """Request handling records intent without finalizing queued work."""
     item = _work_item(status=WorkItemStatus.PENDING)
     store = _store()
     session = _Session()
@@ -880,9 +880,10 @@ async def test_request_cancel_cancels_unclaimed_work() -> None:
     cancelled = await store.request_cancel(item.id, client_id=item.client_id)
 
     assert cancelled is item
-    assert item.status is WorkItemStatus.CANCELLED
-    assert item.result == {"cancelled": True, "execution_started": False}
-    assert item.completion_notification_state is CompletionNotificationState.PENDING
+    assert item.status is WorkItemStatus.PENDING
+    assert item.cancellation_requested is True
+    assert item.result is None
+    assert item.completion_notification_state is None
     assert session.commits == 1
     await store.close()
 
@@ -899,8 +900,8 @@ async def test_request_cancel_requests_termination_after_dispatch() -> None:
     requested = await store.request_cancel(item.id, client_id=item.client_id)
 
     assert requested is item
-    assert item.status is WorkItemStatus.CANCEL_REQUESTED
-    assert item.claimed_at is not None
+    assert item.cancellation_requested is True
+    assert item.claimed_at is None
     assert session.added == []
     assert session.commits == 1
     assert session.execute.await_count == 2
@@ -924,9 +925,9 @@ async def test_request_cancel_requests_termination_after_running() -> None:
     requested = await store.request_cancel(item.id, client_id=item.client_id)
 
     assert requested is item
-    assert item.status is WorkItemStatus.CANCEL_REQUESTED
+    assert item.cancellation_requested is True
     assert item.claim_owner_id == owner_id
-    assert item.claimed_at is not None
+    assert item.claimed_at is None
     assert session.added == []
     assert session.commits == 1
     await store.close()

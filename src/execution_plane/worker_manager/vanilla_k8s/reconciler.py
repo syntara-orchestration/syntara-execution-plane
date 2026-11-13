@@ -16,6 +16,7 @@ from kubernetes.client.exceptions import ApiException
 
 from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
 from execution_plane.store_errors import StaleClaimError
+from execution_plane.worker_manager.vanilla_k8s.deletion import cleanup_requested_work_item_deletions
 from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
 
 if TYPE_CHECKING:
@@ -129,6 +130,9 @@ async def run_orphan_policy_reconciler(  # noqa: C901 - isolate cleanup failures
     """Periodically clean up aged policies left by a worker crash or API outage."""
     while True:
         try:
+            await cleanup_requested_work_item_deletions(
+                work_progress, target_cleanup, cluster_credentials, credential_resolver
+            )
             targets = await target_cleanup.list()
             for target_stub in targets:
                 target = await target_cleanup.get_with_credentials(target_stub.id)

@@ -137,7 +137,9 @@ class WorkStore(StoreBase):
                     .with_for_update(skip_locked=True)
                 )
                 for uncertain in uncertain_result.scalars().all():
-                    cancellation_requested = uncertain.status is WorkItemStatus.CANCEL_REQUESTED
+                    cancellation_requested = (
+                        uncertain.cancellation_requested or uncertain.status is WorkItemStatus.CANCEL_REQUESTED
+                    )
                     uncertain.status = WorkItemStatus.RECONCILIATION_REQUIRED
                     now = datetime.now(UTC)
                     uncertain.result = {
@@ -161,6 +163,7 @@ class WorkStore(StoreBase):
                             ),
                         )
                     )
+                    .where(col(WorkItem.cancellation_requested).is_(False))
                     .order_by(
                         case((col(WorkItem.status) == WorkItemStatus.PENDING, 0), else_=1),
                         col(WorkItem.created_at),
@@ -258,7 +261,7 @@ class WorkStore(StoreBase):
                 if item is None:
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
                 self._validate_claim(item, claim_owner_id, claim_generation)
-                if item.status in {
+                if item.cancellation_requested or item.status in {
                     WorkItemStatus.CANCEL_REQUESTED,
                     WorkItemStatus.COMPLETED,
                     WorkItemStatus.FAILED,
@@ -296,7 +299,7 @@ class WorkStore(StoreBase):
             if item.status in REFRESHABLE_CLAIM_STATUSES:
                 item.claimed_at = datetime.now(UTC)
                 await session.commit()
-            return item.status is WorkItemStatus.CANCEL_REQUESTED
+            return item.cancellation_requested or item.status is WorkItemStatus.CANCEL_REQUESTED
 
     async def mark_running(
         self,
@@ -314,7 +317,7 @@ class WorkStore(StoreBase):
                 self._validate_claim(item, claim_owner_id, claim_generation)
                 if item.status is WorkItemStatus.RUNNING:
                     return True
-                if item.status is not WorkItemStatus.DISPATCHED:
+                if item.cancellation_requested or item.status is not WorkItemStatus.DISPATCHED:
                     return False
                 item.status = WorkItemStatus.RUNNING
                 item.claimed_at = datetime.now(UTC)
@@ -397,7 +400,7 @@ class WorkStore(StoreBase):
         *,
         client_id: str,
     ) -> WorkItem:
-        """Cancel queued work or durably request termination of a dispatched job."""
+        """Persist cancellation intent without performing the lifecycle transition."""
         async with self._session_context() as session:
             try:
                 result = await session.execute(
@@ -409,12 +412,87 @@ class WorkStore(StoreBase):
                 item = result.scalars().first()
                 if item is None:
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
-                await self._request_cancel_locked(session, item)
+                item.cancellation_requested = True
+                await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
                 await session.commit()
                 return item
             except Exception:
                 await session.rollback()
                 raise
+
+    async def request_delete(self, item_id: uuid.UUID, *, client_id: str) -> None:
+        """Durably request removal after the worker confirms resource cleanup.
+
+        Absent and foreign work are indistinguishable no-ops. No other client's
+        work is modified and repeated requests can safely recover a lost receipt.
+        """
+        async with self._session_context() as session, session.begin():
+            result = await session.execute(
+                select(WorkItem)
+                .where(col(WorkItem.id) == item_id, col(WorkItem.client_id) == client_id)
+                .with_for_update()
+            )
+            item = result.scalars().first()
+            if item is not None:
+                item.deletion_requested = True
+                item.cancellation_requested = True
+                await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
+
+    async def reconcile_control_requests(self, *, limit: int = 100) -> None:
+        """Apply a bounded batch of cancel intents, then purge safely stopped work."""
+        async with self._session_context() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(WorkItem)
+                    .where(
+                        col(WorkItem.cancellation_requested).is_(True),
+                        col(WorkItem.status).in_(
+                            [
+                                WorkItemStatus.PENDING,
+                                WorkItemStatus.CLAIMED,
+                                WorkItemStatus.DISPATCHED,
+                                WorkItemStatus.RUNNING,
+                            ]
+                        ),
+                    )
+                    .order_by(col(WorkItem.created_at))
+                    .limit(limit)
+                    .with_for_update(skip_locked=True)
+                )
+                for item in result.scalars().all():
+                    await self._request_cancel_locked(session, item)
+            async with session.begin():
+                result = await session.execute(
+                    select(WorkItem)
+                    .where(
+                        col(WorkItem.deletion_requested).is_(True),
+                        col(WorkItem.status).in_([*TERMINAL_RESULT_STATUSES, WorkItemStatus.RECONCILIATION_REQUIRED]),
+                        col(WorkItem.claim_owner_id).is_(None),
+                        col(WorkItem.resource_cleanup_status).in_(["not_required", "complete"]),
+                    )
+                    .order_by(col(WorkItem.created_at))
+                    .limit(limit)
+                    .with_for_update(skip_locked=True)
+                )
+                for item in result.scalars().all():
+                    await session.delete(item)
+
+    async def deletions_awaiting_cleanup(
+        self, *, after_id: uuid.UUID | None = None, limit: int = 100
+    ) -> list[WorkItem]:
+        """Find requested deletions whose abandoned backend resources still need cleanup."""
+        statement = select(WorkItem).where(
+            col(WorkItem.deletion_requested).is_(True),
+            col(WorkItem.status).in_([*TERMINAL_RESULT_STATUSES, WorkItemStatus.RECONCILIATION_REQUIRED]),
+            col(WorkItem.claim_owner_id).is_(None),
+            col(WorkItem.backend_resource_name).is_not(None),
+            col(WorkItem.resource_cleanup_status).not_in(["not_required", "complete"]),
+        )
+        if after_id is not None:
+            statement = statement.where(col(WorkItem.id) > after_id)
+        async with self._session_context() as session:
+            result = await session.execute(statement.order_by(col(WorkItem.id)).limit(limit))
+            return list(result.scalars().all())
 
     async def mark_reconciliation_required(
         self,
@@ -434,7 +512,7 @@ class WorkStore(StoreBase):
                 self._validate_claim(item, claim_owner_id, claim_generation)
                 if item.status in TERMINAL_RESULT_STATUSES:
                     return item
-                cancel_requested = item.status is WorkItemStatus.CANCEL_REQUESTED
+                cancel_requested = item.cancellation_requested or item.status is WorkItemStatus.CANCEL_REQUESTED
                 item.status = WorkItemStatus.RECONCILIATION_REQUIRED
                 now = datetime.now(UTC)
                 item.result = {
@@ -466,7 +544,7 @@ class WorkStore(StoreBase):
                 if item is None:
                     raise WorkItemNotFoundError(item_id)  # noqa: TRY301
                 self._validate_claim(item, claim_owner_id, claim_generation)
-                if item.status is WorkItemStatus.CANCEL_REQUESTED:
+                if item.cancellation_requested or item.status is WorkItemStatus.CANCEL_REQUESTED:
                     now = datetime.now(UTC)
                     result = {"cancelled": True, "execution_started": False}
                     item.result = result
@@ -491,7 +569,7 @@ class WorkStore(StoreBase):
     @staticmethod
     def _initialize_completion_notification_fields(item: WorkItem, now: datetime) -> None:
         """Initialize completion delivery once, preserving retries and acknowledgements."""
-        if item.completion_notification_state is not None:
+        if item.deletion_requested or item.completion_notification_state is not None:
             return
         item.completion_notification_state = CompletionNotificationState.PENDING
         item.completion_notification_attempts = 0
@@ -566,6 +644,7 @@ class WorkStore(StoreBase):
                             ),
                         )
                     )
+                    .where(col(WorkItem.deletion_requested).is_(False))
                     .order_by(col(WorkItem.completed_at))
                     .limit(limit)
                     .with_for_update(skip_locked=True)

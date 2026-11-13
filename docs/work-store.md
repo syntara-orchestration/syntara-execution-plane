@@ -39,6 +39,8 @@ explanations, claim fencing, and non-negative completion retry delays.
 - Target assignment locks the Work item and candidate target/Cluster rows before eligibility is rechecked.
 - Claim fencing rejects stale owners or generations before lifecycle updates.
 - Cancellation and dispatch transitions are serialized against the same locked Work row.
+- Cancellation and deletion commands persist intent on the existing WorkItem; the worker
+  reconciles it asynchronously. Deletion waits for claim release and confirmed resource cleanup.
 - Terminal results and their inline completion-notification state are committed together.
 - Completion delivery uses `SELECT ... FOR UPDATE` to serialize `delivering -> delivered`
   acknowledgements and `delivering -> pending` retries.

@@ -15,6 +15,8 @@ import pytest
 
 from execution_plane.models.execution_target import BackendType
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
+from execution_plane.store_errors import StaleClaimError
+from execution_plane.work_item.errors import WorkItemNotFoundError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError
 
@@ -165,6 +167,26 @@ async def test_process_item_preserves_execution_started_for_cancelled_running_wo
             WorkItemStatus.CANCELLED,
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_retired_dispatch_claim_does_not_stop_worker(*, deleted: bool) -> None:
+    from execution_plane import worker
+
+    item = WorkItem(id=uuid4(), client_id="test-client", claim_owner_id=uuid4(), claim_generation=1)
+    store = AsyncMock(spec=WorkStore)
+    store.set_result.side_effect = WorkItemNotFoundError(item.id) if deleted else StaleClaimError("Retired claim")
+    slots = asyncio.BoundedSemaphore(1)
+    await slots.acquire()
+    dispatch_event = asyncio.Event()
+
+    async with asyncio.TaskGroup() as tasks:
+        tasks.create_task(worker._dispatch_item(item, store, Mock(), Mock(), Mock(), slots, dispatch_event))
+
+    store.set_result.assert_awaited_once()
+    assert not slots.locked()
+    assert dispatch_event.is_set()
 
 
 class _CompletionDelivery:

@@ -66,6 +66,13 @@ class WorkItem(SQLModel, table=True):
         ),
     )
 
+    cancellation_requested: bool = Field(
+        default=False, sa_column=Column(sa.Boolean, nullable=False, server_default=sa.false())
+    )
+    deletion_requested: bool = Field(
+        default=False, sa_column=Column(sa.Boolean, nullable=False, server_default=sa.false())
+    )
+
     # Set when a worker claims this item.
     execution_target_id: uuid.UUID | None = Field(default=None, foreign_key=f"{EP_SCHEMA}.execution_targets.id")
 
