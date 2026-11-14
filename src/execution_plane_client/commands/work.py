@@ -81,7 +81,7 @@ class WorkExecute(CommandPayload):
     """Schedule one workload implementing the SDK container service."""
 
     command_type: ClassVar[str] = "work.execute"
-    command_revision: ClassVar[int] = 2
+    command_revision: ClassVar[int] = 1
 
     work_item_id: UUID = Field(
         description=(

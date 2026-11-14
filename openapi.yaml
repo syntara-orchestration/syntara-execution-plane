@@ -567,11 +567,11 @@ components:
       properties:
         protocol_revision:
           type: integer
-          const: 2
+          const: 1
           title: Protocol Revision
-          description: Envelope contract version. Version 2 removes command_id and
-            parent_command_id.
-          default: 2
+          description: Envelope contract version; remains 1 during development of
+            the resource-addressed protocol.
+          default: 1
         commands:
           additionalProperties:
             items:
@@ -706,11 +706,11 @@ components:
           default: credential.resolve.workload
         command_revision:
           type: integer
-          const: 2
+          const: 1
           title: Command Revision
           description: Payload contract version for credential.resolve.workload; matches
             the request revision.
-          default: 2
+          default: 1
         credential:
           additionalProperties:
             type: string
@@ -1265,7 +1265,7 @@ components:
       - $ref: '#/components/schemas/TargetRegisterCommandV1'
       - $ref: '#/components/schemas/TargetUpdateCommandV1'
       - $ref: '#/components/schemas/WorkCancelCommandV1'
-      - $ref: '#/components/schemas/WorkExecuteCommandV2'
+      - $ref: '#/components/schemas/WorkExecuteCommandV1'
       title: Command
       description: A command type and revision paired with its corresponding payload.
       discriminator:
@@ -1279,7 +1279,7 @@ components:
           execution_target.register: '#/components/schemas/TargetRegisterCommandV1'
           execution_target.update: '#/components/schemas/TargetUpdateCommandV1'
           work.cancel: '#/components/schemas/WorkCancelCommandV1'
-          work.execute: '#/components/schemas/WorkExecuteCommandV2'
+          work.execute: '#/components/schemas/WorkExecuteCommandV1'
     CommandScope:
       properties:
         client_id:
@@ -2028,7 +2028,7 @@ components:
       - occurred_at
       title: WorkCancelCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    WorkExecuteCommandV2:
+    WorkExecuteCommandV1:
       properties:
         command_type:
           type: string
@@ -2038,7 +2038,7 @@ components:
           description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
-          const: 2
+          const: 1
           exclusiveMinimum: 0.0
           title: Command Revision
           description: Version of this operation's payload contract, not a resource
@@ -2056,9 +2056,9 @@ components:
       - command_revision
       - payload
       - occurred_at
-      title: WorkExecuteCommandV2
+      title: WorkExecuteCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    CompletionCommandV2:
+    CompletionCommandV1:
       properties:
         command_type:
           type: string
@@ -2068,7 +2068,7 @@ components:
           description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
-          const: 2
+          const: 1
           exclusiveMinimum: 0.0
           title: Command Revision
           description: Version of this operation's payload contract, not a resource
@@ -2086,7 +2086,7 @@ components:
       - command_revision
       - payload
       - occurred_at
-      title: CompletionCommandV2
+      title: CompletionCommandV1
       description: One versioned operation; participants persist only its domain effects.
     CredentialResolveCommandV1:
       properties:
@@ -2118,7 +2118,7 @@ components:
       - occurred_at
       title: CredentialResolveCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    CredentialResolveWorkloadCommandV2:
+    CredentialResolveWorkloadCommandV1:
       properties:
         command_type:
           type: string
@@ -2128,7 +2128,7 @@ components:
           description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
-          const: 2
+          const: 1
           exclusiveMinimum: 0.0
           title: Command Revision
           description: Version of this operation's payload contract, not a resource
@@ -2146,7 +2146,7 @@ components:
       - command_revision
       - payload
       - occurred_at
-      title: CredentialResolveWorkloadCommandV2
+      title: CredentialResolveWorkloadCommandV1
       description: One versioned operation; participants persist only its domain effects.
     CompletionMessageEnvelope:
       properties:
@@ -2182,7 +2182,7 @@ components:
         scope:
           $ref: '#/components/schemas/CommandScope'
         command:
-          $ref: '#/components/schemas/CompletionCommandV2'
+          $ref: '#/components/schemas/CompletionCommandV1'
       additionalProperties: false
       type: object
       required:

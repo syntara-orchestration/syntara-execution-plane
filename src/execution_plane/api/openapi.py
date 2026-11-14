@@ -101,7 +101,7 @@ def configure_command_openapi(
         for kind, revisions in capabilities.commands.items()
         for revision in revisions
     ]
-    completion = catalog.definition("work.execute.completed", 2)
+    completion = catalog.definition("work.execute.completed", 1)
     original_openapi = app.openapi
 
     def command_openapi() -> JsonSchemaValue:

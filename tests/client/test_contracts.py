@@ -33,15 +33,15 @@ def test_registry_validates_and_advertises_only_installed_handlers():
             return None
 
     registry = CommandRegistry()
-    definition = CommandCatalog().definition("work.execute", 2)
+    definition = CommandCatalog().definition("work.execute", 1)
     handler = Handler()
     registry.register(definition, handler)
-    assert registry.get("work.execute", 2) is handler
-    assert registry.capabilities().commands == {"work.execute": [2]}
+    assert registry.get("work.execute", 1) is handler
+    assert registry.capabilities().commands == {"work.execute": [1]}
     with pytest.raises(ProtocolConflict):
         registry.register(definition, handler)
     with pytest.raises(UnsupportedCommand):
-        registry.get("work.execute", 1)
+        registry.get("work.execute", 2)
     with pytest.raises(UnsupportedCommand):
         registry.get("work.execute.completed", 1)
 
@@ -57,7 +57,7 @@ def test_completion_requires_work_item_identity_in_payload():
         scope=CommandScope(client_id="ao"),
         command=Command(
             command_type="work.execute.completed",
-            command_revision=2,
+            command_revision=1,
             payload={"status": "completed", "result": {}},
             occurred_at=datetime.now(UTC),
         ),

@@ -26,7 +26,7 @@ class CredentialResolveWorkload(CommandPayload):
     """Resolve one credential reference for the identified work item."""
 
     command_type: ClassVar[str] = "credential.resolve.workload"
-    command_revision: ClassVar[int] = 2
+    command_revision: ClassVar[int] = 1
     work_item_id: UUID = Field(
         description=(
             "Primary key (WorkItem.id) of the EP work item requesting credentials. Syntara uses it to look up "

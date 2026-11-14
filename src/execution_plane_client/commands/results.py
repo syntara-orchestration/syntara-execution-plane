@@ -26,8 +26,8 @@ class CredentialResolveWorkloadCommandResult(WireModel):
     """Typed result returned for a workload credential-resolution command."""
 
     command_type: Literal["credential.resolve.workload"] = "credential.resolve.workload"
-    command_revision: Literal[2] = Field(
-        default=2, description="Payload contract version for credential.resolve.workload; matches the request revision."
+    command_revision: Literal[1] = Field(
+        default=1, description="Payload contract version for credential.resolve.workload; matches the request revision."
     )
     credential: dict[
         Annotated[StrictStr, Field(min_length=1, max_length=128)],

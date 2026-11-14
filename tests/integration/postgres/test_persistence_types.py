@@ -225,7 +225,7 @@ async def test_submit_duplicate_work_item_via_api_returns_409() -> None:
                 "scope": {"client_id": "test-duplicate-api"},
                 "command": {
                     "command_type": "work.execute",
-                    "command_revision": 2,
+                    "command_revision": 1,
                     "occurred_at": datetime.now(UTC).isoformat(),
                     "payload": _VALID_INVOCATION_PAYLOAD | {"work_item_id": str(item_id)},
                 },

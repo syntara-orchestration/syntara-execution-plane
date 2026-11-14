@@ -19,7 +19,7 @@ commands or provide command-status or command-children endpoints.
   "scope": {"client_id": "syntara-orchestration"},
   "command": {
     "command_type": "work.execute",
-    "command_revision": 2,
+    "command_revision": 1,
     "occurred_at": "2026-10-14T08:00:00Z",
     "payload": {
       "work_item_id": "00000000-0000-0000-0000-000000000002",
@@ -84,7 +84,7 @@ The outbound `work.execute.completed` command is documented separately under
 
 | Type (revision 1 unless specified) | Payload and effect |
 | --- | --- |
-| `work.execute` (revision 2) | `WorkExecute`: required `work_item_id`, optional runtime context, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
+| `work.execute` (revision 1) | `WorkExecute`: required `work_item_id`, optional runtime context, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
 | `work.cancel` | `work_item_id`: existing work UUID; request cancellation through `WorkStore` |
 | `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_id`, explicitly changed Cluster fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
@@ -147,16 +147,16 @@ delivery acknowledgement and the delivery lease. EP's
 Completion Notifier sends a `work.execute.completed` command to Syntara at
 `EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
-The revision-2 `Completion` payload contains required `work_item_id`, `status`,
+The revision-1 `Completion` payload contains required `work_item_id`, `status`,
 `result`, caller `runtime_context`, and optional `error_code`. Status is `completed`,
 `failed`, `cancelled` or `reconciliation_required`. `occurred_at` is the work's
 completion time. Syntara's request size limit should accommodate the work
 invocation's output limit.
 
-Syntara registers a handler for `CommandCatalog().definition("work.execute.completed", 2)`
+Syntara registers a handler for `CommandCatalog().definition("work.execute.completed", 1)`
 in its `CommandRegistry`. Syntara authenticates EP's client certificate and
 authorizes the command's source, destination and client scope. Both completion
-and revision-2 `credential.resolve.workload` use `payload.work_item_id` to look
+and revision-1 `credential.resolve.workload` use `payload.work_item_id` to look
 up the corresponding AO ActivityExecution. Credential resolution also validates
 the activity state, workflow-node credential binding, and persisted project
 ownership; caller context never supplies authorization.
@@ -210,11 +210,10 @@ Context has no update or sort API.
 
 ## Coordinated protocol upgrade
 
-Capabilities advertise protocol revision 2. The envelope no longer accepts
-`command_id` or `parent_command_id`. Work execution, completion, and workload
-credential resolution use command revision 2; cancellation is `work.cancel`
-revision 1 with `work_item_id`. Other resource command payload revisions remain
-unchanged. All participants and token scopes must be upgraded together; there
+Protocol and command revisions remain 1 while this contract is in development.
+The envelope no longer accepts `command_id` or `parent_command_id`. Work execution,
+completion, workload credential resolution, and `work.cancel` address work with
+`work_item_id`. All participants and token scopes must be upgraded together; there
 are no legacy wire aliases. Message IDs remain receipt correlation only.
 
 Deploy AO with the matching released `execution-plane-client` package and EP
@@ -224,7 +223,7 @@ requirements to the actual published version.
 
 Existing work rows retain their IDs, results, claims, and notification state.
 Workers recover identity from `WorkItem.id` when validating stored payloads,
-including payloads saved before this protocol revision. Stop EP writers and
+including payloads saved before this contract change. Stop EP writers and
 workers, back up the database, and run the context migration with the existing
 payload encryption key. It decrypts old payloads in batches, moves nested context
 and legacy metadata to the column, and retains old workflow run IDs as optional

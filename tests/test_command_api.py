@@ -29,7 +29,7 @@ def command_message(kind="work.cancel", payload=None):
         "scope": {"client_id": "ao"},
         "command": {
             "command_type": kind,
-            "command_revision": 2 if kind == "work.execute" else 1,
+            "command_revision": 1,
             "occurred_at": datetime.now(UTC).isoformat(),
             "payload": payload if payload is not None else {"work_item_id": str(uuid4())},
         },

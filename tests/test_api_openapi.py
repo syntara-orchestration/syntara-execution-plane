@@ -137,7 +137,7 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     for kind, payload_name in expected_payloads.items():
         variant = components[mapping[kind].rsplit("/", 1)[-1]]
         assert variant["properties"]["command_type"]["const"] == kind
-        assert variant["properties"]["command_revision"]["const"] == (2 if kind == "work.execute" else 1)
+        assert variant["properties"]["command_revision"]["const"] == 1
         assert variant["properties"]["command_type"]["description"]
         assert variant["properties"]["command_revision"]["description"]
         assert variant["properties"]["payload"] == {"$ref": f"#/components/schemas/{payload_name}"}
@@ -218,7 +218,7 @@ def test_credential_resolution_payloads_are_documented_without_ingress_handlers(
     document = create_app().openapi()
     components = document["components"]["schemas"]
     cluster_command = components["CredentialResolveCommandV1"]
-    command = components["CredentialResolveWorkloadCommandV2"]
+    command = components["CredentialResolveWorkloadCommandV1"]
     payload = command["properties"]["payload"]
     command_mapping = components["Command"]["discriminator"]["mapping"]
 

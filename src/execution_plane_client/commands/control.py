@@ -35,7 +35,7 @@ class Completion(CommandPayload):
     """Terminal or uncertain work outcome delivered to the initiating client."""
 
     command_type: ClassVar[str] = "work.execute.completed"
-    command_revision: ClassVar[int] = 2
+    command_revision: ClassVar[int] = 1
 
     work_item_id: UUID = Field(
         description=(

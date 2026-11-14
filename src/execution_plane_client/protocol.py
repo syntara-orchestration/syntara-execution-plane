@@ -115,7 +115,8 @@ class ResourceReference(WireModel):
 class CapabilitiesRead(WireModel):
     """Command revisions installed by this participant."""
 
-    protocol_revision: Literal[2] = Field(
-        default=2, description="Envelope contract version. Version 2 removes command_id and parent_command_id."
+    protocol_revision: Literal[1] = Field(
+        default=1,
+        description="Envelope contract version; remains 1 during development of the resource-addressed protocol.",
     )
     commands: dict[str, list[int]]

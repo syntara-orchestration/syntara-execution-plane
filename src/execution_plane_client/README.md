@@ -43,8 +43,8 @@ reconstruct a delivery. Message IDs correlate receipts, not resource identity
 or deduplication. Source, destination and client scope are always supplied by
 the caller; the helper does not authenticate them.
 
-Protocol revision 2 has no command IDs or parent command IDs. `WorkExecute`,
-`Completion`, and `CredentialResolveWorkload` use revision 2 and require
+The in-development protocol remains revision 1 and has no command IDs or parent command IDs. `WorkExecute`,
+`Completion`, and `CredentialResolveWorkload` use revision 1 and require
 `work_item_id`; `WorkCancel` uses `work.cancel` revision 1 with the same field.
 Resources retain their IDs across deliveries and retries. Work execution also
 accepts optional non-secret caller-owned `runtime_context`, passed to the SDK,
