@@ -35,7 +35,11 @@ commands or provide command-status or command-children endpoints.
 }
 ```
 
-`payload.work_item_id` supplies `WorkItem.id`. The independent `message_id`
+`payload.work_item_id` supplies the new row's primary key, `WorkItem.id`, and
+must be unique across all EP work items. Syntara uses its `ActivityExecution.id`
+for this key; the containing `Execution.id` is a different identifier. A
+duplicate submission returns HTTP 409 without modifying or rerunning the item.
+The independent `message_id`
 correlates this delivery with its receipt; it does not deduplicate requests. HTTP 202 returns `received`, `message_id` and an optional `resource`
 reference. It confirms application of the domain request, not completion of a
 job, cluster setup or draining.
@@ -176,15 +180,25 @@ payload. The worker passes that same context to the SDK's `runtime_context`.
 Work-item reads and completion notifications expose the same stored value.
 Duplicate submissions return 409 and cannot overwrite it.
 
-AO supplies `project_id`, `workflow_id`, and `execution_id` together from its
-persisted execution. EP does not interpret these keys. Context does not identify
+AO supplies these UUID strings together from its persisted execution:
+
+| Context key | Meaning and use |
+| --- | --- |
+| `project_id` | `Project.id` containing the workflow; groups work by project. |
+| `workflow_id` | `Workflow.id` being executed; groups work across executions of that workflow. |
+| `execution_id` | `Execution.id` containing the activity; groups that execution's work items. It is not `ActivityExecution.id` or a Temporal workflow/run ID. |
+
+These values are visible to plugin code as `context.runtime_context` and can
+be filtered through EP's work-item list API. They are stored unencrypted.
+EP does not require or interpret these keys. Context does not identify
 work, authorize credentials, select targets, or change lifecycle decisions.
 Credentials belong in the existing credential callback, never in context.
 Target labels and work selectors retain their placement role.
 
 The invocation retains `step_revision_id` to select and validate the advertised
 container handler. There is no dedicated or required `workflow_run_id`. Callers
-may add a precisely named `temporal_run_id` to context if they need it; AO does
+may add a `temporal_run_id` identifying a Temporal engine run to context if
+they need it; it is distinct from Syntara's `Execution.id`. AO does
 not send one by default. No `metadata` or `payload.context` alias is accepted.
 
 Filter with `GET /v1/work-items?runtime_context[project_id]=<id>`.

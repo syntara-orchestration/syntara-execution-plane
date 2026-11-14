@@ -56,8 +56,16 @@ class CommandScope(WireModel):
 class Command(WireModel):
     """One versioned operation; participants persist only its domain effects."""
 
-    command_type: Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")]
-    command_revision: PositiveInt
+    command_type: Annotated[
+        StrictStr,
+        Field(
+            pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$",
+            description="Operation to perform; selects the payload contract.",
+        ),
+    ]
+    command_revision: PositiveInt = Field(
+        description="Version of this operation's payload contract, not a resource revision."
+    )
     payload: dict[str, object] = Field(repr=False)
     occurred_at: datetime
 
@@ -82,7 +90,10 @@ class MessageEnvelope(WireModel):
     """Participant identity around one logical command."""
 
     message_id: UUID = Field(
-        description="Delivery message identifier echoed in its receipt; not a work identifier or deduplication key."
+        description=(
+            "UUID assigned by the sender to this delivery message and echoed in its transport receipt. "
+            "It does not identify a work item or deduplicate submissions; resource IDs in the payload do that."
+        )
     )
     message_type: Literal["command.submit"] = "command.submit"
     sequence: Sequence = 0
@@ -104,5 +115,7 @@ class ResourceReference(WireModel):
 class CapabilitiesRead(WireModel):
     """Command revisions installed by this participant."""
 
-    protocol_revision: Literal[2] = 2
+    protocol_revision: Literal[2] = Field(
+        default=2, description="Envelope contract version. Version 2 removes command_id and parent_command_id."
+    )
     commands: dict[str, list[int]]

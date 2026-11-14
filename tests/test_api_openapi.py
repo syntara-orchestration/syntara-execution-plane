@@ -138,6 +138,8 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
         variant = components[mapping[kind].rsplit("/", 1)[-1]]
         assert variant["properties"]["command_type"]["const"] == kind
         assert variant["properties"]["command_revision"]["const"] == (2 if kind == "work.execute" else 1)
+        assert variant["properties"]["command_type"]["description"]
+        assert variant["properties"]["command_revision"]["description"]
         assert variant["properties"]["payload"] == {"$ref": f"#/components/schemas/{payload_name}"}
         assert {"command_type", "command_revision", "payload"} <= set(variant["required"])
         assert components[payload_name]["additionalProperties"] is False
@@ -220,10 +222,10 @@ def test_credential_resolution_payloads_are_documented_without_ingress_handlers(
     payload = command["properties"]["payload"]
     command_mapping = components["Command"]["discriminator"]["mapping"]
 
-    assert cluster_command["properties"]["command_type"] == {"const": "credential.resolve", "type": "string"}
+    assert cluster_command["properties"]["command_type"]["const"] == "credential.resolve"
     assert cluster_command["properties"]["payload"]["$ref"] == "#/components/schemas/CredentialResolve"
     assert set(components["CredentialResolve"]["required"]) == {"credential_ref"}
-    assert command["properties"]["command_type"] == {"const": "credential.resolve.workload", "type": "string"}
+    assert command["properties"]["command_type"]["const"] == "credential.resolve.workload"
     assert {"command_type", "command_revision", "payload"} <= set(command["required"])
     assert payload["$ref"] == "#/components/schemas/CredentialResolveWorkload"
     assert set(components["CredentialResolveWorkload"]["required"]) == {

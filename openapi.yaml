@@ -569,6 +569,8 @@ components:
           type: integer
           const: 2
           title: Protocol Revision
+          description: Envelope contract version. Version 2 removes command_id and
+            parent_command_id.
           default: 2
         commands:
           additionalProperties:
@@ -706,6 +708,8 @@ components:
           type: integer
           const: 2
           title: Command Revision
+          description: Payload contract version for credential.resolve.workload; matches
+            the request revision.
           default: 2
         credential:
           additionalProperties:
@@ -966,6 +970,8 @@ components:
           type: string
           format: uuid
           title: Message Id
+          description: The received delivery message's UUID, echoed so the sender
+            can match this receipt.
         resource:
           anyOf:
           - $ref: '#/components/schemas/ResourceReference'
@@ -1049,15 +1055,23 @@ components:
           type: string
           format: uuid
           title: Id
-          description: Caller-assigned work item identifier
+          description: Primary key of this EP work item, equal to work.execute.payload.work_item_id
+            supplied at creation. Use it to read or cancel this item and correlate
+            completion or credential callbacks. Syntara uses ActivityExecution.id;
+            runtime_context.execution_id identifies its containing execution.
         runtime_context:
           additionalProperties: true
           type: object
           title: Runtime Context
-          description: Non-secret caller-owned runtime context, stored once with the
-            work item and passed to the plugin. Available in reads, completion notifications,
-            and runtime_context[key] filters. Execution Plane does not interpret these
-            values for identity, authorization, placement, or lifecycle.
+          description: Optional caller-defined JSON object, defaulting to {}. Stored
+            once, unencrypted, on the work item and passed to the plugin as context.runtime_context;
+            also returned in work-item reads and completion notifications. Do not
+            include secrets. Syntara supplies project_id (Project.id), workflow_id
+            (Workflow.id), and execution_id (the containing Execution.id); EP does
+            not require these keys. These values do not authorize access, select placement,
+            identify the work item, or control its lifecycle. List filters runtime_context[key]=value
+            match exact JSON strings at literal top-level keys; an empty value checks
+            key existence and multiple keys use AND.
         status:
           $ref: '#/components/schemas/WorkItemStatus'
           description: Work item lifecycle status
@@ -1287,15 +1301,22 @@ components:
           type: string
           format: uuid
           title: Work Item Id
-          description: Identifier of the work item whose outcome is reported.
+          description: Primary key (WorkItem.id) supplied when this work was created;
+            identifies the item whose outcome is reported. Syntara uses it to look
+            up ActivityExecution.id.
         runtime_context:
           additionalProperties: true
           type: object
           title: Runtime Context
-          description: Non-secret caller-owned runtime context, stored once with the
-            work item and passed to the plugin. Available in reads, completion notifications,
-            and runtime_context[key] filters. Execution Plane does not interpret these
-            values for identity, authorization, placement, or lifecycle.
+          description: Optional caller-defined JSON object, defaulting to {}. Stored
+            once, unencrypted, on the work item and passed to the plugin as context.runtime_context;
+            also returned in work-item reads and completion notifications. Do not
+            include secrets. Syntara supplies project_id (Project.id), workflow_id
+            (Workflow.id), and execution_id (the containing Execution.id); EP does
+            not require these keys. These values do not authorize access, select placement,
+            identify the work item, or control its lifecycle. List filters runtime_context[key]=value
+            match exact JSON strings at literal top-level keys; an empty value checks
+            key existence and multiple keys use AND.
         status:
           $ref: '#/components/schemas/CompletionStatus'
         result:
@@ -1343,14 +1364,17 @@ components:
           type: string
           format: uuid
           title: Work Item Id
-          description: Identifier of the work item requesting the credential.
+          description: Primary key (WorkItem.id) of the EP work item requesting credentials.
+            Syntara uses it to look up ActivityExecution.id and verify the credential
+            binding for that work.
         attempt_id:
           type: string
           maxLength: 255
           minLength: 1
           pattern: ^[A-Za-z0-9_.:@/-]+$
           title: Attempt Id
-          description: Execution attempt that owns the workload invocation.
+          description: EP dispatch-attempt identifier, sent to the plugin as invocation_id;
+            distinct from WorkItem.id.
         credential_ref:
           type: string
           format: uuid
@@ -1369,7 +1393,8 @@ components:
           minLength: 1
           pattern: ^[A-Za-z0-9._:-]+$
           title: Step Revision Id
-          description: Workload revision that requested the credential.
+          description: Handler identifier from this work item's invocation; identifies
+            the implementation requesting credentials.
       additionalProperties: false
       type: object
       required:
@@ -1415,8 +1440,9 @@ components:
           type: string
           format: uuid
           title: Message Id
-          description: Delivery message identifier echoed in its receipt; not a work
-            identifier or deduplication key.
+          description: UUID assigned by the sender to this delivery message and echoed
+            in its transport receipt. It does not identify a work item or deduplicate
+            submissions; resource IDs in the payload do that.
         message_type:
           type: string
           const: command.submit
@@ -1616,7 +1642,8 @@ components:
           type: string
           format: uuid
           title: Work Item Id
-          description: Identifier of the existing work item to cancel.
+          description: Primary key (WorkItem.id) of the existing EP work item to cancel
+            within the authenticated client.
       additionalProperties: false
       type: object
       required:
@@ -1652,17 +1679,26 @@ components:
           type: string
           format: uuid
           title: Work Item Id
-          description: Caller-assigned identifier of the Execution Plane work item.
-            Reuse this identifier when retrying submission and when addressing the
-            same work.
+          description: Caller-assigned UUID used as the primary key (WorkItem.id)
+            of the new EP work item. It must be unique across EP work items, including
+            other clients' work. An existing UUID returns HTTP 409 and never overwrites
+            or reruns that item. On an uncertain submission retry, retain the UUID
+            and read the existing item after a conflict. Use it for reads, cancellation,
+            completion, and credential callbacks. Syntara supplies ActivityExecution.id,
+            not the containing Execution.id.
         runtime_context:
           additionalProperties: true
           type: object
           title: Runtime Context
-          description: Non-secret caller-owned runtime context, stored once with the
-            work item and passed to the plugin. Available in reads, completion notifications,
-            and runtime_context[key] filters. Execution Plane does not interpret these
-            values for identity, authorization, placement, or lifecycle.
+          description: Optional caller-defined JSON object, defaulting to {}. Stored
+            once, unencrypted, on the work item and passed to the plugin as context.runtime_context;
+            also returned in work-item reads and completion notifications. Do not
+            include secrets. Syntara supplies project_id (Project.id), workflow_id
+            (Workflow.id), and execution_id (the containing Execution.id); EP does
+            not require these keys. These values do not authorize access, select placement,
+            identify the work item, or control its lifecycle. List filters runtime_context[key]=value
+            match exact JSON strings at literal top-level keys; an empty value checks
+            key existence and multiple keys use AND.
         image:
           type: string
           maxLength: 2048
@@ -1712,8 +1748,9 @@ components:
           minLength: 1
           pattern: ^[A-Za-z0-9._:-]+$
           title: Step Revision Id
-          description: Workload-advertised revision of the step implementation to
-            execute.
+          description: Handler identifier advertised by the selected workload image.
+            The plugin runtime uses it to select the step implementation; it does
+            not identify this work item or an execution.
         inputs:
           additionalProperties: true
           type: object
@@ -1756,9 +1793,16 @@ components:
         command_type:
           type: string
           const: cluster.delete
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/ClusterDelete'
         occurred_at:
@@ -1779,9 +1823,16 @@ components:
         command_type:
           type: string
           const: cluster.register
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/ClusterRegister'
         occurred_at:
@@ -1802,9 +1853,16 @@ components:
         command_type:
           type: string
           const: cluster.update
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/ClusterUpdate'
         occurred_at:
@@ -1825,9 +1883,16 @@ components:
         command_type:
           type: string
           const: execution_target.delete
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetDelete'
         occurred_at:
@@ -1848,9 +1913,16 @@ components:
         command_type:
           type: string
           const: execution_target.health
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetHealth'
         occurred_at:
@@ -1871,9 +1943,16 @@ components:
         command_type:
           type: string
           const: execution_target.register
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetRegister'
         occurred_at:
@@ -1894,9 +1973,16 @@ components:
         command_type:
           type: string
           const: execution_target.update
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetUpdate'
         occurred_at:
@@ -1917,9 +2003,16 @@ components:
         command_type:
           type: string
           const: work.cancel
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/WorkCancel'
         occurred_at:
@@ -1940,9 +2033,16 @@ components:
         command_type:
           type: string
           const: work.execute
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 2
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/WorkExecute'
         occurred_at:
@@ -1963,9 +2063,16 @@ components:
         command_type:
           type: string
           const: work.execute.completed
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 2
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/Completion'
         occurred_at:
@@ -1986,9 +2093,16 @@ components:
         command_type:
           type: string
           const: credential.resolve
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/CredentialResolve'
         occurred_at:
@@ -2009,9 +2123,16 @@ components:
         command_type:
           type: string
           const: credential.resolve.workload
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 2
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/CredentialResolveWorkload'
         occurred_at:
@@ -2033,8 +2154,9 @@ components:
           type: string
           format: uuid
           title: Message Id
-          description: Delivery message identifier echoed in its receipt; not a work
-            identifier or deduplication key.
+          description: UUID assigned by the sender to this delivery message and echoed
+            in its transport receipt. It does not identify a work item or deduplicate
+            submissions; resource IDs in the payload do that.
         message_type:
           type: string
           const: command.submit

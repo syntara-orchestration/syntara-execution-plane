@@ -12,6 +12,56 @@ from execution_plane.work_item.work_item_store import WorkStore
 pytestmark = pytest.mark.integration
 
 
+async def test_project_workflow_and_execution_filters_select_exact_work_items(pg_client):
+    client, sessions, client_id = pg_client
+    project, workflow, execution, other_project, other_workflow, other_execution = [str(uuid4()) for _ in range(6)]
+    context = {"project_id": project, "workflow_id": workflow, "execution_id": execution}
+    contexts = [
+        context,
+        context,
+        context,
+        {**context, "project_id": other_project},
+        {**context, "workflow_id": other_workflow},
+        {**context, "execution_id": other_execution},
+        {"project_id": project, "workflow_id": workflow},
+        {},
+    ]
+    store = WorkStore(engine=sessions.kw["bind"])
+    items = [
+        await store.dispatch(client_id, uuid4(), {"runtime_context": value, "invocation": {"inputs": {}}})
+        for value in contexts
+    ]
+    # A full context match belonging to another client must not affect pages or totals.
+    foreign = await store.dispatch(f"{client_id}-foreign", uuid4(), {"runtime_context": context})
+
+    for filters, expected_indices in [
+        ({"project_id": project}, [0, 1, 2, 4, 5, 6]),
+        ({"workflow_id": workflow}, [0, 1, 2, 3, 5, 6]),
+        ({"execution_id": execution}, [0, 1, 2, 3, 4]),
+        (context, [0, 1, 2]),
+        ({**context, "execution_id": other_execution}, [5]),
+        ({"execution_id": str(uuid4())}, []),
+    ]:
+        params = {f"runtime_context[{key}]": value for key, value in filters.items()}
+        params.update({"limit": "2", "sort": "id", "include_total": "true"})
+        expected_ids = {str(items[index].id) for index in expected_indices}
+        seen = []
+        while True:
+            response = await client.get("/v1/work-items", params=params)
+            assert response.status_code == 200, response.text
+            page = response.json()
+            assert page["total"] == len(expected_ids)
+            assert len(page["resources"]) <= 2
+            seen.extend(item["id"] for item in page["resources"])
+            assert len(seen) == len(set(seen)), "Pagination repeated a work item"
+            assert str(foreign.id) not in seen
+            assert set(seen) <= expected_ids
+            if page["next"] is None:
+                break
+            params["cursor"] = page["next"]
+        assert set(seen) == expected_ids
+
+
 async def test_runtime_context_filters_are_scoped_paginated_and_exact(pg_client):
     client, sessions, client_id = pg_client
     contexts = [

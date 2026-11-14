@@ -38,7 +38,10 @@ class WorkloadInvocation(WireModel):
     """
 
     step_revision_id: StepIdentity = Field(
-        description="Workload-advertised revision of the step implementation to execute."
+        description=(
+            "Handler identifier advertised by the selected workload image. The plugin runtime uses it to select "
+            "the step implementation; it does not identify this work item or an execution."
+        )
     )
     inputs: dict[str, object] = Field(
         description="Step inputs defined by the selected workload; never use this field for credential bindings."
@@ -82,8 +85,11 @@ class WorkExecute(CommandPayload):
 
     work_item_id: UUID = Field(
         description=(
-            "Caller-assigned identifier of the Execution Plane work item. Reuse this identifier "
-            "when retrying submission and when addressing the same work."
+            "Caller-assigned UUID used as the primary key (WorkItem.id) of the new EP work item. "
+            "It must be unique across EP work items, including other clients' work. An existing UUID returns "
+            "HTTP 409 and never overwrites or reruns that item. On an uncertain submission retry, retain the UUID "
+            "and read the existing item after a conflict. Use it for reads, cancellation, completion, and credential "
+            "callbacks. Syntara supplies ActivityExecution.id, not the containing Execution.id."
         )
     )
     runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
