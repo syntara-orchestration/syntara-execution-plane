@@ -14,7 +14,7 @@ Together they answer: EP dispatch overhead stays within budget, separately from
 cluster scheduling and workload runtime.
 
 Data retention:
-  Each batch tags ``workflow_run_id`` as ``perf-dispatch-overhead:<run_id>:<index>``
+  Each batch tags ``runtime_context.benchmark_run`` as ``perf-dispatch-overhead:<run_id>:<index>``
   and deletes those work-item rows from the shared DB in a ``finally`` block,
   after a 40 s settle so the last item's Job teardown can finish
   (runs are sequential, so only that pod can still be in grace).
@@ -277,8 +277,7 @@ async def run_sequential_batch(
                     code="echo 'Hello, Execution Plane!'",
                     timeout_seconds=120,
                     environment={"EP_PERF_WORKER_TIMESTAMPS": "1"},
-                    # EP validates workflow_run_id against ^[A-Za-z0-9._:-]+$ — no "/".
-                    workflow_run_id=f"perf-dispatch-overhead:{run_id}:{run_index}",
+                    runtime_context={"benchmark_run": f"perf-dispatch-overhead:{run_id}:{run_index}"},
                 )
 
                 await asyncio.to_thread(submit_work_item, api_url, token, work_id=work_id, payload=payload)

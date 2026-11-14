@@ -194,7 +194,6 @@ async def test_dispatch_duplicate_id_raises() -> None:
 _VALID_INVOCATION_PAYLOAD = {
     "image": "quay.io/example/node:latest",
     "invocation": {
-        "workflow_run_id": "workflow-1",
         "step_revision_id": "script.v1",
         "inputs": {},
         "timeout_seconds": 300,
@@ -221,16 +220,14 @@ async def test_submit_duplicate_work_item_via_api_returns_409() -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             body = {
                 "message_id": str(uuid.uuid4()),
-                "command_id": str(item_id),
                 "source_id": "test-duplicate-api",
                 "destination_id": "execution-plane",
                 "scope": {"client_id": "test-duplicate-api"},
                 "command": {
-                    "command_id": str(item_id),
                     "command_type": "work.execute",
-                    "command_revision": 1,
+                    "command_revision": 2,
                     "occurred_at": datetime.now(UTC).isoformat(),
-                    "payload": _VALID_INVOCATION_PAYLOAD,
+                    "payload": _VALID_INVOCATION_PAYLOAD | {"work_item_id": str(item_id)},
                 },
             }
             first = await client.post("/v1/commands", json=body)

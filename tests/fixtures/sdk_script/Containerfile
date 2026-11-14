@@ -1,7 +1,8 @@
 FROM docker.io/library/python:3.12-slim
 
-# Match EP's immutable SDK source revision, including its runtime APIs.
-RUN pip install --no-cache-dir syntara-plugin-sdk==0.1.0a4
+# The contracts package owns the runtime service. Match EP's immutable source
+# revision: the published release still requires the removed workflow_run_id.
+RUN pip install --no-cache-dir "syntara-plugin-contracts @ https://github.com/syntara-orchestration/syntara-plugin-sdk/archive/048929e4399adabd89ecbe0f70ebc57c9c12c7a1.tar.gz#subdirectory=sdks/python/packages/contracts"
 
 COPY worker.py /opt/sdk-test-worker.py
 USER 1001

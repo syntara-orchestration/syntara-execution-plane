@@ -37,12 +37,22 @@ Every concrete command supports this method, including `ClusterDelete`,
 `TargetDelete` and `TargetHealth`. Partial updates serialize only supplied fields, retaining explicit
 nulls and placement discriminators without resetting omitted configuration.
 
-By default, each call generates a command UUID and UTC timestamp; `message_id`
-defaults to that command UUID. Keep the returned message for retries. To rebuild
-it from existing domain state, pass `command_id` and `occurred_at` explicitly,
-plus `message_id` if it differs. `parent_command_id` and `sequence` are optional;
-`Completion` requires a parent work command UUID. Source, destination and client
-scope are always supplied by the caller; the helper does not authenticate them.
+By default, each call generates an independent message UUID and UTC timestamp.
+Keep the returned message for retries, or pass `message_id` and `occurred_at` to
+reconstruct a delivery. Message IDs correlate receipts, not resource identity
+or deduplication. Source, destination and client scope are always supplied by
+the caller; the helper does not authenticate them.
+
+Protocol revision 2 has no command IDs or parent command IDs. `WorkExecute`,
+`Completion`, and `CredentialResolveWorkload` use revision 2 and require
+`work_item_id`; `WorkCancel` uses `work.cancel` revision 1 with the same field.
+Resources retain their IDs across deliveries and retries. Work execution also
+accepts optional non-secret caller-owned `runtime_context`, passed to the SDK,
+exposed by reads and completion, and filterable with `runtime_context[key]=value`.
+EP stores context once, outside encrypted invocation data. It never uses context
+for authorization, placement, or work identity. `step_revision_id` still selects
+the container handler; `workflow_run_id` is no longer a dedicated required field.
+Upgrade EP, AO, and plugin runtimes together with the matching distributions.
 
 ## Handling messages
 
@@ -56,10 +66,9 @@ result = await handler.handle(message, payload, context)
 ```
 
 Handlers implement `handle(message, payload, context)`. The catalog selects the
-payload model by command type and revision, validates it and checks required
-parent correlation. Handlers narrow the payload to their supported command
+payload model by command type and revision, validates its required resource identity and other fields. Handlers narrow the payload to their supported command
 types without parsing the raw dictionary again. The original envelope remains
-available for identity and correlation; partial-update payloads retain which
+available for routing and receipt correlation; partial-update payloads retain which
 fields were supplied. Authentication, authorization and domain-state validation
 (including validation after merging a patch) remain participant responsibilities.
 

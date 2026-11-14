@@ -10,7 +10,6 @@ from execution_plane_client.commands.work import WorkloadInvocation
 
 def _invocation() -> WorkloadInvocation:
     return WorkloadInvocation(
-        workflow_run_id="workflow-1",
         step_revision_id="script.v1",
         inputs={},
         timeout_seconds=60,
@@ -152,6 +151,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
 
     def run_job(**kwargs: object) -> dict:
         assert isinstance(kwargs["invocation"], WorkloadInvocation)
+        assert kwargs["runtime_context"] == {"project_id": "p", "execution_id": "e"}
         kwargs["on_result"](frame)
         assert trace[0][0] == "persist"
         trace.append(("cleanup",))
@@ -174,14 +174,15 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
     )
     item = WorkItem(
+        id=uuid4(),
         client_id="ao",
         execution_target_id=uuid4(),
         claim_owner_id=uuid4(),
         claim_generation=2,
+        runtime_context={"project_id": "p", "execution_id": "e"},
         payload={
             "image": "node:test",
             "invocation": {
-                "workflow_run_id": "workflow-1",
                 "step_revision_id": "script.v1",
                 "inputs": {},
                 "timeout_seconds": 60,

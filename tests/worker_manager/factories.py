@@ -100,7 +100,6 @@ def vanilla_k8s_resources() -> tuple[Cluster, ExecutionTarget, WorkItem]:
         payload={
             "image": "registry.example/node",
             "invocation": {
-                "workflow_run_id": "workflow-1",
                 "step_revision_id": "script.v1",
                 "inputs": {},
                 "timeout_seconds": 60,

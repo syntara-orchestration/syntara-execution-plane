@@ -260,10 +260,6 @@ hatch-vcs==0.5.0 \
     #   referencing
     #   structlog
     #   urllib3
-hatchling==1.32.4 \
-    --hash=sha256:08ecf7548fb48205e7f213d70c71e67b8271b7242093dc3f1da578b42c734a2c \
-    --hash=sha256:c4468f73144c054d2aab4ef0f0378c43b9878bf07f8ffd6b79690e970d375f07
-    # via syntara-plugin-contracts
 hatchling==1.33.0 \
     --hash=sha256:415290b84f464d2884303fca8974d38e7b85579069fab02a15db0828fbb1446d \
     --hash=sha256:4c422bd4d554fcff5de5b73e9596f85e41e9f97f7e553d8f7595ecb31a627bef
@@ -278,6 +274,13 @@ hatchling==1.33.0 \
     #   jsonschema
     #   jsonschema-specifications
     #   opentelemetry-api
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-common
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-proto
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-settings
     #   referencing
@@ -413,6 +416,7 @@ setuptools==84.2.1 \
     #   cffi
     #   cryptography
     #   frozenlist
+    #   googleapis-common-protos
     #   greenlet
     #   grpcio
     #   mako

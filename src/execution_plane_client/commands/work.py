@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import Field, StrictStr, field_validator
 
 from execution_plane_client.commands.base import CommandPayload
+from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.protocol import PositiveInt, WireModel, validate_json
 
 StepIdentity = Annotated[StrictStr, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._:-]+$")]
@@ -36,16 +37,14 @@ class WorkloadInvocation(WireModel):
     claim that arbitrary file paths have been mounted by EP.
     """
 
-    workflow_run_id: StepIdentity = Field(description="Caller-owned identity of the workflow run containing this step.")
     step_revision_id: StepIdentity = Field(
-        description="Workload-advertised revision of the step implementation to execute."
+        description=(
+            "Handler identifier advertised by the selected workload image. The plugin runtime uses it to select "
+            "the step implementation; it does not identify this work item or an execution."
+        )
     )
     inputs: dict[str, object] = Field(
         description="Step inputs defined by the selected workload; never use this field for credential bindings."
-    )
-    runtime_context: dict[str, object] = Field(
-        default_factory=dict,
-        description="Non-secret execution context supplied to the workload; not for credential bindings.",
     )
     credential_bindings: list[WorkCredentialBinding] = Field(
         default_factory=list,
@@ -61,7 +60,7 @@ class WorkloadInvocation(WireModel):
         ),
     ]
 
-    @field_validator("inputs", "runtime_context", mode="before")
+    @field_validator("inputs", mode="before")
     @classmethod
     def check_json(cls, value: object) -> object:
         """Keep nested invocation data finite, portable, and bounded."""
@@ -82,6 +81,18 @@ class WorkExecute(CommandPayload):
     """Schedule one workload implementing the SDK container service."""
 
     command_type: ClassVar[str] = "work.execute"
+    command_revision: ClassVar[int] = 2
+
+    work_item_id: UUID = Field(
+        description=(
+            "Caller-assigned UUID used as the primary key (WorkItem.id) of the new EP work item. "
+            "It must be unique across EP work items, including other clients' work. An existing UUID returns "
+            "HTTP 409 and never overwrites or reruns that item. On an uncertain submission retry, retain the UUID "
+            "and read the existing item after a conflict. Use it for reads, cancellation, completion, and credential "
+            "callbacks. Syntara supplies ActivityExecution.id, not the containing Execution.id."
+        )
+    )
+    runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
 
     image: Annotated[
         StrictStr,

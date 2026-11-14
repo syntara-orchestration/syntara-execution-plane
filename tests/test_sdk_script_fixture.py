@@ -28,16 +28,15 @@ def _load_worker() -> ModuleType:
     return module
 
 
-def test_sdk_script_image_matches_ep_contracts_release() -> None:
+def test_sdk_script_image_matches_ep_contracts_source() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
-    contracts = next(
-        dependency
-        for dependency in project["project"]["dependencies"]
-        if dependency.startswith("syntara-plugin-contracts==")
-    )
-    expected = contracts.split("==", 1)[1]
+    source = project["tool"]["uv"]["sources"]["syntara-plugin-contracts"]
+    repository = source["git"].removesuffix(".git")
+    expected = f"{repository}/archive/{source['rev']}.tar.gz#subdirectory={source['subdirectory']}"
     containerfile = (Path(__file__).parent / "fixtures" / "sdk_script" / "Containerfile").read_text()
-    match = re.search(r"^RUN pip install --no-cache-dir syntara-plugin-sdk==([^ \n]+)$", containerfile, re.MULTILINE)
+    match = re.search(
+        r'^RUN pip install --no-cache-dir "syntara-plugin-contracts @ ([^"\n]+)"$', containerfile, re.MULTILINE
+    )
 
     assert match is not None
     assert match.group(1) == expected
@@ -47,7 +46,6 @@ def test_python_script_result_matches_ao_output_contract() -> None:
     worker = _load_worker()
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "python", "code": "import json; print(json.dumps({'answer': 42}))"},
         timeout_seconds=10,
@@ -68,7 +66,6 @@ def test_python_script_json_after_logs_is_parsed() -> None:
     worker = _load_worker()
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "python", "code": "import json; print('running'); print(json.dumps({'answer': 42}))"},
         timeout_seconds=10,
@@ -88,7 +85,6 @@ def test_perf_worker_timestamps_appended_to_stderr_when_enabled() -> None:
     worker._server_listening_mono = listening
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={
             "language": "bash",
@@ -116,7 +112,6 @@ def test_perf_worker_timestamps_omitted_by_default() -> None:
     worker._server_listening_mono = 1000.0
     invocation = ContainerInvocation(
         invocation_id="test-invocation",
-        workflow_run_id="test-workflow",
         step_revision_id="script.v1",
         inputs={"language": "bash", "code": "echo hi"},
         timeout_seconds=10,

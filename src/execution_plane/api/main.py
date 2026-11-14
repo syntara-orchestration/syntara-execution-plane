@@ -192,6 +192,11 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
 
     @app.get(
         "/v1/work-items",
+        description=(
+            "List client-owned work. runtime_context[key]=value matches an exact JSON string; "
+            "an empty value checks key existence. Keys are literal top-level keys and multiple "
+            "keys are ANDed. Filters apply before pagination and total counts."
+        ),
         responses={422: {"description": "Invalid query parameters or cursor"}},
     )
     async def work_items(
@@ -304,7 +309,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
         registry.capabilities(),
         [
             catalog.definition("credential.resolve", 1),
-            catalog.definition("credential.resolve.workload", 1),
+            catalog.definition("credential.resolve.workload", 2),
         ],
     )
     return app

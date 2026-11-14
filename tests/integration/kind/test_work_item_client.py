@@ -30,9 +30,10 @@ def test_build_payload_is_accepted_by_work_execute_schema() -> None:
         timeout_seconds=60,
         environment={},
     )
-    WorkExecute.model_validate(payload)
+    WorkExecute.model_validate(payload | {"work_item_id": "00000000-0000-0000-0000-000000000001"})
     assert payload["image"] == DEFAULT_NODE_IMAGE
-    assert payload["invocation"]["workflow_run_id"]
+    assert "workflow_run_id" not in payload["invocation"]
+    assert payload["runtime_context"] == {}
     assert payload["invocation"]["step_revision_id"] == "script.v1"
     assert "environment" not in payload["invocation"]["inputs"]
 
@@ -47,7 +48,7 @@ def test_build_payload_includes_environment_and_image_override() -> None:
     )
     assert payload["image"] == "quay.io/example/node:dev"
     assert payload["invocation"]["inputs"]["environment"] == {"FOO": "bar"}
-    WorkExecute.model_validate(payload)
+    WorkExecute.model_validate(payload | {"work_item_id": "00000000-0000-0000-0000-000000000001"})
 
 
 def test_build_payload_rejects_invalid_timeout_through_schema() -> None:
@@ -58,7 +59,7 @@ def test_build_payload_rejects_invalid_timeout_through_schema() -> None:
         environment={},
     )
     with pytest.raises(ValidationError, match="timeout_seconds"):
-        WorkExecute.model_validate(payload)
+        WorkExecute.model_validate(payload | {"work_item_id": "00000000-0000-0000-0000-000000000001"})
 
 
 def test_service_token_claims_include_project_id() -> None:

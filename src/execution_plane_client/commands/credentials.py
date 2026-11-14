@@ -23,15 +23,26 @@ class CredentialResolve(CommandPayload):
 
 
 class CredentialResolveWorkload(CommandPayload):
-    """Resolve one credential reference for the work item named by its parent command."""
+    """Resolve one credential reference for the identified work item."""
 
     command_type: ClassVar[str] = "credential.resolve.workload"
-    requires_parent: ClassVar[bool] = True
-    attempt_id: Identifier = Field(description="Execution attempt that owns the workload invocation.")
+    command_revision: ClassVar[int] = 2
+    work_item_id: UUID = Field(
+        description=(
+            "Primary key (WorkItem.id) of the EP work item requesting credentials. Syntara uses it to look up "
+            "ActivityExecution.id and verify the credential binding for that work."
+        )
+    )
+    attempt_id: Identifier = Field(
+        description="EP dispatch-attempt identifier, sent to the plugin as invocation_id; distinct from WorkItem.id."
+    )
     credential_ref: UUID = Field(
         repr=False,
         description="Opaque AO credential reference bound to the requested recipe.",
     )
     credential_recipe_id: CredentialRecipeId = Field(description="Logical Plugin SDK recipe requested by the workload.")
-    workflow_run_id: StepIdentity = Field(description="Caller-owned workflow run containing the active step.")
-    step_revision_id: StepIdentity = Field(description="Workload revision that requested the credential.")
+    step_revision_id: StepIdentity = Field(
+        description=(
+            "Handler identifier from this work item's invocation; identifies the implementation requesting credentials."
+        )
+    )

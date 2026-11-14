@@ -35,14 +35,12 @@ Its invocation contains:
 
 ```json
 {
-  "workflow_run_id": "workflow-1",
   "step_revision_id": "script.v1",
   "inputs": {
     "language": "bash",
     "code": "printf '%s' \"$GREETING\"",
     "environment": {"GREETING": "hello"}
   },
-  "runtime_context": {},
   "credential_bindings": [],
   "timeout_seconds": 60
 }
@@ -97,3 +95,8 @@ kind load docker-image localhost/syntara-sdk-script:dev --name integration-test
 This is the default local helper image. Set `EP_NODE_IMAGE` (or `--image`) and
 `--step-revision-id` to use another SDK-compatible runner. CI builds the fixture
 image for integration tests.
+
+Runtime context arrives beside `invocation` on submission. EP stores it in
+`WorkItem.runtime_context` and passes it to the SDK without duplicating it in
+the encrypted payload. `step_revision_id` remains the handler selector; the SDK
+requires no workflow run ID. See [integration.md](integration.md#runtime-context).

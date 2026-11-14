@@ -26,7 +26,9 @@ class CredentialResolveWorkloadCommandResult(WireModel):
     """Typed result returned for a workload credential-resolution command."""
 
     command_type: Literal["credential.resolve.workload"] = "credential.resolve.workload"
-    command_revision: Literal[1] = 1
+    command_revision: Literal[2] = Field(
+        default=2, description="Payload contract version for credential.resolve.workload; matches the request revision."
+    )
     credential: dict[
         Annotated[StrictStr, Field(min_length=1, max_length=128)],
         Annotated[StrictStr, Field(min_length=1, max_length=8192)],
@@ -69,6 +71,8 @@ class TransportReceipt(WireModel):
     """Receipt of a handled request, without a persisted command record."""
 
     received: Literal[True] = True
-    message_id: UUID
+    message_id: UUID = Field(
+        description="The received delivery message's UUID, echoed so the sender can match this receipt."
+    )
     resource: ResourceReference | None = None
     result: CommandResult | None = None

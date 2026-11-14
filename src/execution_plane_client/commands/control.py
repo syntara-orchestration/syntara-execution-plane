@@ -7,16 +7,19 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from execution_plane_client.commands.base import CommandPayload
+from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.models.work_item import WorkItemStatus
-from execution_plane_client.protocol import ResourceReference, validate_json
+from execution_plane_client.protocol import validate_json
 
 
-class CancelCommand(CommandPayload):
-    """Cancel an existing work command, whose UUID is its work-item UUID."""
+class WorkCancel(CommandPayload):
+    """Request cancellation of an existing work item."""
 
-    command_type: ClassVar[str] = "command.cancel"
+    command_type: ClassVar[str] = "work.cancel"
 
-    target_command_id: UUID
+    work_item_id: UUID = Field(
+        description="Primary key (WorkItem.id) of the existing EP work item to cancel within the authenticated client."
+    )
 
 
 class CompletionStatus(StrEnum):
@@ -32,11 +35,18 @@ class Completion(CommandPayload):
     """Terminal or uncertain work outcome delivered to the initiating client."""
 
     command_type: ClassVar[str] = "work.execute.completed"
-    requires_parent: ClassVar[bool] = True
+    command_revision: ClassVar[int] = 2
+
+    work_item_id: UUID = Field(
+        description=(
+            "Primary key (WorkItem.id) supplied when this work was created; identifies the item whose outcome "
+            "is reported. Syntara uses it to look up ActivityExecution.id."
+        )
+    )
+    runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
 
     status: CompletionStatus
     result: dict[str, object] = Field(default_factory=dict, repr=False)
-    resource: ResourceReference | None = None
     error_code: str | None = None
 
     @field_validator("result", mode="before")

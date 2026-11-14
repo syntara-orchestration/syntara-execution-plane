@@ -172,3 +172,35 @@ async def test_dispatch_joins_transport_and_database_callbacks_before_exiting(  
 
     assert transport_finished.is_set()
     assert events == ["database callback finished", "transport finished"]
+
+
+@pytest.mark.parametrize("stored_identity", ["absent", "matching", "different"])
+async def test_stored_work_uses_row_identity_and_passes_context_separately(monkeypatch, stored_identity):
+    """Stored row identity wins; context is passed separately to the plugin."""
+    from uuid import uuid4
+
+    settings = Settings()
+    resolver = CredentialResolver(settings)
+    resources = vanilla_k8s_resources()
+    work_item = resources[2]
+    assert "work_item_id" not in work_item.payload
+    payload = dict(work_item.payload)
+    work_item.runtime_context = {"work_item_id": str(uuid4()), "project_id": "project"}
+    if stored_identity != "absent":
+        payload["work_item_id"] = str(work_item.id if stored_identity == "matching" else uuid4())
+    work_item.payload = payload
+
+    async def resolve(_credential_ref: UUID, **_kwargs: object) -> str:
+        return "resolved-token"
+
+    monkeypatch.setattr(resolver, "resolve", resolve)
+    manager = vanilla_k8s_manager(settings, resolver, resources, WorkStoreStub())
+    try:
+        context = await manager._dispatch_context(work_item)
+        assert context.identity == str(work_item.id)
+        assert context.attempt_id == f"{work_item.id}-{work_item.claim_generation}"
+        assert "metadata" not in context.invocation.model_dump()
+        assert context.runtime_context == work_item.runtime_context
+        assert "runtime_context" not in context.invocation.model_dump()
+    finally:
+        await resolver.close()

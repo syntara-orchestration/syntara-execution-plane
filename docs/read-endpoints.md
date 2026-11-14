@@ -103,3 +103,11 @@ GET /v1/work-items?status[in]=pending,failed&claimed_at[isnull]=true&limit=20
 ## OpenAPI spec
 
 The read endpoints described here and the command ingestion endpoint (`POST /v1/commands`) share a single spec file committed at [`openapi.yaml`](../openapi.yaml) — there is no separate spec for reads vs. commands. The spec is generated automatically by FastAPI from route decorators and Pydantic type annotations.
+
+Work-item reads include `runtime_context`, the non-secret JSON object supplied at
+submission (default `{}`). It is also passed to the plugin. Use
+`runtime_context[project_id]=<id>` for exact JSON string equality, or
+`runtime_context[execution_id]=` for key existence. Multiple keys are ANDed;
+keys are literal top-level keys, commas are literal values, and numeric/boolean
+JSON values do not match strings. Context is not sortable. The indexed JSONB
+column is filtered in PostgreSQL before pagination and totals within client scope.
