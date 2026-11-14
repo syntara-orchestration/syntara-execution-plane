@@ -49,7 +49,13 @@ class WorkItemRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID = Field(description="Caller-assigned work item identifier")
+    id: UUID = Field(
+        description=(
+            "Primary key of this EP work item, equal to work.execute.payload.work_item_id supplied at creation. "
+            "Use it to read or cancel this item and correlate completion or credential callbacks. "
+            "Syntara uses ActivityExecution.id; runtime_context.execution_id identifies its containing execution."
+        )
+    )
     runtime_context: RuntimeContext = Field(default_factory=dict)
     status: WorkItemStatus = Field(description="Work item lifecycle status")
     result: dict[str, Any] | None = Field(default=None, description="Work execution result payload")

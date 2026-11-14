@@ -17,7 +17,9 @@ class WorkCancel(CommandPayload):
 
     command_type: ClassVar[str] = "work.cancel"
 
-    work_item_id: UUID = Field(description="Identifier of the existing work item to cancel.")
+    work_item_id: UUID = Field(
+        description="Primary key (WorkItem.id) of the existing EP work item to cancel within the authenticated client."
+    )
 
 
 class CompletionStatus(StrEnum):
@@ -35,7 +37,12 @@ class Completion(CommandPayload):
     command_type: ClassVar[str] = "work.execute.completed"
     command_revision: ClassVar[int] = 2
 
-    work_item_id: UUID = Field(description="Identifier of the work item whose outcome is reported.")
+    work_item_id: UUID = Field(
+        description=(
+            "Primary key (WorkItem.id) supplied when this work was created; identifies the item whose outcome "
+            "is reported. Syntara uses it to look up ActivityExecution.id."
+        )
+    )
     runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
 
     status: CompletionStatus
