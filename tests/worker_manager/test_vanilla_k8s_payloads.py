@@ -173,14 +173,16 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         Settings(),
         credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
     )
+    work_item_id = uuid4()
     item = WorkItem(
-        id=uuid4(),
+        id=work_item_id,
         client_id="ao",
         execution_target_id=uuid4(),
         claim_owner_id=uuid4(),
         claim_generation=2,
         runtime_context={"project_id": "p", "execution_id": "e"},
         payload={
+            "work_item_id": str(work_item_id),
             "image": "node:test",
             "invocation": {
                 "step_revision_id": "script.v1",

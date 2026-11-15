@@ -92,12 +92,14 @@ def vanilla_k8s_resources() -> tuple[Cluster, ExecutionTarget, WorkItem]:
         updated_by=uuid4(),
         updated_at=now,
     )
+    work_item_id = uuid4()
     work_item = WorkItem(
-        id=uuid4(),
+        id=work_item_id,
         client_id="syntara-orchestration",
         status=WorkItemStatus.CLAIMED,
         execution_target_id=target.id,
         payload={
+            "work_item_id": str(work_item_id),
             "image": "registry.example/node",
             "invocation": {
                 "step_revision_id": "script.v1",

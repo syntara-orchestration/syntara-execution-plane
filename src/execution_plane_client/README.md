@@ -43,16 +43,13 @@ reconstruct a delivery. Message IDs correlate receipts, not resource identity
 or deduplication. Source, destination and client scope are always supplied by
 the caller; the helper does not authenticate them.
 
-The in-development protocol remains revision 1 and has no command IDs or parent command IDs. `WorkExecute`,
-`Completion`, and `CredentialResolveWorkload` use revision 1 and require
-`work_item_id`; `WorkCancel` uses `work.cancel` revision 1 with the same field.
-Resources retain their IDs across deliveries and retries. Work execution also
-accepts optional non-secret caller-owned `runtime_context`, passed to the SDK,
-exposed by reads and completion, and filterable with `runtime_context[key]=value`.
-EP stores context once, outside encrypted invocation data. It never uses context
-for authorization, placement, or work identity. `step_revision_id` still selects
-the container handler; `workflow_run_id` is no longer a dedicated required field.
-Upgrade EP, AO, and plugin runtimes together with the matching distributions.
+`WorkExecute` requires a caller-assigned `work_item_id`, which becomes the new
+WorkItem's primary key. Submitting an existing ID returns HTTP 409. Use that same
+ID for `WorkCancel`, `Completion`, and `CredentialResolveWorkload` requests.
+
+Work execution accepts optional non-secret `runtime_context`, passed to the
+plugin and included in work-item reads and completion notifications. See
+[runtime context](../../docs/integration.md#runtime-context) for examples and filtering.
 
 ## Handling messages
 
@@ -66,7 +63,8 @@ result = await handler.handle(message, payload, context)
 ```
 
 Handlers implement `handle(message, payload, context)`. The catalog selects the
-payload model by command type and revision, validates its required resource identity and other fields. Handlers narrow the payload to their supported command
+payload model by command type and revision and validates its fields. Handlers
+narrow the payload to their supported command
 types without parsing the raw dictionary again. The original envelope remains
 available for routing and receipt correlation; partial-update payloads retain which
 fields were supplied. Authentication, authorization and domain-state validation

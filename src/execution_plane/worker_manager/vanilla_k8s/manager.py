@@ -157,8 +157,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             raise RetryableDispatchError(message)
 
         try:
-            # Stored rows predate explicit request identity; the row remains authoritative.
-            command = WorkExecute.model_validate({**(work_item.payload or {}), "work_item_id": work_item.id})
+            command = WorkExecute.model_validate(work_item.payload)
         except ValidationError as exc:
             message = "Work item payload is not a valid work.execute command"
             raise WorkItemPayloadError(message) from exc

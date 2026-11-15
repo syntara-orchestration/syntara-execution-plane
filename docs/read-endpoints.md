@@ -13,6 +13,7 @@ AO endpoint: `GET /api/execution_plane/v1/work_items`
 | `id` | UUID |
 | `status` | string |
 | `result` | object \| null |
+| `runtime_context` | object |
 | `created_at` | datetime |
 | `claimed_at` | datetime \| null |
 | `completed_at` | datetime \| null |
@@ -73,7 +74,7 @@ EP ports `syntara.core.utils.filters.parse_filters` / `apply_filters` and `synta
 
 | Endpoint | Filterable fields |
 |---|---|
-| `/v1/work-items` | `id`, `status`, `created_at`, `claimed_at`, `completed_at`, `resource_cleanup_status`, `resource_cleanup_error` |
+| `/v1/work-items` | `id`, `status`, `created_at`, `claimed_at`, `completed_at`, `resource_cleanup_status`, `resource_cleanup_error`, and `runtime_context[key]` |
 | `/v1/execution-targets` | All sortable fields above, plus `last_ran_at`, `status_message`, and `labels[key]` |
 | `/v1/clusters` | All sortable fields above, plus `status_message` and `labels[key]` |
 
@@ -100,14 +101,21 @@ GET /v1/clusters?labels[env]=prod&enabled=true&sort=-updated_at
 GET /v1/work-items?status[in]=pending,failed&claimed_at[isnull]=true&limit=20
 ```
 
+### Runtime context
+
+Work-item reads include the caller's `runtime_context` object. Filter it with:
+
+```text
+GET /v1/work-items?runtime_context[project_id]=<id>
+GET /v1/work-items?runtime_context[execution_id]=
+```
+
+A nonempty value matches an exact JSON string; an empty value checks whether the
+key exists. Multiple keys use AND. Keys are literal top-level keys: dots do not
+traverse nested objects, commas are literal values, and numeric/boolean JSON
+values do not match strings. These filters apply before pagination and totals,
+within the authenticated client's scope. Context cannot be used for sorting.
+
 ## OpenAPI spec
 
 The read endpoints described here and the command ingestion endpoint (`POST /v1/commands`) share a single spec file committed at [`openapi.yaml`](../openapi.yaml) — there is no separate spec for reads vs. commands. The spec is generated automatically by FastAPI from route decorators and Pydantic type annotations.
-
-Work-item reads include `runtime_context`, the non-secret JSON object supplied at
-submission (default `{}`). It is also passed to the plugin. Use
-`runtime_context[project_id]=<id>` for exact JSON string equality, or
-`runtime_context[execution_id]=` for key existence. Multiple keys are ANDed;
-keys are literal top-level keys, commas are literal values, and numeric/boolean
-JSON values do not match strings. Context is not sortable. The indexed JSONB
-column is filtered in PostgreSQL before pagination and totals within client scope.

@@ -31,6 +31,10 @@ the lockfile and requirement exports.
 ## Command and workload data
 
 `work.execute` accepts `image`, `selectors`, and optional `output_config`.
+The request's `runtime_context` is passed to plugin code as
+`context.runtime_context`; see [runtime context](integration.md#runtime-context).
+`invocation.step_revision_id` selects the handler advertised by the container.
+
 Its invocation contains:
 
 ```json
@@ -95,8 +99,3 @@ kind load docker-image localhost/syntara-sdk-script:dev --name integration-test
 This is the default local helper image. Set `EP_NODE_IMAGE` (or `--image`) and
 `--step-revision-id` to use another SDK-compatible runner. CI builds the fixture
 image for integration tests.
-
-Runtime context arrives beside `invocation` on submission. EP stores it in
-`WorkItem.runtime_context` and passes it to the SDK without duplicating it in
-the encrypted payload. `step_revision_id` remains the handler selector; the SDK
-requires no workflow run ID. See [integration.md](integration.md#runtime-context).

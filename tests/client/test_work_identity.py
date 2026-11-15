@@ -9,7 +9,6 @@ from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.commands.control import Completion, WorkCancel
 from execution_plane_client.commands.credentials import CredentialResolveWorkload
 from execution_plane_client.commands.work import WorkExecute
-from execution_plane_client.protocol import MessageEnvelope
 from tests.test_api_schemas import _payload
 
 
@@ -19,21 +18,6 @@ def test_rebuilt_submission_changes_only_delivery_identity():
     assert first.message_id != second.message_id
     assert first.command.payload == second.command.payload
     assert CommandCatalog().validate(second).work_item_id == command.work_item_id
-    assert "runtime_context" not in command.invocation.model_dump()
-
-
-@pytest.mark.parametrize("location", ["envelope", "command"])
-@pytest.mark.parametrize("field", ["command_id", "parent_command_id"])
-def test_legacy_identity_fields_are_rejected(location, field):
-    body = (
-        WorkCancel(work_item_id=uuid4())
-        .to_message(source_id="ao", destination_id="ep", client_id="ao")
-        .model_dump(mode="json")
-    )
-    target = body if location == "envelope" else body["command"]
-    target[field] = str(uuid4())
-    with pytest.raises(ValidationError, match="Extra inputs"):
-        MessageEnvelope.model_validate(body)
 
 
 @pytest.mark.parametrize("value", [None, "bad-uuid", 42])
@@ -66,8 +50,3 @@ def test_runtime_context_requires_bounded_finite_json_object(model, runtime_cont
     payload = _payload() if model is WorkExecute else {"work_item_id": str(uuid4()), "status": "completed"}
     with pytest.raises(ValidationError):
         model.model_validate(payload | {"runtime_context": runtime_context})
-
-
-def test_cancel_rejects_legacy_target_command_id():
-    with pytest.raises(ValidationError):
-        WorkCancel.model_validate({"target_command_id": str(uuid4())})

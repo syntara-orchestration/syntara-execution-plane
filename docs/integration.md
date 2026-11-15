@@ -37,10 +37,12 @@ commands or provide command-status or command-children endpoints.
 
 `payload.work_item_id` supplies the new row's primary key, `WorkItem.id`, and
 must be unique across all EP work items. Syntara uses its `ActivityExecution.id`
-for this key; the containing `Execution.id` is a different identifier. A
-duplicate submission returns HTTP 409 without modifying or rerunning the item.
-The independent `message_id`
-correlates this delivery with its receipt; it does not deduplicate requests. HTTP 202 returns `received`, `message_id` and an optional `resource`
+for this key; the containing `Execution.id` is a different identifier.
+Submitting `work.execute` with a `work_item_id` that already exists returns
+HTTP 409 without modifying or rerunning that work item.
+
+The `message_id` correlates this delivery with its receipt; it does not
+deduplicate requests. HTTP 202 returns `received`, `message_id` and an optional `resource`
 reference. It confirms application of the domain request, not completion of a
 job, cluster setup or draining.
 
@@ -82,9 +84,9 @@ The outbound `work.execute.completed` command is documented separately under
 
 ## Installed commands
 
-| Type (revision 1 unless specified) | Payload and effect |
+| Type (revision 1) | Payload and effect |
 | --- | --- |
-| `work.execute` (revision 1) | `WorkExecute`: required `work_item_id`, optional runtime context, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
+| `work.execute` | `WorkExecute`: required `work_item_id`, optional runtime context, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
 | `work.cancel` | `work_item_id`: existing work UUID; request cancellation through `WorkStore` |
 | `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_id`, explicitly changed Cluster fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
@@ -147,7 +149,7 @@ delivery acknowledgement and the delivery lease. EP's
 Completion Notifier sends a `work.execute.completed` command to Syntara at
 `EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
-The revision-1 `Completion` payload contains required `work_item_id`, `status`,
+The `Completion` payload contains required `work_item_id`, `status`,
 `result`, caller `runtime_context`, and optional `error_code`. Status is `completed`,
 `failed`, `cancelled` or `reconciliation_required`. `occurred_at` is the work's
 completion time. Syntara's request size limit should accommodate the work
@@ -156,7 +158,7 @@ invocation's output limit.
 Syntara registers a handler for `CommandCatalog().definition("work.execute.completed", 1)`
 in its `CommandRegistry`. Syntara authenticates EP's client certificate and
 authorizes the command's source, destination and client scope. Both completion
-and revision-1 `credential.resolve.workload` use `payload.work_item_id` to look
+and `credential.resolve.workload` use `payload.work_item_id` to look
 up the corresponding AO ActivityExecution. Credential resolution also validates
 the activity state, workflow-node credential binding, and persisted project
 ownership; caller context never supplies authorization.
@@ -172,76 +174,23 @@ See [cold-start-node-dispatch.md](cold-start-node-dispatch.md) for execution and
 
 ## Runtime context
 
-`WorkExecute.runtime_context` is an optional finite non-secret JSON object (default
-`{}`), bounded by the ordinary payload limit. On the wire it is
-`command.payload.runtime_context`, beside `invocation`. EP stores it once in
-`WorkItem.runtime_context`, a JSONB column with a GIN index, outside the encrypted
-payload. The worker passes that same context to the SDK's `runtime_context`.
-Work-item reads and completion notifications expose the same stored value.
-Duplicate submissions return 409 and cannot overwrite it.
+`WorkExecute.runtime_context` is optional caller-defined JSON (default `{}`).
+Submit it at `command.payload.runtime_context`, beside `invocation`. EP stores
+it unencrypted in `WorkItem.runtime_context` and passes it to plugin code as
+`context.runtime_context`. Work-item reads and completion notifications include
+that same value. Do not include secrets.
 
-AO supplies these UUID strings together from its persisted execution:
+AO supplies these UUID strings from its persisted execution:
 
 | Context key | Meaning and use |
 | --- | --- |
 | `project_id` | `Project.id` containing the workflow; groups work by project. |
 | `workflow_id` | `Workflow.id` being executed; groups work across executions of that workflow. |
-| `execution_id` | `Execution.id` containing the activity; groups that execution's work items. It is not `ActivityExecution.id` or a Temporal workflow/run ID. |
+| `execution_id` | `Execution.id` containing the activity; groups that execution's work items. |
 
-These values are visible to plugin code as `context.runtime_context` and can
-be filtered through EP's work-item list API. They are stored unencrypted.
-EP does not require or interpret these keys. Context does not identify
-work, authorize credentials, select targets, or change lifecycle decisions.
-Credentials belong in the existing credential callback, never in context.
-Target labels and work selectors retain their placement role.
+EP does not require these keys. Context is descriptive data; work-item identity,
+authorization, and target selection use their dedicated fields and checks.
 
-The invocation retains `step_revision_id` to select and validate the advertised
-container handler. There is no dedicated or required `workflow_run_id`. Callers
-may add a `temporal_run_id` identifying a Temporal engine run to context if
-they need it; it is distinct from Syntara's `Execution.id`. AO does
-not send one by default. No `metadata` or `payload.context` alias is accepted.
-
-Filter with `GET /v1/work-items?runtime_context[project_id]=<id>`.
-Values match exact JSON strings; an empty query value checks key existence.
-Multiple keys are ANDed. Keys are literal top-level keys (dots do not traverse
-nested objects); commas are literal, and numbers/booleans are not coerced to
-strings. Filtering runs before pagination and total counts, within client scope.
-Context has no update or sort API.
-
-## Coordinated protocol upgrade
-
-Protocol and command revisions remain 1 while this contract is in development.
-The envelope no longer accepts `command_id` or `parent_command_id`. Work execution,
-completion, workload credential resolution, and `work.cancel` address work with
-`work_item_id`. All participants and token scopes must be upgraded together; there
-are no legacy wire aliases. Message IDs remain receipt correlation only.
-
-Deploy AO with the matching released `execution-plane-client` package and EP
-service. Do not deploy the AO changes with the older client distribution. The
-release must update AO's dependency constraint, lockfile, and exported hashed
-requirements to the actual published version.
-
-Existing work rows retain their IDs, results, claims, and notification state.
-Workers recover identity from `WorkItem.id` when validating stored payloads,
-including payloads saved before this contract change. Stop EP writers and
-workers, back up the database, and run the context migration with the existing
-payload encryption key. It decrypts old payloads in batches, moves nested context
-and legacy metadata to the column, and retains old workflow run IDs as optional
-`temporal_run_id` context. Conflicting keys abort the transaction for explicit
-reconciliation. Invocation data remains encrypted, without a second context copy.
-The migration is forward-only: new requests cannot reconstruct the old required
-workflow run ID. Rollback requires restoring the pre-upgrade backup. Deploy the
-matching SDK contracts and rebuild plugin containers as part of the upgrade.
-
-Cancellation and deletion use work-item identity, not command ancestry. The
-separate cancellation/deletion implementation can retain `WorkDelete.work_item_id`
-and adopt `WorkCancel` without changing cancellation intent, cleanup fencing,
-callback suppression, reconciliation, or purge semantics.
-
-During review, the SDK contracts dependency is pinned to an immutable commit on
-its feature branch. `requirements-vcs.txt` carries that source separately from
-hashed PyPI requirements. Hermeto prefetches both manifests. The offline build
-extracts the SDK project and canonical schemas from the pinned Git archive;
-local archive URLs cannot select this package subdirectory with uv. It also consumes `requirements-build-sdk.txt` for the SDK's pinned build backend;
-`make sync-requirements` regenerates these files. Replace the Git source with the
-coordinated package release when it is available.
+For example, `GET /v1/work-items?runtime_context[project_id]=<id>` lists work for
+a project within the authenticated client's scope. See
+[context filtering](read-endpoints.md#runtime-context) for matching rules and pagination.

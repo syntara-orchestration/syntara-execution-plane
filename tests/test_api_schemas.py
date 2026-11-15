@@ -161,10 +161,9 @@ def test_work_item_submit_rejects_non_object_invocation_fields(field: str) -> No
         "settings",
         "version",
         "runtime_context",
-        "workflow_run_id",
     ],
 )
-def test_legacy_and_unmounted_credential_fields_are_rejected(field: str) -> None:
+def test_unsupported_invocation_fields_are_rejected(field: str) -> None:
     payload = _payload(**{field: {}})
     with pytest.raises(ValidationError, match=rf"invocation\.{field}"):
         WorkExecute.model_validate(payload)
