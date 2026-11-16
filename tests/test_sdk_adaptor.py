@@ -260,6 +260,33 @@ def _terminal(identity="work-1-attempt-2") -> pb.ExecutionEvent:
     )
 
 
+def test_log_batch_does_not_replace_terminal_result():
+    class LoggingService(_Service):
+        def Execute(self, request, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
+            invocation_id = next(request).start.invocation_id
+            yield pb.ExecuteServerMessage(
+                log_batch=pb.LogBatch(
+                    invocation_id=invocation_id,
+                    version=1,
+                    events=[
+                        pb.LogEvent(
+                            timestamp="2026-11-16T17:00:00.000Z",
+                            severity="INFO",
+                            message="Step completed",
+                            attributes_json=b"{}",
+                        )
+                    ],
+                )
+            )
+            yield pb.ExecuteServerMessage(event=_terminal(invocation_id))
+
+    progress = []
+    with _server(service=LoggingService(None)) as channel:
+        frame = _invoke(channel, progress=progress.append)
+    assert _map_result(frame, None)["output"] == {"stdout": "done"}
+    assert progress == []
+
+
 def test_progress_is_forwarded_before_the_result():
     progress = []
 

@@ -19,7 +19,7 @@ CONTAINER_ENV_FILE="/tmp/hermeto.env"
 HERMETO_IMAGE="${HERMETO_IMAGE:-quay.io/konflux-ci/hermeto:latest}"
 # Same package set Konflux prefetches (pip + rpm).
 # Override with HERMETO_PREFETCH_INPUT.
-DEFAULT_PREFETCH_INPUT='[{"type": "pip", "path": ".", "requirements_files": ["requirements.txt", "requirements-vcs.txt"], "requirements_build_files": ["requirements-build.txt", "requirements-build-sdk.txt"]}, {"type": "rpm", "path": "."}]'
+DEFAULT_PREFETCH_INPUT='[{"type": "pip", "path": "."}, {"type": "rpm", "path": "."}]'
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -31,14 +31,11 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 restore_requirements_backup() {
-    local requirements backup
-    for requirements in requirements.txt requirements-vcs.txt; do
-        backup="$PROJECT_ROOT/$requirements.bak"
-        if [ -f "$backup" ]; then
-            log_info "Restoring $requirements from backup"
-            mv "$backup" "$PROJECT_ROOT/$requirements"
-        fi
-    done
+    local backup="$PROJECT_ROOT/requirements.txt.bak"
+    if [ -f "$backup" ]; then
+        log_info "Restoring requirements.txt from backup"
+        mv "$backup" "$PROJECT_ROOT/requirements.txt"
+    fi
 }
 
 # Undo inject-files if this script fails. On success the build script restores.
@@ -222,14 +219,12 @@ if [ "$INJECT_FILES" = true ]; then
         log_error "hermeto-output not found. Run $0 --fetch-deps first."
         exit 1
     fi
-    for requirements in requirements.txt requirements-vcs.txt; do
-        REQUIREMENTS_FILE="$PROJECT_ROOT/$requirements"
-        REQUIREMENTS_BACKUP="$PROJECT_ROOT/$requirements.bak"
-        if [ -f "$REQUIREMENTS_FILE" ] && [ ! -f "$REQUIREMENTS_BACKUP" ]; then
-            cp "$REQUIREMENTS_FILE" "$REQUIREMENTS_BACKUP"
-            log_info "Backed up $requirements"
-        fi
-    done
+    REQUIREMENTS_FILE="$PROJECT_ROOT/requirements.txt"
+    REQUIREMENTS_BACKUP="$PROJECT_ROOT/requirements.txt.bak"
+    if [ -f "$REQUIREMENTS_FILE" ]; then
+        cp "$REQUIREMENTS_FILE" "$REQUIREMENTS_BACKUP"
+        log_info "Backed up requirements.txt"
+    fi
     log_info "Running inject-files"
     run_hermeto inject-files hermeto-output --for-output-dir "$CONTAINER_OUTPUT_DIR"
 fi

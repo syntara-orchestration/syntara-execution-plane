@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from syntara_plugin.runtime import (
     ContainerClient,
     ContainerInvocation,
+    ContainerLogBatch,
     ContainerProgress,
     ContainerRemoteError,
     ContainerResult,
@@ -113,7 +114,7 @@ def _failure_frame(error: ContainerRemoteError, *, cancelled: bool = False) -> d
     return {"kind": "failure", "code": error.code.value, "retryable": error.retryable, "outcome": error.outcome}
 
 
-def invoke(
+def invoke(  # noqa: C901
     channel: grpc.Channel,
     invocation: WorkloadInvocation,
     *,
@@ -170,6 +171,9 @@ def invoke(
                         "data": {"sequence": event.sequence, "message": event.message, "percent": event.percent},
                     }
                 )
+            elif isinstance(event, ContainerLogBatch):
+                # Log export is not implemented; keep consuming the execution stream.
+                continue
             else:
                 result = event
         if result is None:

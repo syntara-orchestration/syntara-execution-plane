@@ -28,18 +28,20 @@ def _load_worker() -> ModuleType:
     return module
 
 
-def test_sdk_script_image_matches_ep_contracts_source() -> None:
+def test_sdk_script_image_matches_ep_contracts_release() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
-    source = project["tool"]["uv"]["sources"]["syntara-plugin-contracts"]
-    repository = source["git"].removesuffix(".git")
-    expected = f"{repository}/archive/{source['rev']}.tar.gz#subdirectory={source['subdirectory']}"
+    dependency = next(
+        dependency
+        for dependency in project["project"]["dependencies"]
+        if dependency.startswith("syntara-plugin-contracts==")
+    )
     containerfile = (Path(__file__).parent / "fixtures" / "sdk_script" / "Containerfile").read_text()
     match = re.search(
-        r'^RUN pip install --no-cache-dir "syntara-plugin-contracts @ ([^"\n]+)"$', containerfile, re.MULTILINE
+        r'^RUN pip install --no-cache-dir "(syntara-plugin-contracts==[^"\n]+)"$', containerfile, re.MULTILINE
     )
 
     assert match is not None
-    assert match.group(1) == expected
+    assert match.group(1) == dependency
 
 
 def test_python_script_result_matches_ao_output_contract() -> None:
