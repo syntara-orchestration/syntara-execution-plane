@@ -278,6 +278,13 @@ hatchling==1.33.0 \
     #   jsonschema
     #   jsonschema-specifications
     #   opentelemetry-api
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-common
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-proto
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-settings
     #   referencing
@@ -413,6 +420,7 @@ setuptools==84.2.1 \
     #   cffi
     #   cryptography
     #   frozenlist
+    #   googleapis-common-protos
     #   greenlet
     #   grpcio
     #   mako
