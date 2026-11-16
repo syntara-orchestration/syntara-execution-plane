@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
-from execution_plane_client.commands.control import CancelCommand, Completion
+from execution_plane_client.commands.control import Completion, WorkCancel
 from execution_plane_client.commands.credentials import CredentialResolve, CredentialResolveWorkload
 from execution_plane_client.commands.targets import TargetDelete, TargetHealth, TargetRegister, TargetUpdate
 from execution_plane_client.commands.work import WorkExecute
@@ -25,7 +25,7 @@ class CommandCatalog:
     """Validate known commands independently of installed handlers."""
 
     def __init__(self) -> None:
-        """Install version-one work, resource and completion contracts."""
+        """Install supported work, resource and completion contracts."""
         payloads = (
             WorkExecute,
             Completion,
@@ -38,7 +38,7 @@ class CommandCatalog:
             TargetUpdate,
             TargetDelete,
             TargetHealth,
-            CancelCommand,
+            WorkCancel,
         )
         self._definitions = {
             (schema.command_type, schema.command_revision): CommandDefinition(
@@ -55,8 +55,6 @@ class CommandCatalog:
             raise UnsupportedCommand from None
 
     def validate(self, message: MessageEnvelope) -> CommandPayload:
-        """Validate the payload and completion parent, returning the typed payload."""
+        """Validate the typed command payload, returning the typed payload."""
         definition = self.definition(message.command.command_type, message.command.command_revision)
-        payload = definition.payload_schema.model_validate(message.command.payload)
-        definition.payload_schema.validate_parent(message.command.parent_command_id)
-        return payload
+        return definition.payload_schema.model_validate(message.command.payload)

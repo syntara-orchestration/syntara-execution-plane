@@ -126,7 +126,6 @@ async def test_semantically_invalid_invocation_is_rejected_before_kubernetes(eng
         payload={
             "image": "node:test",
             "invocation": {
-                "workflow_run_id": "workflow-1",
                 "step_revision_id": "script.v1",
                 "inputs": {},
                 "timeout_seconds": -5,

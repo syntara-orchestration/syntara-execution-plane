@@ -6,7 +6,7 @@ from execution_plane.commands.clusters import (
     ClusterUpdateCommandHandler,
 )
 from execution_plane.commands.context import EPCommandContext
-from execution_plane.commands.control import CancelCommandHandler
+from execution_plane.commands.control import WorkCancelHandler
 from execution_plane.commands.targets import (
     TargetDeleteCommandHandler,
     TargetHealthCommandHandler,
@@ -23,7 +23,7 @@ def build_ep_registry() -> CommandRegistry[EPCommandContext]:
     catalog = CommandCatalog()
     registry = CommandRegistry[EPCommandContext]()
     registry.register(catalog.definition("work.execute", 1), WorkCommandHandler())
-    registry.register(catalog.definition("command.cancel", 1), CancelCommandHandler())
+    registry.register(catalog.definition("work.cancel", 1), WorkCancelHandler())
     registry.register(catalog.definition("cluster.register", 1), ClusterRegisterCommandHandler())
     registry.register(catalog.definition("cluster.update", 1), ClusterUpdateCommandHandler())
     registry.register(catalog.definition("cluster.delete", 1), ClusterDeleteCommandHandler())

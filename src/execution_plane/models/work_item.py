@@ -14,6 +14,7 @@ from sqlmodel import Field, SQLModel
 
 from execution_plane.models.constants import EP_SCHEMA
 from execution_plane.models.encrypted_payload import EncryptedWorkItemPayload
+from execution_plane_client.models.runtime_context import RUNTIME_CONTEXT_DESCRIPTION
 from execution_plane_client.models.work_item import (
     WORK_ITEM_FILTERABLE_FIELDS,
     WORK_ITEM_SORTABLE_FIELDS,
@@ -39,6 +40,7 @@ class WorkItem(SQLModel, table=True):
     __table_args__ = (
         sa.Index("ix_work_items_execution_target_status", "execution_target_id", "status"),
         sa.Index("ix_work_items_status", "status"),
+        sa.Index("ix_work_items_runtime_context", "runtime_context", postgresql_using="gin"),
         sa.Index("ix_work_items_pending", "created_at", postgresql_where=sa.text("status = 'pending'")),
         sa.Index(
             "ix_work_items_completion_delivery",
@@ -50,7 +52,12 @@ class WorkItem(SQLModel, table=True):
         {"schema": EP_SCHEMA},
     )
 
-    id: uuid.UUID = Field(primary_key=True)
+    id: uuid.UUID = Field(
+        primary_key=True,
+        description=(
+            "Caller-assigned, globally unique work-item primary key, supplied as work.execute.payload.work_item_id."
+        ),
+    )
 
     client_id: str = Field(sa_column=Column(String(128), nullable=False))
 
@@ -73,6 +80,13 @@ class WorkItem(SQLModel, table=True):
     payload: dict[str, Any] = Field(
         default={},
         sa_column=Column(EncryptedWorkItemPayload(), nullable=False, server_default="{}"),
+    )
+
+    # Non-secret context is stored once, independently of encrypted invocation data.
+    runtime_context: dict[str, Any] = Field(
+        default_factory=dict,
+        description=RUNTIME_CONTEXT_DESCRIPTION,
+        sa_column=Column(JSONB, nullable=False, server_default="{}"),
     )
 
     # Terminal result is owned and retained by EP independently of AO availability.

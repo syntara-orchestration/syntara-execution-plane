@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from syntara_plugin.runtime import (
     ContainerClient,
     ContainerInvocation,
+    ContainerLogBatch,
     ContainerProgress,
     ContainerRemoteError,
     ContainerResult,
@@ -113,13 +114,14 @@ def _failure_frame(error: ContainerRemoteError, *, cancelled: bool = False) -> d
     return {"kind": "failure", "code": error.code.value, "retryable": error.retryable, "outcome": error.outcome}
 
 
-def invoke(
+def invoke(  # noqa: C901
     channel: grpc.Channel,
     invocation: WorkloadInvocation,
     *,
     identity: str,
     progress: Callable[[dict[str, Any]], None],
     cancelled: threading.Event,
+    runtime_context: dict[str, object] | None = None,
     startup: float = 120,
     grace: int = 30,
     on_execute_submitted: Callable[[], None] | None = None,
@@ -127,10 +129,9 @@ def invoke(
     """Negotiate the SDK service, execute once, and consume its entire stream."""
     request = ContainerInvocation(
         invocation_id=identity,
-        workflow_run_id=invocation.workflow_run_id,
         step_revision_id=invocation.step_revision_id,
         inputs=invocation.inputs,
-        runtime_context=invocation.runtime_context,
+        runtime_context=runtime_context or {},
         timeout_seconds=invocation.timeout_seconds,
     )
     client = ContainerClient(channel)
@@ -170,6 +171,9 @@ def invoke(
                         "data": {"sequence": event.sequence, "message": event.message, "percent": event.percent},
                     }
                 )
+            elif isinstance(event, ContainerLogBatch):
+                # Log export is not implemented; keep consuming the execution stream.
+                continue
             else:
                 result = event
         if result is None:

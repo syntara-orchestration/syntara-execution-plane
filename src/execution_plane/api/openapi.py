@@ -53,12 +53,9 @@ def _command_schemas(
         name = f"{definition.payload_schema.__name__.removesuffix('Command')}CommandV{definition.revision}"
         command = deepcopy(command_template)
         command["title"] = name
-        command["properties"]["command_type"] = {"type": "string", "const": definition.command_type}
-        command["properties"]["command_revision"] = {"type": "integer", "const": definition.revision}
+        command["properties"]["command_type"]["const"] = definition.command_type
+        command["properties"]["command_revision"]["const"] = definition.revision
         command["properties"]["payload"] = references[definition.payload_schema, "validation"]
-        if definition.payload_schema.requires_parent:
-            command["properties"]["parent_command_id"] = {"type": "string", "format": "uuid"}
-            command["required"].append("parent_command_id")
         schemas[name] = command
         if definition not in outbound:
             mapping[definition.command_type] = _ref(name)

@@ -31,18 +31,20 @@ the lockfile and requirement exports.
 ## Command and workload data
 
 `work.execute` accepts `image`, `selectors`, and optional `output_config`.
+The request's `runtime_context` is passed to plugin code as
+`context.runtime_context`; see [runtime context](integration.md#runtime-context).
+`invocation.step_revision_id` selects the handler advertised by the container.
+
 Its invocation contains:
 
 ```json
 {
-  "workflow_run_id": "workflow-1",
   "step_revision_id": "script.v1",
   "inputs": {
     "language": "bash",
     "code": "printf '%s' \"$GREETING\"",
     "environment": {"GREETING": "hello"}
   },
-  "runtime_context": {},
   "credential_bindings": [],
   "timeout_seconds": 60
 }

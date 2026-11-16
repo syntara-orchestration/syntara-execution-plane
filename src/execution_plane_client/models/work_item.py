@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.models.shared import _SORT_PATTERN, EPListParams, ResourcesResponse
 
 # Work item query metadata - single source of truth for EP and client
@@ -48,7 +49,14 @@ class WorkItemRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID = Field(description="Work item unique identifier")
+    id: UUID = Field(
+        description=(
+            "Primary key of this EP work item, equal to work.execute.payload.work_item_id supplied at creation. "
+            "Use it to read or cancel this item and correlate completion or credential callbacks. "
+            "Syntara uses ActivityExecution.id; runtime_context.execution_id identifies its containing execution."
+        )
+    )
+    runtime_context: RuntimeContext = Field(default_factory=dict)
     status: WorkItemStatus = Field(description="Work item lifecycle status")
     result: dict[str, Any] | None = Field(default=None, description="Work execution result payload")
     result_omitted: bool = Field(default=False, description="Whether result was omitted due to size")

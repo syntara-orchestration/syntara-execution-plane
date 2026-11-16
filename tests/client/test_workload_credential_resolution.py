@@ -10,48 +10,40 @@ from pydantic import ValidationError
 from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.commands.credentials import CredentialResolveWorkload
 from execution_plane_client.commands.results import CredentialResolveWorkloadCommandResult
-from execution_plane_client.errors import ProtocolConflict
 
 
 def _command() -> CredentialResolveWorkload:
     return CredentialResolveWorkload(
+        work_item_id=uuid4(),
         attempt_id=f"{uuid4()}-2",
         credential_ref=uuid4(),
         credential_recipe_id="acme.echo.api-token",
-        workflow_run_id="workflow-1",
         step_revision_id="script.v1",
     )
 
 
 def test_workload_resolution_command_correlates_to_its_work_item() -> None:
     command = _command()
-    parent_command_id = uuid4()
     message = command.to_message(
         source_id="execution-plane",
         destination_id="syntara-orchestration",
         client_id="execution-plane",
-        parent_command_id=parent_command_id,
     )
 
     payload = CommandCatalog().validate(message)
 
     assert isinstance(payload, CredentialResolveWorkload)
     assert payload == command
-    assert message.command.parent_command_id == parent_command_id
     assert message.command.payload == command.model_dump(mode="json")
-    assert "work_item_id" not in message.command.payload
+    assert message.command.payload["work_item_id"] == str(command.work_item_id)
     assert "correlation_ids" not in message.command.payload
 
 
-def test_workload_resolution_command_requires_the_work_item_parent() -> None:
-    command = _command()
-
-    with pytest.raises(ProtocolConflict):
-        command.to_message(
-            source_id="execution-plane",
-            destination_id="syntara-orchestration",
-            client_id="execution-plane",
-        )
+def test_workload_resolution_command_requires_work_item_id() -> None:
+    payload = _command().model_dump(mode="json")
+    del payload["work_item_id"]
+    with pytest.raises(ValidationError, match="work_item_id"):
+        CredentialResolveWorkload.model_validate(payload)
 
 
 def test_workload_resolution_result_supports_bounded_structured_documents() -> None:

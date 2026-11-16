@@ -40,7 +40,7 @@ DEFAULT_TOKEN_TTL = timedelta(hours=8)
 DEFAULT_TOKEN_SCOPES = (
     "work-items:read",
     "work.execute",
-    "command.cancel",
+    "work.cancel",
     "execution-targets:read",
     "clusters:read",
     "cluster.register",
@@ -232,7 +232,7 @@ def build_payload(
     environment: dict[str, str],
     image: str | None = None,
     selectors: dict[str, str] | None = None,
-    workflow_run_id: str | None = None,
+    runtime_context: dict[str, object] | None = None,
     step_revision_id: str = "script.v1",
 ) -> dict[str, Any]:
     """Build SDK invocation data for a script runner advertising the selected step."""
@@ -240,8 +240,8 @@ def build_payload(
     if environment:
         inputs["environment"] = environment
     return {
+        "runtime_context": runtime_context or {},
         "invocation": {
-            "workflow_run_id": workflow_run_id or str(uuid.uuid4()),
             "step_revision_id": step_revision_id,
             "inputs": inputs,
             "timeout_seconds": timeout_seconds,
@@ -262,12 +262,11 @@ def submit_work_item(
     """POST a work.execute command and return its acknowledgement."""
     client_id = os.environ.get("EP_AO_CLIENT_ID", DEFAULT_JWT_CLIENT_ID)
     body = (
-        WorkExecute.model_validate(payload)
+        WorkExecute.model_validate({**payload, "work_item_id": work_id})
         .to_message(
             source_id=client_id,
             destination_id=os.environ.get("EP_SERVICE_JWT_AUDIENCE", DEFAULT_JWT_AUDIENCE),
             client_id=client_id,
-            command_id=work_id,
         )
         .model_dump(mode="json")
     )

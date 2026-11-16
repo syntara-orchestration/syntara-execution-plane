@@ -62,11 +62,14 @@ class WorkStore(StoreBase):
         payload: dict[str, Any],
     ) -> WorkItem:
         """Insert work with a client-supplied UUID; raises DuplicateWorkItemError on collision."""
+        payload = dict(payload)
+        runtime_context = payload.pop("runtime_context", {})
         item = WorkItem(
             id=item_id,
             client_id=client_id,
             status=WorkItemStatus.PENDING,
             payload=payload,
+            runtime_context=runtime_context,
             created_at=datetime.now(UTC),
         )
         async with self._session_context() as session:

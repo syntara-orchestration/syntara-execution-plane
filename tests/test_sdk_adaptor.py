@@ -59,12 +59,11 @@ def _invoke(
         "startup": 0.2,
         "grace": 1,
     }
+    kwargs["runtime_context"] = {"driver": "test"}
     kwargs.update(overrides)
     invocation = {
-        "workflow_run_id": "workflow-1",
         "step_revision_id": "script.v1",
         "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
-        "runtime_context": {"driver": "test"},
         "timeout_seconds": 2,
     }
     if credential_bindings is not None:
@@ -93,7 +92,7 @@ def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests(
 
     def handler(invocation) -> ContainerResult:
         assert invocation.invocation_id == "work-1-attempt-2"
-        assert invocation.workflow_run_id == "workflow-1"
+
         assert invocation.step_revision_id == "script.v1"
         assert invocation.inputs["environment"] == {"GREETING": "hello"}
         assert invocation.inputs["large_integer"] == 2**60
@@ -259,6 +258,33 @@ def _terminal(identity="work-1-attempt-2") -> pb.ExecutionEvent:
         invocation_id=identity,
         result=pb.Result(output_schema_digest=_DIGEST, output_json=b'{"stdout":"done"}'),
     )
+
+
+def test_log_batch_does_not_replace_terminal_result():
+    class LoggingService(_Service):
+        def Execute(self, request, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
+            invocation_id = next(request).start.invocation_id
+            yield pb.ExecuteServerMessage(
+                log_batch=pb.LogBatch(
+                    invocation_id=invocation_id,
+                    version=1,
+                    events=[
+                        pb.LogEvent(
+                            timestamp="2026-11-16T17:00:00.000Z",
+                            severity="INFO",
+                            message="Step completed",
+                            attributes_json=b"{}",
+                        )
+                    ],
+                )
+            )
+            yield pb.ExecuteServerMessage(event=_terminal(invocation_id))
+
+    progress = []
+    with _server(service=LoggingService(None)) as channel:
+        frame = _invoke(channel, progress=progress.append)
+    assert _map_result(frame, None)["output"] == {"stdout": "done"}
+    assert progress == []
 
 
 def test_progress_is_forwarded_before_the_result():

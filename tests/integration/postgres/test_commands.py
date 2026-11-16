@@ -27,7 +27,7 @@ async def command_client(migrated_database):
         scopes=frozenset(
             {
                 "work.execute",
-                "command.cancel",
+                "work.cancel",
                 "cluster.register",
                 "cluster.update",
                 "cluster.delete",
@@ -123,14 +123,15 @@ async def test_work_queries_recover_large_results_without_command_history(comman
     assert "private-secret" not in read.text
 
 
-async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command_client):
+async def test_work_command_uses_work_item_uuid_and_cancel_uses_work_state(command_client):
     client, _ = command_client
     message = command_message(
         "work.execute",
         {
+            "work_item_id": str(uuid4()),
+            "runtime_context": {"project_id": str(uuid4()), "context": {"tags": ["demo"]}},
             "image": "node:test",
             "invocation": {
-                "workflow_run_id": "workflow-1",
                 "step_revision_id": "script.v1",
                 "inputs": {},
                 "timeout_seconds": 30,
@@ -139,14 +140,18 @@ async def test_work_command_uses_command_uuid_and_cancel_uses_work_state(command
     )
     response = await client.post("/v1/commands", json=message)
     assert response.status_code == 202, response.text
-    work_id = UUID(message["command_id"])
+    work_id = UUID(message["command"]["payload"]["work_item_id"])
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "pending"
+    assert read.json()["runtime_context"] == message["command"]["payload"]["runtime_context"]
+    original_runtime_context = message["command"]["payload"]["runtime_context"]
+    message["message_id"] = str(uuid4())
+    message["command"]["payload"]["runtime_context"] = {"project_id": "changed"}
     duplicate = await client.post("/v1/commands", json=message)
     assert duplicate.status_code == 409
-    cancel = await client.post(
-        "/v1/commands", json=command_message("command.cancel", {"target_command_id": str(work_id)})
-    )
+    read = await client.get(f"/v1/work-items/{work_id}")
+    assert read.json()["runtime_context"] == original_runtime_context
+    cancel = await client.post("/v1/commands", json=command_message("work.cancel", {"work_item_id": str(work_id)}))
     assert cancel.status_code == 202
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "cancelled"

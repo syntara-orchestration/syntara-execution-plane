@@ -33,6 +33,7 @@ from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
+from execution_plane_client.commands.work import WorkExecute
 from execution_plane_client.models.execution_target import KubernetesPlacement
 from tools.work_item_client import build_payload, default_node_image
 
@@ -119,8 +120,18 @@ async def _wait_for_work_status(
         item = await store.get(item_id, client_id=client_id)
         if item is not None and item.status is status:
             return item
+        observed = f"status={item.status.value}; result={item.result!r}" if item is not None else "not found"
+        if item is not None and item.status in {
+            WorkItemStatus.COMPLETED,
+            WorkItemStatus.FAILED,
+            WorkItemStatus.CANCELLED,
+            WorkItemStatus.RECONCILIATION_REQUIRED,
+        }:
+            pytest.fail(f"Work item {item_id} terminated while waiting for {status.value}; {observed}")
         if time.monotonic() >= deadline:
-            pytest.fail(f"Work item {item_id} did not reach {status.value} within {timeout_seconds}s")
+            pytest.fail(
+                f"Work item {item_id} did not reach {status.value} within {timeout_seconds}s; last observed {observed}"
+            )
         await asyncio.sleep(0.5)
 
 
@@ -189,10 +200,11 @@ async def _dispatch_item(
     client_id: str,
     payload: dict[str, object],
 ) -> _DispatchedItem:
+    command = WorkExecute.model_validate(payload | {"work_item_id": uuid.uuid4()})
     item = await work.store.dispatch(
         client_id=client_id,
-        item_id=uuid.uuid4(),
-        payload=payload,
+        item_id=command.work_item_id,
+        payload=command.model_dump(mode="json"),
     )
 
     # A retryable transport error leaves the item pending for a later

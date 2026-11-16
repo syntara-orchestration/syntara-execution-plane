@@ -10,7 +10,7 @@ from tools import deploy_kind_execution_target, submit_work_item, work_item_clie
 
 def test_default_token_scopes_authorize_command_tools():
     scopes = str(work_item_client.service_token_claims()["scope"]).split()
-    assert {"work.execute", "command.cancel", "cluster.register", "clusters:read", "work-items:read"} <= set(scopes)
+    assert {"work.execute", "work.cancel", "cluster.register", "clusters:read", "work-items:read"} <= set(scopes)
 
 
 def test_submit_tool_builds_valid_work_command(monkeypatch):
@@ -30,7 +30,7 @@ def test_submit_tool_builds_valid_work_command(monkeypatch):
     assert (method, url) == ("POST", "https://ep.test/v1/commands")
     message = MessageEnvelope.model_validate(body)
     CommandCatalog().validate(message)
-    assert message.command_id == work_id
+    assert message.command.payload["work_item_id"] == str(work_id)
     assert message.command.payload["invocation"]["inputs"]["code"] == "print('hello')"
     assert message.command.payload["invocation"]["timeout_seconds"] == 41
 
@@ -64,7 +64,7 @@ def test_submit_cli_preserves_image_override_and_waits_for_work(monkeypatch, cap
     assert submit_work_item.main() == 0
     assert len(requests) == 2
     message = MessageEnvelope.model_validate(requests[0][2])
-    assert message.command_id == work_id
+    assert message.command.payload["work_item_id"] == str(work_id)
     assert message.command.payload["image"] == "quay.io/example/custom-node:test"
     assert requests[1][:2] == ("GET", f"https://ep.test/v1/work-items/{work_id}")
     assert "reconciliation_required" in capsys.readouterr().out

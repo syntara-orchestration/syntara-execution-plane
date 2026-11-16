@@ -172,3 +172,27 @@ async def test_dispatch_joins_transport_and_database_callbacks_before_exiting(  
 
     assert transport_finished.is_set()
     assert events == ["database callback finished", "transport finished"]
+
+
+async def test_dispatch_passes_stored_runtime_context_to_plugin(monkeypatch):
+    """Pass the work item context alongside its invocation."""
+    from uuid import uuid4
+
+    settings = Settings()
+    resolver = CredentialResolver(settings)
+    resources = vanilla_k8s_resources()
+    work_item = resources[2]
+    work_item.runtime_context = {"work_item_id": str(uuid4()), "project_id": "project"}
+
+    async def resolve(_credential_ref: UUID, **_kwargs: object) -> str:
+        return "resolved-token"
+
+    monkeypatch.setattr(resolver, "resolve", resolve)
+    manager = vanilla_k8s_manager(settings, resolver, resources, WorkStoreStub())
+    try:
+        context = await manager._dispatch_context(work_item)
+        assert context.identity == str(work_item.id)
+        assert context.attempt_id == f"{work_item.id}-{work_item.claim_generation}"
+        assert context.runtime_context == work_item.runtime_context
+    finally:
+        await resolver.close()

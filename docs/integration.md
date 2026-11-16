@@ -14,22 +14,20 @@ commands or provide command-status or command-children endpoints.
 ```json
 {
   "message_id": "00000000-0000-0000-0000-000000000001",
-  "command_id": "00000000-0000-0000-0000-000000000002",
   "source_id": "syntara-orchestration",
   "destination_id": "execution-plane",
   "scope": {"client_id": "syntara-orchestration"},
   "command": {
-    "command_id": "00000000-0000-0000-0000-000000000002",
     "command_type": "work.execute",
     "command_revision": 1,
     "occurred_at": "2026-10-14T08:00:00Z",
     "payload": {
+      "work_item_id": "00000000-0000-0000-0000-000000000002",
+      "runtime_context": {"project_id": "caller-project", "workflow_id": "caller-workflow", "execution_id": "caller-execution"},
       "image": "registry.example/node:latest",
       "invocation": {
-        "workflow_run_id": "workflow-1",
         "step_revision_id": "script.v1",
         "inputs": {"language": "python", "code": "print('hello')"},
-        "runtime_context": {},
         "timeout_seconds": 60
       }
     }
@@ -37,8 +35,14 @@ commands or provide command-status or command-children endpoints.
 }
 ```
 
-The envelope and nested command IDs must match. Work commands use that UUID as
-`WorkItem.id`. HTTP 202 returns `received`, `message_id` and an optional `resource`
+`payload.work_item_id` supplies the new row's primary key, `WorkItem.id`, and
+must be unique across all EP work items. Syntara uses its `ActivityExecution.id`
+for this key; the containing `Execution.id` is a different identifier.
+Submitting `work.execute` with a `work_item_id` that already exists returns
+HTTP 409 without modifying or rerunning that work item.
+
+The `message_id` correlates this delivery with its receipt; it does not
+deduplicate requests. HTTP 202 returns `received`, `message_id` and an optional `resource`
 reference. It confirms application of the domain request, not completion of a
 job, cluster setup or draining.
 
@@ -65,9 +69,10 @@ resource by its stable UUID before deciding whether to submit again.
 Python callers can instantiate a command from `execution_plane_client.commands`
 and call `to_message(source_id=..., destination_id=..., client_id=...)` to build
 the envelope. The command supplies its type and revision. Each call generates a
-new command UUID and timestamp unless explicitly provided, and the message ID
-defaults to the command ID. Retain the message for retries, or pass the original
-`command_id`, `occurred_at` and, if different, `message_id` when rebuilding it.
+new message UUID and timestamp unless explicitly provided. Retain the message
+for retries, or pass the original `message_id` and `occurred_at` when rebuilding
+that delivery. Rebuilt submissions must retain the same `work_item_id` even
+when they use a fresh `message_id`.
 Use `message.model_dump(mode="json")` as the body for the application's HTTP
 client. See the [client README](../src/execution_plane_client/README.md) for an example.
 
@@ -75,14 +80,14 @@ The generated OpenAPI document exposes `MessageEnvelope` and a `Command` schema
 whose `oneOf` lists EP's installed command variants, discriminated by `command_type`.
 Each variant fixes its type and revision and references its typed payload component.
 The outbound `work.execute.completed` command is documented separately under
-`webhooks`, including its required parent work UUID and receipt response.
+`webhooks`, including its required work-item UUID and receipt response.
 
 ## Installed commands
 
 | Type (revision 1) | Payload and effect |
 | --- | --- |
-| `work.execute` | `WorkExecute`: image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
-| `command.cancel` | `target_command_id`: existing work UUID; request cancellation through `WorkStore` |
+| `work.execute` | `WorkExecute`: required `work_item_id`, optional runtime context, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
+| `work.cancel` | `work_item_id`: existing work UUID; request cancellation through `WorkStore` |
 | `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_id`, explicitly changed Cluster fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
 | `cluster.delete` | `resource_id`; request draining of a Cluster |
@@ -144,18 +149,19 @@ delivery acknowledgement and the delivery lease. EP's
 Completion Notifier sends a `work.execute.completed` command to Syntara at
 `EP_COMPLETION_CALLBACK_URL` using the configured callback CA and client certificate.
 
-The `Completion` payload contains `status`, `result`, an optional `resource`
-reference and optional `error_code`. EP's notifier sets `resource` to
-`{"kind": "work_item", "resource_id": "<work UUID>"}`. Status is `completed`,
-`failed`, `cancelled` or `reconciliation_required`. Syntara's request size limit should
-accommodate the work invocation's output limit.
-
-`parent_command_id` identifies the WorkItem, and `occurred_at` is its completion time.
+The `Completion` payload contains required `work_item_id`, `status`,
+`result`, caller `runtime_context`, and optional `error_code`. Status is `completed`,
+`failed`, `cancelled` or `reconciliation_required`. `occurred_at` is the work's
+completion time. Syntara's request size limit should accommodate the work
+invocation's output limit.
 
 Syntara registers a handler for `CommandCatalog().definition("work.execute.completed", 1)`
 in its `CommandRegistry`. Syntara authenticates EP's client certificate and
-authorizes the command's source, destination and client scope. Its handler uses
-`parent_command_id` to find and complete or fail the originating Temporal activity.
+authorizes the command's source, destination and client scope. Both completion
+and `credential.resolve.workload` use `payload.work_item_id` to look
+up the corresponding AO ActivityExecution. Credential resolution also validates
+the activity state, workflow-node credential binding, and persisted project
+ownership; caller context never supplies authorization.
 After handling the callback, Syntara returns a successful HTTP status and a
 `TransportReceipt` containing its `message_id`.
 
@@ -165,3 +171,26 @@ EP retries failed requests and invalid receipts with backoff and reclaims expire
 delivery leases.
 
 See [cold-start-node-dispatch.md](cold-start-node-dispatch.md) for execution and recovery.
+
+## Runtime context
+
+`WorkExecute.runtime_context` is optional caller-defined JSON (default `{}`).
+Submit it at `command.payload.runtime_context`, beside `invocation`. EP stores
+it unencrypted in `WorkItem.runtime_context` and passes it to plugin code as
+`context.runtime_context`. Work-item reads and completion notifications include
+that same value. Do not include secrets.
+
+AO supplies these UUID strings from its persisted execution:
+
+| Context key | Meaning and use |
+| --- | --- |
+| `project_id` | `Project.id` containing the workflow; groups work by project. |
+| `workflow_id` | `Workflow.id` being executed; groups work across executions of that workflow. |
+| `execution_id` | `Execution.id` containing the activity; groups that execution's work items. |
+
+EP does not require these keys. Context is descriptive data; work-item identity,
+authorization, and target selection use their dedicated fields and checks.
+
+For example, `GET /v1/work-items?runtime_context[project_id]=<id>` lists work for
+a project within the authenticated client's scope. See
+[context filtering](read-endpoints.md#runtime-context) for matching rules and pagination.

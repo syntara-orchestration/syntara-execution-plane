@@ -37,12 +37,19 @@ Every concrete command supports this method, including `ClusterDelete`,
 `TargetDelete` and `TargetHealth`. Partial updates serialize only supplied fields, retaining explicit
 nulls and placement discriminators without resetting omitted configuration.
 
-By default, each call generates a command UUID and UTC timestamp; `message_id`
-defaults to that command UUID. Keep the returned message for retries. To rebuild
-it from existing domain state, pass `command_id` and `occurred_at` explicitly,
-plus `message_id` if it differs. `parent_command_id` and `sequence` are optional;
-`Completion` requires a parent work command UUID. Source, destination and client
-scope are always supplied by the caller; the helper does not authenticate them.
+By default, each call generates an independent message UUID and UTC timestamp.
+Keep the returned message for retries, or pass `message_id` and `occurred_at` to
+reconstruct a delivery. Message IDs correlate receipts, not resource identity
+or deduplication. Source, destination and client scope are always supplied by
+the caller; the helper does not authenticate them.
+
+`WorkExecute` requires a caller-assigned `work_item_id`, which becomes the new
+WorkItem's primary key. Submitting an existing ID returns HTTP 409. Use that same
+ID for `WorkCancel`, `Completion`, and `CredentialResolveWorkload` requests.
+
+Work execution accepts optional non-secret `runtime_context`, passed to the
+plugin and included in work-item reads and completion notifications. See
+[runtime context](../../docs/integration.md#runtime-context) for examples and filtering.
 
 ## Handling messages
 
@@ -56,10 +63,10 @@ result = await handler.handle(message, payload, context)
 ```
 
 Handlers implement `handle(message, payload, context)`. The catalog selects the
-payload model by command type and revision, validates it and checks required
-parent correlation. Handlers narrow the payload to their supported command
+payload model by command type and revision and validates its fields. Handlers
+narrow the payload to their supported command
 types without parsing the raw dictionary again. The original envelope remains
-available for identity and correlation; partial-update payloads retain which
+available for routing and receipt correlation; partial-update payloads retain which
 fields were supplied. Authentication, authorization and domain-state validation
 (including validation after merging a patch) remain participant responsibilities.
 

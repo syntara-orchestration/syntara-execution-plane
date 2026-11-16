@@ -606,7 +606,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "syntara-plugin-contracts", specifier = "==0.1.0a4" },
+    { name = "syntara-plugin-contracts", specifier = "==0.1.0a5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 
@@ -1931,7 +1931,7 @@ wheels = [
 
 [[package]]
 name = "syntara-plugin-contracts"
-version = "0.1.0a4"
+version = "0.1.0a5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
@@ -1941,9 +1941,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "referencing" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/d8/a76b7c311d49f10bc671c28f1dca280a6788722ee4f66384cc27a7f0327b/syntara_plugin_contracts-0.1.0a4.tar.gz", hash = "sha256:35969a8a8ada0352be4eed8caf030153625cc335b68f75aaf2b7926e094fc303", size = 107598, upload-time = "2026-11-10T18:01:46.505Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/05/8f861f5dbe33703e1953307b7e924f569c8fe852d1cdde40763f032c303d/syntara_plugin_contracts-0.1.0a5.tar.gz", hash = "sha256:f05ffffdf4672884bc6876c5d669d33b57a8302ff0a3e539d1469215cfcb49fc", size = 114274, upload-time = "2026-11-16T17:20:35.824Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/92/b5f956fbf19e186a2de3a818b7ae69f44067bc5d84d0c6944ed23eddacf8/syntara_plugin_contracts-0.1.0a4-py3-none-any.whl", hash = "sha256:d2eb200daa35cf72fa67bca511ecbdc186a4c6797164569190a51f4ee78645f0", size = 152968, upload-time = "2026-11-10T18:01:45.155Z" },
+    { url = "https://files.pythonhosted.org/packages/06/c9/ee4806b1cfdf85ddee8f126d7aa6b3eaed9d7ef9171c1b238a91a00ffbc1/syntara_plugin_contracts-0.1.0a5-py3-none-any.whl", hash = "sha256:f0a9e7c9a732062c6e63ac43eb542f4c47e138642ec69ef59ca8d56c71afae2f", size = 161264, upload-time = "2026-11-16T17:20:34.405Z" },
 ]
 
 [[package]]
