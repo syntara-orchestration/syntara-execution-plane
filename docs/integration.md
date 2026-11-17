@@ -88,6 +88,8 @@ The outbound `work.execute.completed` command is documented separately under
 | --- | --- |
 | `work.execute` | `WorkExecute`: required `work_item_id`, optional runtime context, image, versioned invocation, optional output configuration; enqueue existing work lifecycle |
 | `work.cancel` | `work_item_id`: existing work UUID; request cancellation through `WorkStore` |
+| `work.cancel_bulk` | `selector`: exactly one of `work_item_ids` (1–100 UUIDs), `project_id`, `workflow_id`, or `execution_id`; atomically record cancellation intent for matching client-owned work |
+| `work.delete_bulk` | same selector; atomically record both deletion and cancellation intent, acknowledging after commit; zero matches and repeated requests succeed |
 | `work.delete` | `work_item_id`: persist deletion and cancellation intent for caller-owned work; remove it after background resource cleanup |
 | `cluster.register` | `ClusterRegister`: caller-supplied `resource_id`, name, endpoint, `credential_ref`, optional CA/labels/enabled/`is_default`; register or update only the Cluster. Register targets separately with `execution_target.register`. |
 | `cluster.update` | `resource_id`, explicitly changed Cluster fields, and optional `is_default`; `true` atomically promotes the Cluster as the global default |
@@ -105,7 +107,10 @@ default atomically demotes the previous default. To delete a default Cluster or
 target directly, promote a replacement first. See
 [cluster and target services](cluster-and-target-services.md) for lifecycle rules.
 
-Unknown work cancellation returns 404. No cancellation command is retained for
+Deploy bulk-command support in EP before switching AO. Retain `work.cancel` and
+`work.delete` during that rollout; remove them in a follow-up after AO has switched.
+
+Unknown single-item work cancellation returns 404. No cancellation command is retained for
 work that has not arrived. Cancellation sets `cancellation_requested` and is
 processed asynchronously; observe resource state or completion commands for the outcome.
 

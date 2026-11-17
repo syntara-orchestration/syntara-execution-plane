@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from execution_plane_client.commands.base import CommandPayload
+from execution_plane_client.commands.bulk_work import WorkCancelBulk, WorkDeleteBulk
 from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
 from execution_plane_client.commands.control import Completion, WorkCancel
 from execution_plane_client.commands.credentials import CredentialResolve, CredentialResolveWorkload
@@ -28,6 +29,8 @@ class CommandCatalog:
         """Install supported work, resource and completion contracts."""
         payloads = (
             WorkExecute,
+            WorkCancelBulk,
+            WorkDeleteBulk,
             WorkDelete,
             Completion,
             CredentialResolve,

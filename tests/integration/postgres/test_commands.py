@@ -29,6 +29,8 @@ async def command_client(migrated_database):
                 "work.execute",
                 "work.cancel",
                 "work.delete",
+                "work.delete_bulk",
+                "work.cancel_bulk",
                 "cluster.register",
                 "cluster.update",
                 "cluster.delete",
