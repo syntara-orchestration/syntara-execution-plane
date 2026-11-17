@@ -59,6 +59,24 @@ def _truncate_for_log(value: object) -> str | None:
     return text
 
 
+def _is_retryable_portforward_error(error: Exception) -> bool:
+    """Recognize Kubernetes' transient missing-Pod error without exposing it."""
+    api_error = error
+    if (
+        isinstance(error, AttributeError)
+        and str(error) == "'NoneType' object has no attribute 'decode'"
+        and isinstance(error.__context__, ApiException)
+    ):
+        # kubernetes-client/python attempts to decode a missing response body
+        # while wrapping a port-forward failure, masking the actual API error.
+        api_error = error.__context__
+    return (
+        isinstance(api_error, ApiException)
+        and api_error.status == 0
+        and "pod not found" in (api_error.reason or "").lower()
+    )
+
+
 class TransportError(Exception):
     """Failure with an explicit safe-to-retry classification."""
 
@@ -477,13 +495,23 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                     if pod_name is None:
                         message = "Kubernetes Job has no owned worker Pod"
                         raise TransportError(message, retryable=True)
-                    connection = portforward(
-                        api.connect_get_namespaced_pod_portforward,
-                        pod_name,
-                        namespace,
-                        ports=str(PORT),
-                        _request_timeout=15,
-                    )
+                    try:
+                        connection = portforward(
+                            api.connect_get_namespaced_pod_portforward,
+                            pod_name,
+                            namespace,
+                            ports=str(PORT),
+                            _request_timeout=15,
+                        )
+                    except (ApiException, AttributeError) as error:
+                        if (
+                            _is_retryable_portforward_error(error)
+                            and not submitted
+                            and time.monotonic() < grpc_deadline
+                        ):
+                            cancelled.wait(0.1)
+                            continue
+                        raise
                     try:
                         with (
                             forward_socket(connection.socket(PORT)) as address,
