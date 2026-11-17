@@ -28,10 +28,10 @@ class WorkScheduler:
         self._placement_resolver = placement_resolver
 
     async def claim_and_place_work(self) -> WorkItem | None:
-        """Claim one item and place it, returning only assigned Work."""
+        """Return one newly cancelled item, or claim and place runnable work."""
         item = await self._store.reserve_one()
-        if item is None:
-            return None
+        if item is None or item.status is WorkItemStatus.CANCELLED:
+            return item
         return await self._place_claimed_item(item)
 
     async def _place_claimed_item(self, item: WorkItem) -> WorkItem | None:

@@ -26,6 +26,8 @@ from execution_plane.execution_target_reconciler.placement import WorkerManagerR
 from execution_plane.logging.lifecycle import start_loggers, stop_loggers
 from execution_plane.resource_monitor.monitor import ResourceMonitor
 from execution_plane.runtime import run_until_shutdown
+from execution_plane.store_errors import StaleClaimError
+from execution_plane.work_item.errors import WorkItemNotFoundError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.worker_manager.vanilla_k8s.manager import (
@@ -109,7 +111,7 @@ async def _process_item(  # noqa: C901, PLR0912 - dispatch outcomes have distinc
             claim_owner_id=claim_owner_id,
             claim_generation=claim_generation,
         )
-        logger.warning("Worker dispatch will retry", work_item_id=wi_id, error=str(exc))
+        logger.warning("Worker dispatch encountered a pre-execution failure", work_item_id=wi_id, error=str(exc))
     except WorkItemPayloadError as exc:
         await work_progress.set_result(
             item.id,
@@ -175,6 +177,10 @@ async def _dispatch_item(
     """Release the reserved dispatch slot on completion, failure, or cancellation."""
     try:
         await _process_item(item, work_progress, target_queries, worker_managers, settings)
+    except (WorkItemNotFoundError, StaleClaimError):
+        # Cancellation/deletion may retire a claim while its dispatch task is
+        # still unwinding. That task must not stop the worker's other loops.
+        logger.info("Work item dispatch claim was retired", work_item_id=str(item.id))
     finally:
         slots.release()
         dispatch_event.set()
@@ -234,6 +240,10 @@ async def _poll_loop(
     slots = asyncio.BoundedSemaphore(settings.max_concurrent_dispatches)
     while True:
         dispatch_event.clear()
+        try:
+            await work_progress.purge_deleted_work()
+        except Exception:
+            logger.exception("Work-item deletion purge failed, will retry")
 
         # Claim while a dispatch slot is free and work is queued.
         while not slots.locked():
@@ -244,6 +254,8 @@ async def _poll_loop(
                 logger.exception("Error claiming work item, will retry")
             if item is None:
                 break
+            if item.status is WorkItemStatus.CANCELLED:
+                continue
             logger.info("Claimed work item", work_item_id=str(item.id))
             await slots.acquire()
             task_group.create_task(

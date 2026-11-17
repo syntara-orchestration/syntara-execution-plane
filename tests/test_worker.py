@@ -15,6 +15,8 @@ import pytest
 
 from execution_plane.models.execution_target import BackendType
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
+from execution_plane.store_errors import StaleClaimError
+from execution_plane.work_item.errors import WorkItemNotFoundError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError
 
@@ -167,6 +169,26 @@ async def test_process_item_preserves_execution_started_for_cancelled_running_wo
     ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_retired_dispatch_claim_does_not_stop_worker(*, deleted: bool) -> None:
+    from execution_plane import worker
+
+    item = WorkItem(id=uuid4(), client_id="test-client", claim_owner_id=uuid4(), claim_generation=1)
+    store = AsyncMock(spec=WorkStore)
+    store.set_result.side_effect = WorkItemNotFoundError(item.id) if deleted else StaleClaimError("Retired claim")
+    slots = asyncio.BoundedSemaphore(1)
+    await slots.acquire()
+    dispatch_event = asyncio.Event()
+
+    async with asyncio.TaskGroup() as tasks:
+        tasks.create_task(worker._dispatch_item(item, store, Mock(), Mock(), Mock(), slots, dispatch_event))
+
+    store.set_result.assert_awaited_once()
+    assert not slots.locked()
+    assert dispatch_event.is_set()
+
+
 class _CompletionDelivery:
     def __init__(self, _settings: object, events: list[str]) -> None:
         self.events = events
@@ -284,7 +306,7 @@ async def test_worker_awaits_dispatch_cleanup_before_closing_resources(
 
     class Scheduler:
         async def claim_and_place_work(self) -> SimpleNamespace | None:
-            return SimpleNamespace(id=uuid4())
+            return SimpleNamespace(id=uuid4(), status=WorkItemStatus.CLAIMED)
 
     async def process_item(item, *_args: object) -> None:
         started.set()
@@ -381,12 +403,17 @@ async def test_poll_loop_bounds_claims_and_reuses_slots_without_waiting_for_poll
     peak = 0
 
     class Scheduler:
+        returned_cancelled = False
+
         async def claim_and_place_work(self) -> SimpleNamespace | None:
+            if not self.returned_cancelled:
+                self.returned_cancelled = True
+                return SimpleNamespace(id=-1, status=WorkItemStatus.CANCELLED)
             if len(claims) == 3:
                 return None
             index = len(claims)
             claims.append(index)
-            return SimpleNamespace(id=index)
+            return SimpleNamespace(id=index, status=WorkItemStatus.CLAIMED)
 
     async def process_item(item, *_args: object) -> None:
         nonlocal active, peak
