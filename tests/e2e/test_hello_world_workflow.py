@@ -12,18 +12,28 @@ stored result contains the unique hello-world marker.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from typing import Any
 
 import pytest
+from syntara_plugin.contracts import canonical_json_bytes
 
 pytestmark = [pytest.mark.e2e]
 
 _SCRIPT_NODE_ID = "script_node"
+_CREDENTIAL_RECIPE_ID = "syntara.e2e.bearer-token"
+_BEARER_CREDENTIAL_TYPE_NAME = "HTTP Bearer Token"
 
 
-def _hello_world_definition(name: str, marker: str) -> dict[str, Any]:
+def _hello_world_definition(name: str, marker: str, *, credential_ref: str | None = None) -> dict[str, Any]:
+    parameters: dict[str, Any] = {"code": f"echo 'hello world {marker}'", "language": "bash"}
+    if credential_ref is not None:
+        parameters["environment"] = {"EP_E2E_USE_CREDENTIAL": "1"}
+        parameters["credential_bindings"] = [
+            {"credential_recipe_id": _CREDENTIAL_RECIPE_ID, "credential_ref": credential_ref}
+        ]
     return {
         "name": name,
         "schema_version": "2.0.0",
@@ -33,7 +43,7 @@ def _hello_world_definition(name: str, marker: str) -> dict[str, Any]:
                 "id": _SCRIPT_NODE_ID,
                 "name": "Hello Script",
                 "type": "script",
-                "parameters": {"code": f"echo 'hello world {marker}'", "language": "bash"},
+                "parameters": parameters,
             }
         ],
         "edges": [{"from": "trigger", "to": "script_node"}],
@@ -145,3 +155,58 @@ def test_hello_world_script_workflow_completes(ao_client, ep_client) -> None:
     assert expected in _blob(work_item.get("result")), (
         f"EP work item {work_item.get('id')} result does not contain {expected!r}: {work_item.get('result')!r}"
     )
+
+
+def test_script_workflow_resolves_sdk_credential(ao_client, ep_client) -> None:
+    marker = uuid.uuid4().hex
+    name = f"hello-world-credential-e2e-{marker[:8]}"
+    project_id = ao_client.default_project_id()
+    credential_type = next(
+        (
+            credential_type
+            for credential_type in ao_client.list_credential_types()
+            if credential_type.get("name") == _BEARER_CREDENTIAL_TYPE_NAME
+        ),
+        None,
+    )
+    assert credential_type is not None, "AO must seed the HTTP Bearer Token credential type"
+    token = f"e2e-{uuid.uuid4().hex}"
+    credential = ao_client.create_credential(
+        {
+            "name": f"hello-world-credential-{marker[:8]}",
+            "credential_type_id": credential_type["id"],
+            "project_id": project_id,
+            "inputs": {"token": token},
+        }
+    )
+    document = {"auth_type": "bearer", "bearer_token": token}
+    digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
+    workflow = ao_client.create_workflow(
+        {
+            "name": name,
+            "description": "Cold-start EP: SDK script reads a workload credential",
+            "project_id": project_id,
+            "workflow_definition": _hello_world_definition(name, marker, credential_ref=str(credential["id"])),
+        }
+    )
+    execution = ao_client.create_execution(str(workflow["id"]))
+    execution_id = str(execution["id"])
+    completed = ao_client.poll_execution(execution_id)
+
+    script = _activity_by_id(completed, _SCRIPT_NODE_ID)
+    assert script is not None, f"script_node activity missing from execution {execution_id}"
+    assert script.get("status") == "completed", (
+        f"script_node status={script.get('status')!r} error_details={script.get('error_details')!r}"
+    )
+    stdout = _activity_stdout(script)
+    assert marker in stdout, f"AO script_node stdout missing marker: {stdout!r}"
+    assert digest in stdout, f"AO script_node stdout missing credential digest: {stdout!r}"
+    assert token not in _blob(script), "AO activity leaked the raw credential token"
+
+    work_item = _work_item_from_ep(ep_client, ao_client, execution_id, marker)
+    result = _blob(work_item.get("result"))
+    assert work_item.get("status") == "completed", (
+        f"EP work item status={work_item.get('status')!r} result={work_item.get('result')!r}"
+    )
+    assert digest in result, f"EP work item result missing credential digest: {result!r}"
+    assert token not in result, "EP work item result leaked the raw credential token"

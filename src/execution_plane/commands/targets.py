@@ -9,7 +9,9 @@ from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.config.settings import get_settings
-from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.credential_resolution.client import CredentialResolutionClient
+from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     ExecutionTargetStore,
@@ -168,7 +170,8 @@ class TargetHealthCommandHandler:
                 raise ResourceNotFoundError
 
         settings = get_settings()
-        async with CredentialResolver(settings) as credential_resolver:
+        async with CredentialResolutionClient(settings) as credential_client:
+            credential_resolver = ClusterCredentialResolver(settings, credential_client)
             try:
                 credential = await credential_resolver.resolve(
                     cluster.credential_ref,
