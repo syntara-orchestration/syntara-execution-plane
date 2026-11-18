@@ -99,9 +99,13 @@ Apply the EP migrations independently from Syntara's migration chain:
 
 ```bash
 DATABASE_URL=postgresql+asyncpg://user:password@localhost/execution_plane \
-EP_CREDENTIAL_ENCRYPTION_KEY=<base64url-encoded-32-byte-key> \
 uv run alembic -c alembic.ini upgrade head
 ```
+
+The pre-release migration history has been squashed into a single initial
+migration. Recreate development databases built with the previous history before
+running `upgrade head`; their revision IDs are no longer supported. After release,
+preserve the migration history and add incremental migrations for existing data.
 
 Build the worker image from this repository root:
 

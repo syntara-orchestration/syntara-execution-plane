@@ -87,6 +87,8 @@ def run_migrations_offline() -> None:
         version_table_schema=EP_SCHEMA,
     )
     with context.begin_transaction():
+        # Alembic creates its version table before invoking the initial revision.
+        context.execute(f"CREATE SCHEMA IF NOT EXISTS {EP_SCHEMA}")
         context.run_migrations()
 
 
