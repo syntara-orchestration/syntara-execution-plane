@@ -288,10 +288,9 @@ class _Service(rpc.ContainerServiceServicer):
     def Health(self, request, context) -> pb.HealthResponse:  # noqa: N802
         return pb.HealthResponse(ready=True, runtime_abi=self.abi, step_revision_ids=["script.v1"])
 
-    def Execute(self, requests, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
-        request = next(requests)
-        assert request.WhichOneof("message") == "start"
-        for event in self.events(request.start, context):
+    def Execute(self, request, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
+        first = next(request)
+        for event in self.events(first.start, context):
             yield pb.ExecuteServerMessage(event=event)
 
 

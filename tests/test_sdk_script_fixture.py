@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import shlex
+import re
 import sys
 import time
 import tomllib
@@ -66,9 +66,12 @@ def test_sdk_script_image_matches_ep_contracts_release() -> None:
         if dependency.startswith("syntara-plugin-contracts==")
     )
     containerfile = (Path(__file__).parent / "fixtures" / "sdk_script" / "Containerfile").read_text()
-    install = next(line for line in containerfile.splitlines() if line.startswith("RUN pip install "))
+    match = re.search(
+        r'^RUN pip install --no-cache-dir "(syntara-plugin-contracts==[^"\n]+)"$', containerfile, re.MULTILINE
+    )
 
-    assert shlex.split(install) == ["RUN", "pip", "install", "--no-cache-dir", dependency]
+    assert match is not None
+    assert match.group(1) == dependency
 
 
 def test_python_script_result_matches_ao_output_contract() -> None:

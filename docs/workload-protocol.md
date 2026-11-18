@@ -13,15 +13,20 @@ that client to EP's cancellation, progress, and attempt lifecycle.
 
 ## Installing the pinned SDK
 
-[`pyproject.toml`](../pyproject.toml) pins the `syntara-plugin-contracts` release
-used by EP. `tests/fixtures/sdk_script/Containerfile` pins the same release.
-`uv.lock` and `requirements.txt` record the release's artifact hashes.
+[`pyproject.toml`](../pyproject.toml) declares the `syntara-plugin-contracts`
+dependency. [`uv.lock`](../uv.lock)
+records the selected package version, registry, artifact URLs, and SHA-256
+hashes; the exported `requirements.txt` records the same pinned release and
+hashes for pip/Hermeto builds.
 
-Use `uv sync --locked --all-groups` (or `make install`) for installation from
-PyPI. When updating the SDK pin, update the fixture image and regenerate the
-lockfile and requirement exports together. Rebuild and load the fixture image
-before running the timeout integration test so both client and workload use
-the fix.
+Use `uv sync --locked --all-groups` (or `make install`, which runs that
+command) for reproducible installation. It requires access to PyPI but no
+sibling SDK checkout, private index, or developer-local source override.
+Plain `pip install .` can resolve the declared SDK version, but unlike `uv sync`
+it does not use the repository's complete lockfile.
+
+To move to another reviewed SDK release, update the version pin and regenerate
+the lockfile and requirement exports.
 
 ## Command and workload data
 
