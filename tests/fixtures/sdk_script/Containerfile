@@ -1,7 +1,7 @@
 FROM docker.io/library/python:3.12-slim
 
 # Use the same contracts release as EP.
-RUN pip install --no-cache-dir "syntara-plugin-contracts==0.1.0a5"
+RUN pip install --no-cache-dir "syntara-plugin-contracts==0.1.0a6"
 
 COPY worker.py /opt/sdk-test-worker.py
 USER 1001

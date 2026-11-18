@@ -74,7 +74,11 @@ safe `unavailable` errors, and neither caches nor persists credential documents.
 EP negotiates `Health`, checks that the image advertises the selected step (or
 the SDK's platform-runner wildcard), then submits Execute once. It consumes
 `ContainerClient.stream` to forward progress and require a valid terminal
-outcome. Cancellation calls the SDK's Cancel RPC; after the grace period EP
+outcome. The invocation timeout remains the execution budget; the SDK adds a
+bounded delivery window to its default RPC deadline. EP omits an explicit RPC
+timeout so the runtime can report `TIMEOUT`, which EP records as `failed` when
+no cancellation was requested. Transport loss still requires reconciliation.
+Cancellation calls the SDK's Cancel RPC; after the grace period EP
 closes its dedicated channel and cleans up the owned Kubernetes resources.
 
 EP preserves the SDK's output schema digest, status code, status message,
