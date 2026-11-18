@@ -473,7 +473,7 @@ class WorkStore(StoreBase):
         if selector.work_item_ids is not None:
             statement = statement.where(col(WorkItem.id).in_(selector.work_item_ids))
         else:
-            context = selector.model_dump(mode="json", exclude_none=True)
+            context = selector.runtime_context
             statement = statement.where(cast(WorkItem.runtime_context, JSONB).contains(context))
         values = {"cancellation_requested": True}
         if delete:

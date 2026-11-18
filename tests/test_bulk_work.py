@@ -9,7 +9,16 @@ from execution_plane_client.commands.bulk_work import WorkItemSelector
 
 
 @pytest.mark.parametrize(
-    "value", [{}, {"work_item_ids": []}, {"project_id": None}, {"project_id": "invalid"}, {"unknown": "value"}]
+    "value",
+    [
+        {},
+        {"work_item_ids": []},
+        {"runtime_context": None},
+        {"runtime_context": {}},
+        {"runtime_context": []},
+        {"runtime_context": "invalid"},
+        {"unknown": "value"},
+    ],
 )
 def test_invalid_selector_is_rejected(value):
     with pytest.raises(ValidationError):
@@ -18,6 +27,6 @@ def test_invalid_selector_is_rejected(value):
 
 def test_multiple_selectors_and_oversized_id_batch_are_rejected():
     with pytest.raises(ValidationError):
-        WorkItemSelector(project_id=uuid4(), workflow_id=uuid4())
+        WorkItemSelector(work_item_ids=[uuid4()], runtime_context={"group": "a"})
     with pytest.raises(ValidationError):
         WorkItemSelector(work_item_ids=[uuid4() for _ in range(101)])

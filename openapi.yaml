@@ -1427,6 +1427,7 @@ components:
       - step_revision_id
       title: CredentialResolveWorkload
       description: Resolve one credential reference for the identified work item.
+    JsonValue: {}
     ClientKubernetesPlacement:
       properties:
         type:
@@ -1819,32 +1820,24 @@ components:
             minItems: 1
           - type: 'null'
           title: Work Item Ids
-        project_id:
+        runtime_context:
           anyOf:
-          - type: string
-            format: uuid
+          - additionalProperties:
+              $ref: '#/components/schemas/JsonValue'
+            type: object
+            minProperties: 1
           - type: 'null'
-          title: Project Id
-          description: Exact runtime_context.project_id UUID string.
-        workflow_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Workflow Id
-          description: Exact runtime_context.workflow_id UUID string.
-        execution_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Execution Id
-          description: Exact runtime_context.execution_id UUID string.
+          title: Runtime Context
+          description: Non-empty JSON object matched using PostgreSQL JSONB containment
+            (@>). All supplied key/value pairs must be contained in the stored runtime_context.
+            Nested objects may contain additional keys; arrays use JSONB containment
+            semantics. Keys and values are caller-defined; EP assigns them no domain
+            meaning.
       additionalProperties: false
       type: object
       title: WorkItemSelector
-      description: 'Select by exactly one ID list or exact top-level runtime-context
-        UUID string.
+      description: 'Select by exactly one ID list or a non-empty runtime-context containment
+        filter.
 
 
         Selection is always restricted to the authenticated client. Missing IDs,
