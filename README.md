@@ -99,7 +99,6 @@ Apply the EP migrations independently from Syntara's migration chain:
 
 ```bash
 DATABASE_URL=postgresql+asyncpg://user:password@localhost/execution_plane \
-EP_CREDENTIAL_ENCRYPTION_KEY=<base64url-encoded-32-byte-key> \
 uv run alembic -c alembic.ini upgrade head
 ```
 
