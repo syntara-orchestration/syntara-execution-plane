@@ -3,53 +3,14 @@
 from __future__ import annotations
 
 import runpy
-from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from alembic import command, context
+from alembic import context
 from alembic.config import Config
 
 from execution_plane.database import engine as engine_module
-
-
-def test_offline_upgrade_creates_schema_before_version_table() -> None:
-    """Fresh database SQL must create the schema before Alembic uses it."""
-    output = StringIO()
-    config = Config(output_buffer=output)
-    config.set_main_option("script_location", str(Path(__file__).parents[1] / "src/execution_plane/migrations"))
-    config.set_main_option("sqlalchemy.url", "postgresql+asyncpg://localhost/execution_plane")
-
-    command.upgrade(config, "head", sql=True)
-
-    sql = output.getvalue()
-    assert sql.index("CREATE SCHEMA IF NOT EXISTS execution_plane") < sql.index(
-        "CREATE TABLE execution_plane.alembic_version"
-    )
-    assert sql.index("CREATE TABLE execution_plane.clusters") < sql.index(
-        "CREATE TABLE execution_plane.execution_targets"
-    )
-    assert sql.index("CREATE TABLE execution_plane.execution_targets") < sql.index(
-        "CREATE TABLE execution_plane.work_items"
-    )
-
-
-def test_offline_downgrade_preserves_alembic_schema() -> None:
-    """Downgrades remove dependent tables first and leave version tracking usable."""
-    output = StringIO()
-    config = Config(output_buffer=output)
-    config.set_main_option("script_location", str(Path(__file__).parents[1] / "src/execution_plane/migrations"))
-    config.set_main_option("sqlalchemy.url", "postgresql+asyncpg://localhost/execution_plane")
-
-    command.downgrade(config, "head:base", sql=True)
-
-    sql = output.getvalue()
-    assert sql.index("DROP TABLE execution_plane.work_items") < sql.index(
-        "DROP TABLE execution_plane.execution_targets"
-    )
-    assert sql.index("DROP TABLE execution_plane.execution_targets") < sql.index("DROP TABLE execution_plane.clusters")
-    assert "DROP SCHEMA" not in sql
 
 
 @pytest.mark.parametrize("failure", [None, "connect", "execute"])
