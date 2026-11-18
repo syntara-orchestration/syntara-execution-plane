@@ -58,12 +58,12 @@ class _RecordingCredentialProvider:
         return _ScopedRecordingCredentialProvider(self._documents, self.reads)
 
 
-def test_sdk_script_image_matches_ep_contracts_source() -> None:
+def test_sdk_script_image_matches_ep_contracts_release() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     dependency = next(
         dependency
         for dependency in project["project"]["dependencies"]
-        if dependency.startswith("syntara-plugin-contracts @ ")
+        if dependency.startswith("syntara-plugin-contracts==")
     )
     containerfile = (Path(__file__).parent / "fixtures" / "sdk_script" / "Containerfile").read_text()
     install = next(line for line in containerfile.splitlines() if line.startswith("RUN pip install "))

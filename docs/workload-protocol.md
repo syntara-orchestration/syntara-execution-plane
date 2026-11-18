@@ -13,22 +13,15 @@ that client to EP's cancellation, progress, and attempt lifecycle.
 
 ## Installing the pinned SDK
 
-This demo pins `syntara-plugin-contracts` to commit
-`1dd8cd2b177e6b8b85222b5f8b45e5b496384206` from
-[`syntara-orchestration/syntara-plugin-sdk`, branch `fix/timeout-result-delivery`](https://github.com/syntara-orchestration/syntara-plugin-sdk/pull/55).
-Both EP and `tests/fixtures/sdk_script/Containerfile` install the contracts
-subdirectory from the same immutable source archive. That distribution contains
-the runtime used by the script fixture. `uv.lock` and `requirements.txt` record
-the archive hash.
+[`pyproject.toml`](../pyproject.toml) pins the `syntara-plugin-contracts` release
+used by EP. `tests/fixtures/sdk_script/Containerfile` pins the same release.
+`uv.lock` and `requirements.txt` record the release's artifact hashes.
 
-Use `uv sync --locked --all-groups` for installation. This demo requires access
-to GitHub and PyPI; it does not require a sibling SDK checkout. When updating
-the SDK pin, update the fixture image and regenerate the lockfile and requirement
-exports together.
-
-The source pin adds timeout-result delivery to the `0.1.0a5` SDK already
-consumed by EP. Rebuild and load the fixture image before running the timeout
-integration test so both client and workload use the fix.
+Use `uv sync --locked --all-groups` (or `make install`) for installation from
+PyPI. When updating the SDK pin, update the fixture image and regenerate the
+lockfile and requirement exports together. Rebuild and load the fixture image
+before running the timeout integration test so both client and workload use
+the fix.
 
 ## Command and workload data
 
