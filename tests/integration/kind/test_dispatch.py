@@ -908,12 +908,11 @@ async def test_work_item_operational_logs_are_forwarded_with_correlation(
 ) -> None:
     """AAP-102015: toolbox-emitted operational records are forwarded with correlation.
 
-    The fixture workload opts into toolbox emission via the EMIT_TOOLBOX_LOGS
-    environment variable (two records: one structured with an event name, one
-    plain). The in-process worker's forwarder must emit them on the
-    ``execution_plane.step_logs`` logger, tagged with the invocation, work
-    item, execution target, and the caller-supplied workflow context from the
-    runtime context.
+    The fixture workload always records two toolbox entries (one structured
+    with an event name, one plain). The in-process worker's forwarder must
+    emit them on the ``execution_plane.step_logs`` logger, tagged with the
+    invocation, work item, execution target, and the caller-supplied workflow
+    context from the runtime context.
     """
     from execution_plane import operational_logs
 
@@ -944,7 +943,7 @@ async def test_work_item_operational_logs_are_forwarded_with_correlation(
                     language="bash",
                     code="echo ep-integration-log-batch-ok",
                     timeout_seconds=120,
-                    environment={"EMIT_TOOLBOX_LOGS": "1"},
+                    environment={},
                     image=_NODE_IMAGE,
                     runtime_context={"workflow_id": "ep-it-workflow", "execution_id": "ep-it-execution"},
                 ),
