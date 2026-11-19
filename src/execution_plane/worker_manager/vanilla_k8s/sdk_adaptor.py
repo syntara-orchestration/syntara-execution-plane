@@ -129,7 +129,7 @@ def _deliver_log_batch(event: ContainerLogBatch, sink: Callable[[ContainerLogBat
         logger.warning("Operational log batch forwarding failed", exc_info=True)
 
 
-def invoke(  # noqa: C901, PLR0912 - stream consumption plus safe telemetry delivery
+def invoke(  # noqa: C901 - stream consumption plus safe telemetry delivery
     channel: grpc.Channel,
     invocation: WorkloadInvocation,
     *,
@@ -187,10 +187,10 @@ def invoke(  # noqa: C901, PLR0912 - stream consumption plus safe telemetry deli
                     }
                 )
             elif isinstance(event, ContainerLogBatch):
-                # Best-effort operational telemetry (AAP-102015): never fatal,
-                # and a batch after the terminal result is dropped silently.
-                if result is None:
-                    _deliver_log_batch(event, log_sink)
+                # Best-effort operational telemetry (AAP-102015): a sink failure
+                # is never fatal. Like any event, a batch after the terminal
+                # result fails the stream (checked at the top of the loop).
+                _deliver_log_batch(event, log_sink)
                 continue
             else:
                 result = event

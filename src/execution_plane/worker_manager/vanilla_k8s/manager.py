@@ -71,7 +71,7 @@ class _DispatchContext:
     cancelled: threading.Event
     execution_start: Callable[[], None]
     credential_handler: CredentialResolver
-    log_sink: Callable[[ContainerLogBatch], None] | None = None
+    log_sink: Callable[[ContainerLogBatch], None]
 
 
 class RetryableDispatchError(Exception):

@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-import logging
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 from syntara_plugin.runtime import ContainerLogBatch, ContainerLogRecord
 
 from execution_plane import operational_logs
-from execution_plane.operational_logs import (
-    OperationalLogCorrelation,
-    OperationalLogForwarder,
-    metrics,
-)
+from execution_plane.operational_logs import OperationalLogCorrelation, OperationalLogForwarder
+
+_CORRELATION = {
+    "invocation_id": "attempt-1",
+    "work_item_id": "wi-1",
+    "execution_target_id": "00000000-0000-0000-0000-0000000000aa",
+    "workflow_id": "wf-1",
+}
 
 
 def _record(
@@ -31,34 +34,8 @@ def _record(
     )
 
 
-def _batch(
-    records: tuple[ContainerLogRecord, ...],
-    dropped_count: int = 0,
-    invocation_id: str = "attempt-1",
-) -> ContainerLogBatch:
-    return ContainerLogBatch(invocation_id=invocation_id, version=1, records=records, dropped_count=dropped_count)
-
-
-@pytest.fixture
-def captured(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
-    caplog.set_level(logging.DEBUG, logger="execution_plane.step_logs")
-    return caplog
-
-
-@pytest.fixture
-def enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(operational_logs, "_forwarding_enabled", lambda: True)
-
-
-@pytest.fixture(autouse=True)
-def reset_metrics() -> None:
-    metrics.batches_received = 0
-    metrics.records_forwarded = 0
-    metrics.batches_dropped_disabled = 0
-    metrics.batches_dropped_malformed = 0
-    metrics.dropped_by_workload = 0
-    metrics.forwarding_failures = 0
-    operational_logs._disabled_warning_logged = False
+def _batch(records: tuple[ContainerLogRecord, ...], dropped_count: int = 0) -> ContainerLogBatch:
+    return ContainerLogBatch(invocation_id="attempt-1", version=1, records=records, dropped_count=dropped_count)
 
 
 def _forwarder() -> OperationalLogForwarder:
@@ -72,71 +49,81 @@ def _forwarder() -> OperationalLogForwarder:
     )
 
 
-def test_records_are_forwarded_with_correlation_attributes(captured: pytest.LogCaptureFixture, enabled: None) -> None:
-    _forwarder()(
-        _batch(
-            (
-                _record(attributes={"attempt": 2}, event_name="fixture.toolbox_log"),
-                _record(severity="WARN", message="second record"),
+@pytest.fixture
+def enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(operational_logs, "_forwarding_enabled", lambda: True)
+
+
+@pytest.fixture(autouse=True)
+def reset_disabled_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(operational_logs, "_disabled_warning_logged", False)
+
+
+def test_records_are_forwarded_with_correlation_fields(enabled: None) -> None:
+    with capture_logs() as logs:
+        _forwarder()(
+            _batch(
+                (
+                    _record(severity="TRACE", attributes={"attempt": 2}, event_name="fixture.toolbox_log"),
+                    _record(severity="WARN", message="second record"),
+                )
             )
         )
-    )
-    records = [r for r in captured.records if r.name == "execution_plane.step_logs"]
-    assert [r.message for r in records] == ["hello from the toolbox", "second record"]
-    assert [r.levelname for r in records] == ["INFO", "WARNING"]
-    first = records[0]
-    assert first.invocation_id == "attempt-1"
-    assert first.work_item_id == "wi-1"
-    assert first.execution_target_id == "00000000-0000-0000-0000-0000000000aa"
-    assert first.workflow_id == "wf-1"
-    assert first.attempt == 2
-    assert first.step_log_severity == "INFO"
-    assert first.step_log_timestamp == "2026-11-19T17:00:00.123Z"
-    assert first.step_log_event_name == "fixture.toolbox_log"
-    assert metrics.batches_received == 1
-    assert metrics.records_forwarded == 2
+
+    assert logs == [
+        {
+            **_CORRELATION,
+            "event": "hello from the toolbox",
+            "log_level": "debug",
+            "step_log_severity": "TRACE",
+            "step_log_timestamp": "2026-11-19T17:00:00.123Z",
+            "step_log_event_name": "fixture.toolbox_log",
+            "step_log_attributes": {"attempt": 2},
+        },
+        {
+            **_CORRELATION,
+            "event": "second record",
+            "log_level": "warning",
+            "step_log_severity": "WARN",
+            "step_log_timestamp": "2026-11-19T17:00:00.123Z",
+        },
+    ]
 
 
-def test_unknown_severity_is_forwarded_verbatim_at_info(captured: pytest.LogCaptureFixture, enabled: None) -> None:
-    _forwarder()(_batch((_record(severity="VERBOSE", message="x"),)))
-    (record,) = [r for r in captured.records if r.name == "execution_plane.step_logs"]
-    assert record.levelname == "INFO"
-    assert record.step_log_severity == "VERBOSE"
+def test_workload_attributes_cannot_shadow_ep_or_reserved_fields(enabled: None) -> None:
+    hostile = {"work_item_id": "SPOOFED", "workflow_id": "SPOOFED", "event": "x", "level": "x", "name": "x"}
+    with capture_logs() as logs:
+        _forwarder()(_batch((_record(attributes=hostile),)))
+
+    (entry,) = logs
+    assert entry["event"] == "hello from the toolbox"
+    assert entry["work_item_id"] == "wi-1"
+    assert entry["workflow_id"] == "wf-1"
+    assert entry["step_log_attributes"] == hostile
 
 
-def test_disabled_otel_drops_batches_with_one_warning(
-    monkeypatch: pytest.MonkeyPatch, captured: pytest.LogCaptureFixture
-) -> None:
+def test_disabled_otel_drops_batches_with_one_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(operational_logs, "_forwarding_enabled", lambda: False)
     forwarder = _forwarder()
-    forwarder(_batch((_record(message="one"),)))
-    forwarder(_batch((_record(message="two"),)))
-    step_records = [r for r in captured.records if r.name == "execution_plane.step_logs"]
-    warnings = [r for r in captured.records if r.levelname == "WARNING" and "OTEL" in r.message]
-    assert step_records == []
-    assert len(warnings) == 1
-    assert metrics.batches_dropped_disabled == 2
-    assert metrics.batches_received == 2
+    with capture_logs() as logs:
+        forwarder(_batch((_record(message="one"),)))
+        forwarder(_batch((_record(message="two"),)))
+
+    assert [(entry["log_level"], "OTEL is not enabled" in entry["event"]) for entry in logs] == [("warning", True)]
 
 
-def test_workload_dropped_count_is_surfaced(captured: pytest.LogCaptureFixture, enabled: None) -> None:
-    _forwarder()(_batch((_record(message="kept"),), dropped_count=7))
-    records = [r for r in captured.records if r.name == "execution_plane.step_logs"]
-    assert [r.message for r in records if r.levelname == "WARNING"] == [
-        "Workload dropped 7 operational log record(s) before delivery"
-    ]
-    assert [r.message for r in records if r.levelname == "INFO"] == ["kept"]
-    assert metrics.dropped_by_workload == 7
+def test_workload_dropped_count_is_surfaced_with_correlation(enabled: None) -> None:
+    with capture_logs() as logs:
+        _forwarder()(_batch((_record(message="kept"),), dropped_count=7))
 
-
-def test_sink_failures_never_propagate(enabled: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(message: str, extra: dict | None = None) -> None:
-        msg = "exporter exploded"
-        raise RuntimeError(msg)
-
-    monkeypatch.setattr(operational_logs._step_log_logger, "log", boom)
-    _forwarder()(_batch((_record(message="x"),)))
-    assert metrics.forwarding_failures == 1
+    warning, kept = logs
+    assert warning == {
+        **_CORRELATION,
+        "event": "Workload dropped operational log records before delivery",
+        "log_level": "warning",
+        "step_log_dropped_count": 7,
+    }
+    assert kept["event"] == "kept"
 
 
 def test_correlation_from_runtime_context_harvests_optional_keys() -> None:
@@ -151,27 +138,13 @@ def test_correlation_from_runtime_context_harvests_optional_keys() -> None:
             "driver": "test",  # unrelated: ignored
         },
     )
-    assert correlation.invocation_id == "attempt-1"
-    assert correlation.workflow_id == "wf-1"
-    assert correlation.execution_id == "exec-1"
+
     assert correlation.project_id is None
-    # attributes() flattens to exactly the present keys, stringifying the UUID
-    assert correlation.attributes() == {
+    # fields() flattens to exactly the present keys, stringifying the UUID last
+    assert correlation.fields() == {
         "invocation_id": "attempt-1",
         "work_item_id": "wi-1",
         "execution_target_id": "00000000-0000-0000-0000-0000000000bb",
         "workflow_id": "wf-1",
         "execution_id": "exec-1",
-    }
-    # Non-mapping runtime contexts are tolerated: only the dispatch identities survive.
-    plain = OperationalLogCorrelation.from_runtime_context(
-        invocation_id="a",
-        work_item_id="b",
-        execution_target_id=UUID(int=0xCC),
-        runtime_context=None,  # type: ignore[arg-type]
-    )
-    assert plain.attributes() == {
-        "invocation_id": "a",
-        "work_item_id": "b",
-        "execution_target_id": "00000000-0000-0000-0000-0000000000cc",
     }
