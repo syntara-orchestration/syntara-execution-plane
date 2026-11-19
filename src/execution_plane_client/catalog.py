@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
 from execution_plane_client.commands.control import Completion, WorkCancel
-from execution_plane_client.commands.credentials import CredentialResolve, CredentialResolveWorkload
+from execution_plane_client.commands.credentials import CredentialResolveCluster, CredentialResolveWorkload
 from execution_plane_client.commands.targets import TargetDelete, TargetHealth, TargetRegister, TargetUpdate
 from execution_plane_client.commands.work import WorkDelete, WorkExecute
 from execution_plane_client.errors import UnsupportedCommand
@@ -30,7 +30,7 @@ class CommandCatalog:
             WorkExecute,
             WorkDelete,
             Completion,
-            CredentialResolve,
+            CredentialResolveCluster,
             CredentialResolveWorkload,
             ClusterRegister,
             ClusterUpdate,
