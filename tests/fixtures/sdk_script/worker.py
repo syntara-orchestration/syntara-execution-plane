@@ -79,6 +79,18 @@ class ScriptStep(ActionStep[ScriptInput, ScriptOutput]):
 
     def run(self, inputs: ScriptInput, context: ExecutionContext) -> ScriptOutput:
         execute_entered_mono = time.monotonic()
+        # Operational-log emission (AAP-102015): when the caller opts in via
+        # the EMIT_TOOLBOX_LOGS environment variable, record structured
+        # entries through the invocation-scoped Toolbox so the host-side
+        # forwarding can be asserted end to end.
+        if inputs.environment.get("EMIT_TOOLBOX_LOGS") == "1":
+            context.toolbox.log(
+                "INFO",
+                "fixture operational log from the toolbox",
+                {"fixture": True, "language": inputs.language},
+                event_name="fixture.toolbox_log",
+            )
+            context.toolbox.log("WARN", "fixture second record")
         command = [sys.executable, "-c"] if inputs.language == "python" else ["/bin/bash", "-c"]
         environment = dict(os.environ)
         environment.update(inputs.environment)

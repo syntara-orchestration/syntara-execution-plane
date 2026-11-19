@@ -23,6 +23,7 @@ from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.credential_resolution.sdk_resolver import SDKCredentialResolver
+from execution_plane.operational_logs import OperationalLogForwarder
 from execution_plane.worker_manager.base import (
     ExecutionStartPersistenceError,
     ExecutionStartRejectedError,
@@ -36,6 +37,7 @@ from execution_plane_client.models.work_item import WorkItemStatus
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from syntara_plugin.runtime import ContainerLogBatch
     from syntara_plugin.runtime.container import CredentialResolver
 
     from execution_plane.cluster.cluster_store import ClusterStore
@@ -69,6 +71,7 @@ class _DispatchContext:
     cancelled: threading.Event
     execution_start: Callable[[], None]
     credential_handler: CredentialResolver
+    log_sink: Callable[[ContainerLogBatch], None] | None = None
 
 
 class RetryableDispatchError(Exception):
@@ -187,6 +190,19 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             invocation_id=attempt_id,
             step_revision_id=command.invocation.step_revision_id,
         )
+        # Correlation for the operational log conduit (AAP-102015): the
+        # attempt identity and work item come from EP; the caller-supplied
+        # workflow context (workflow_id/execution_id/project_id) rides the
+        # non-secret runtime_context when Syntara provides it.
+        correlation: dict[str, str] = {
+            "invocation_id": attempt_id,
+            "work_item_id": identity,
+            "execution_target_id": str(work_item.execution_target_id),
+        }
+        for key in ("workflow_id", "execution_id", "project_id"):
+            value = work_item.runtime_context.get(key) if isinstance(work_item.runtime_context, dict) else None
+            if isinstance(value, str) and value:
+                correlation[key] = value
         return _DispatchContext(
             image=command.image,
             invocation=command.invocation,
@@ -198,6 +214,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             cancelled=threading.Event(),
             execution_start=self.execution_start_callback(work_item),
             credential_handler=credential_handler,
+            log_sink=OperationalLogForwarder(correlation),
         )
 
     async def _run_transport(
@@ -256,6 +273,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 on_resource=on_resource,
                 on_execute_submitted=partial(self._mark_execute_submitted, context),
                 credential_handler=context.credential_handler,
+                log_sink=context.log_sink,
                 node_selectors=context.target_config["node_selectors"],
                 tolerations=context.target_config["tolerations"],
                 allowed_egress_cidrs=self._settings.workload_allowed_egress_cidrs,

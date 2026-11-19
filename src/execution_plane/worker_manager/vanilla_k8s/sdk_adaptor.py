@@ -10,6 +10,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from syntara_plugin.runtime import (
     ContainerClient,
     ContainerInvocation,
@@ -22,6 +23,8 @@ from syntara_plugin.runtime.container import (
     ANY_STEP_REVISION,
     CredentialResolver,
 )
+
+logger = structlog.stdlib.get_logger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -116,7 +119,17 @@ def _failure_frame(error: ContainerRemoteError, *, cancelled: bool = False) -> d
     return {"kind": "failure", "code": error.code.value, "retryable": error.retryable, "outcome": error.outcome}
 
 
-def invoke(  # noqa: C901
+def _deliver_log_batch(event: ContainerLogBatch, sink: Callable[[ContainerLogBatch], None] | None) -> None:
+    """Hand one batch to the sink; telemetry never fails the invocation."""
+    if sink is None:
+        return
+    try:
+        sink(event)
+    except Exception:  # noqa: BLE001 - Forwarding failures must not fail a work item.
+        logger.warning("Operational log batch forwarding failed", exc_info=True)
+
+
+def invoke(  # noqa: C901, PLR0912 - stream consumption plus safe telemetry delivery
     channel: grpc.Channel,
     invocation: WorkloadInvocation,
     *,
@@ -128,6 +141,7 @@ def invoke(  # noqa: C901
     grace: int = 30,
     on_execute_submitted: Callable[[], None] | None = None,
     credential_handler: CredentialResolver,
+    log_sink: Callable[[ContainerLogBatch], None] | None = None,
 ) -> dict[str, Any]:
     """Negotiate the SDK service, execute once, and consume its entire stream."""
     request = ContainerInvocation(
@@ -173,7 +187,10 @@ def invoke(  # noqa: C901
                     }
                 )
             elif isinstance(event, ContainerLogBatch):
-                # Log export is not implemented; keep consuming the execution stream.
+                # Best-effort operational telemetry (AAP-102015): never fatal,
+                # and a batch after the terminal result is dropped silently.
+                if result is None:
+                    _deliver_log_batch(event, log_sink)
                 continue
             else:
                 result = event

@@ -489,3 +489,66 @@ def test_channel_should_not_be_closed_in_invoke_finally_block():
         "The channel is owned by run_job's `with` block, which always closes it. "
         "Only the cancellation watcher force-closes early (to interrupt stuck streams)."
     )
+
+
+def test_log_batches_reach_the_sink_over_the_real_stream():
+    """AAP-102015: toolbox records travel the real gRPC path to the sink."""
+    from syntara_plugin.runtime import ContainerLogBatch
+
+    batches: list[ContainerLogBatch] = []
+
+    def handler(invocation) -> ContainerResult:
+        toolbox = invocation.credential_provider._public_toolbox
+        toolbox.log(
+            "INFO",
+            "operational record one",
+            {"attempt": 2},
+            event_name="test.toolbox_log",
+        )
+        toolbox.log("WARN", "operational record two")
+        return ContainerResult(_DIGEST, output={"done": True})
+
+    with _server(handler=handler) as channel:
+        frame = _invoke(channel, log_sink=batches.append)
+
+    assert frame["kind"] == "result"
+    assert len(batches) == 1
+    batch = batches[0]
+    assert batch.invocation_id == "work-1-attempt-2"
+    assert batch.version == 1
+    assert batch.dropped_count == 0
+    assert [record.message for record in batch.records] == [
+        "operational record one",
+        "operational record two",
+    ]
+    first = batch.records[0]
+    assert first.severity == "INFO"
+    assert first.attributes == {"attempt": 2}
+    assert first.event_name == "test.toolbox_log"
+    assert first.timestamp  # RFC 3339, produced by the SDK
+
+
+def test_log_batches_without_a_sink_are_consumed_silently():
+    def handler(invocation) -> ContainerResult:
+        invocation.credential_provider._public_toolbox.log("INFO", "nobody is listening")
+        return ContainerResult(_DIGEST, output={})
+
+    with _server(handler=handler) as channel:
+        frame = _invoke(channel)  # no log_sink
+
+    assert frame["kind"] == "result"
+
+
+def test_raising_log_sink_never_fails_the_invocation():
+    def handler(invocation) -> ContainerResult:
+        invocation.credential_provider._public_toolbox.log("INFO", "will explode downstream")
+        return ContainerResult(_DIGEST, output={})
+
+    def boom(_batch: object) -> None:
+        msg = "collector exploded"
+        raise RuntimeError(msg)
+
+    with _server(handler=handler) as channel:
+        frame = _invoke(channel, log_sink=boom)
+
+    assert frame["kind"] == "result"
