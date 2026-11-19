@@ -4,7 +4,8 @@ import asyncio
 import concurrent.futures
 import threading
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from syntara_plugin.runtime import CredentialAccessError, CredentialRequestContext
@@ -14,10 +15,19 @@ from execution_plane.credential_resolution.workload import WorkloadCredentialRes
 from execution_plane_client.commands.work import WorkCredentialBinding
 
 _POLL_INTERVAL_SECONDS = 0.05
-CredentialFailureReason = Literal["missing", "expired", "unavailable"]
-_MISSING: CredentialFailureReason = "missing"
-_EXPIRED: CredentialFailureReason = "expired"
-_UNAVAILABLE: CredentialFailureReason = "unavailable"
+
+
+class CredentialFailureReason(StrEnum):
+    """Why an SDK credential request could not be satisfied."""
+
+    MISSING = "missing"
+    EXPIRED = "expired"
+    UNAVAILABLE = "unavailable"
+
+
+def _credential_error(reason: CredentialFailureReason) -> CredentialAccessError:
+    """Raise-typed bridge from the enum onto the SDK's Literal reason set."""
+    return CredentialAccessError(reason.value)
 
 
 class SDKCredentialResolver:
@@ -54,21 +64,21 @@ class SDKCredentialResolver:
         """Resolve one invocation-scoped credential request without leaking details."""
         credential_ref = self._credential_bindings.get(context.name)
         if credential_ref is None:
-            raise CredentialAccessError(_MISSING)
+            raise _credential_error(CredentialFailureReason.MISSING)
         if context.invocation_id != self._invocation_id or context.cancelled:
-            raise CredentialAccessError(_EXPIRED)
+            raise _credential_error(CredentialFailureReason.EXPIRED)
 
         if not self._acquire_read_slot(context):
-            raise CredentialAccessError(_EXPIRED)
+            raise _credential_error(CredentialFailureReason.EXPIRED)
         try:
             if context.cancelled:
-                raise CredentialAccessError(_EXPIRED)
+                raise _credential_error(CredentialFailureReason.EXPIRED)
             future = self._dispatch(credential_ref, context.name)
             credential = self._wait_for_result(future, context)
         finally:
             self._read_slots.release()
         if credential is None:
-            raise CredentialAccessError(_EXPIRED)
+            raise _credential_error(CredentialFailureReason.EXPIRED)
         return credential
 
     def _acquire_read_slot(self, context: CredentialRequestContext) -> bool:
@@ -114,7 +124,7 @@ class SDKCredentialResolver:
         try:
             credential = future.result()
         except (asyncio.CancelledError, CredentialResolutionError):
-            raise CredentialAccessError(_UNAVAILABLE) from None
+            raise _credential_error(CredentialFailureReason.UNAVAILABLE) from None
         if not credential:
-            raise CredentialAccessError(_UNAVAILABLE)
+            raise _credential_error(CredentialFailureReason.UNAVAILABLE)
         return credential

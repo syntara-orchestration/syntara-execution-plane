@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
+from execution_plane_client.commands.targets import BackendType as BackendType  # noqa: PLC0414 - deliberate re-export
 from execution_plane_client.commands.targets import KubernetesPlacement as CommandKubernetesPlacement
 from execution_plane_client.models.shared import EPListParams, ResourcesResponse
 
@@ -44,13 +45,6 @@ EXECUTION_TARGET_SORTABLE_FIELDS = [
     "enabled",
     "is_default",
 ]
-
-
-class BackendType(StrEnum):
-    """Supported execution target backends."""
-
-    KUBERNETES = "kubernetes"
-    OPENSHELL = "openshell"
 
 
 class TargetStatus(StrEnum):
