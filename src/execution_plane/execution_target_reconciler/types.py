@@ -10,7 +10,9 @@ if TYPE_CHECKING:
     import uuid
 
     from execution_plane.models.cluster import ClusterType
-    from execution_plane_client.models.execution_target import BackendType, ExecutionTargetPlacement
+    from execution_plane_client.models.execution_target import ExecutionTargetPlacement
+    from execution_plane_client.types import BackendType
+
 
 ACTIVE_LIFECYCLE = "active"
 DEGRADED_LIFECYCLE = "degraded"

@@ -1,6 +1,7 @@
 """Scheduling commands for the SDK-owned container gRPC contract."""
 
-from typing import Annotated, ClassVar, Literal
+from enum import StrEnum
+from typing import Annotated, ClassVar
 from uuid import UUID
 
 from pydantic import Field, StrictStr, field_validator
@@ -10,6 +11,14 @@ from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.protocol import PositiveInt, WireModel, validate_json
 
 StepIdentity = Annotated[StrictStr, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._:-]+$")]
+
+
+class WorkloadType(StrEnum):
+    """Workload execution families the Execution Plane can dispatch."""
+
+    CONTAINER = "container"
+
+
 CREDENTIAL_RECIPE_ID_PATTERN = r"^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$"
 CredentialRecipeId = Annotated[
     StrictStr,
@@ -114,8 +123,8 @@ class WorkExecute(CommandPayload):
         default=None,
         description="Optional result-field allowlist mapping output names to workload result keys.",
     )
-    workload_type: Literal["container"] = Field(
-        default="container",
+    workload_type: WorkloadType = Field(
+        default=WorkloadType.CONTAINER,
         description="Workload execution family; container is the only supported value.",
     )
 

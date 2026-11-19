@@ -1550,11 +1550,7 @@ components:
           minLength: 1
           title: Name
         backend_type:
-          type: string
-          enum:
-          - kubernetes
-          - openshell
-          title: Backend Type
+          $ref: '#/components/schemas/BackendType'
         placement:
           oneOf:
           - $ref: '#/components/schemas/ClientKubernetesPlacement'
@@ -1763,9 +1759,7 @@ components:
           description: Optional result-field allowlist mapping output names to workload
             result keys.
         workload_type:
-          type: string
-          const: container
-          title: Workload Type
+          $ref: '#/components/schemas/WorkloadType'
           description: Workload execution family; container is the only supported
             value.
           default: container
@@ -1825,6 +1819,12 @@ components:
         delivery is not implemented yet, so callers cannot supply secret values or
 
         claim that arbitrary file paths have been mounted by EP.'
+    WorkloadType:
+      type: string
+      enum:
+      - container
+      title: WorkloadType
+      description: Workload execution families the Execution Plane can dispatch.
     ClusterDeleteCommandV1:
       properties:
         command_type:

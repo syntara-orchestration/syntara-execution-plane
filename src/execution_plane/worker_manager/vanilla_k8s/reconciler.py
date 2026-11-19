@@ -17,7 +17,8 @@ from kubernetes.client.exceptions import ApiException
 from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.store_errors import StaleClaimError
 from execution_plane.worker_manager.vanilla_k8s.cleanup import cleanup_requested_work_item_resources
-from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement
+from execution_plane_client.types import BackendType
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore

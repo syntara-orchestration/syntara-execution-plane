@@ -41,8 +41,8 @@ from execution_plane.worker_manager.vanilla_k8s.manager import (
     WorkloadOutcomeUnknownError,
 )
 from execution_plane.worker_manager.vanilla_k8s.reconciler import run_orphan_policy_reconciler
-from execution_plane_client.models.execution_target import BackendType
 from execution_plane_client.models.work_item import WorkItemStatus
+from execution_plane_client.types import BackendType
 
 if TYPE_CHECKING:
     from execution_plane.config.settings import Settings
