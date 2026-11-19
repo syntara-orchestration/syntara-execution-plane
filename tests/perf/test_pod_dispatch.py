@@ -515,6 +515,7 @@ class TestSequentialDispatchVariance:
         perf_token: str,
         perf_k8s_core_api: CoreV1Api,
         perf_ep_namespace: str,
+        perf_node_image: None,
     ) -> None:
         """PERF-B-1: pod create→COMPLETED stays flat across one-by-one runs."""
         scenario = f"sequential-n{batch_size}"
@@ -603,6 +604,7 @@ class TestParallelDispatchThroughput:
         perf_token: str,
         perf_k8s_core_api: CoreV1Api,
         perf_ep_namespace: str,
+        perf_node_image: None,
     ) -> None:
         """PERF-B-2: n20/n50 wall within +20 % of single-pod; throughput scales."""
         single_wall_ms = await _measure_single_pod_wall_ms(
