@@ -308,7 +308,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
         catalog,
         registry.capabilities(),
         [
-            catalog.definition("credential.resolve", 1),
+            catalog.definition("credential.resolve.cluster", 1),
             catalog.definition("credential.resolve.workload", 1),
         ],
     )

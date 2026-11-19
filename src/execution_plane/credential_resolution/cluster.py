@@ -10,8 +10,8 @@ from execution_plane.credential_resolution.errors import (
     CredentialResolutionInvalidError,
     CredentialResolutionMismatchError,
 )
-from execution_plane_client.commands.credentials import CredentialResolve
-from execution_plane_client.commands.results import CredentialResolveCommandResult
+from execution_plane_client.commands.credentials import CredentialResolveCluster
+from execution_plane_client.commands.results import CredentialResolveClusterCommandResult
 
 if TYPE_CHECKING:
     from execution_plane.config.settings import Settings
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class ClusterCredentialResolver:
-    """Construct and dispatch a typed `credential.resolve` command."""
+    """Construct and dispatch a typed `credential.resolve.cluster` command."""
 
     def __init__(self, settings: Settings, client: CredentialResolutionClient) -> None:
         """Bind one resolver to the shared credential-resolution client."""
@@ -31,13 +31,18 @@ class ClusterCredentialResolver:
         if credential_ref == UUID(int=0):
             message = "Cluster has no credential_ref"
             raise CredentialResolutionInvalidError(message)
-        envelope = CredentialResolve(credential_ref=credential_ref).to_message(
+        envelope = CredentialResolveCluster(credential_ref=credential_ref).to_message(
             source_id=self._settings.service_jwt_audience,
             destination_id=client_id,
             client_id=client_id,
         )
         receipt = await self._client.post(envelope)
         result = receipt.result
-        if receipt.message_id != envelope.message_id or not isinstance(result, CredentialResolveCommandResult):
+        if receipt.message_id != envelope.message_id or not isinstance(result, CredentialResolveClusterCommandResult):
             raise CredentialResolutionMismatchError(CREDENTIAL_RESOLUTION_MISMATCH)
-        return result.credential
+        resolved = result.credential
+        credential = str(resolved.get("bearer_token") or resolved.get("token") or resolved.get("api_key") or "")
+        if not credential:
+            message = "Credential did not resolve to an API token"
+            raise CredentialResolutionInvalidError(message)
+        return credential

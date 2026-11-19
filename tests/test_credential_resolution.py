@@ -13,7 +13,10 @@ from execution_plane.config.settings import Settings
 from execution_plane.credential_resolution import client as client_module
 from execution_plane.credential_resolution.client import CredentialResolutionClient
 from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
-from execution_plane.credential_resolution.errors import CredentialResolutionMismatchError
+from execution_plane.credential_resolution.errors import (
+    CredentialResolutionInvalidError,
+    CredentialResolutionMismatchError,
+)
 from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
 
 
@@ -68,7 +71,8 @@ async def test_credential_resolver_context_manager_closes_callback_client() -> N
 
 
 @pytest.mark.asyncio
-async def test_credential_resolver_posts_command_and_returns_correlated_value():
+@pytest.mark.parametrize("token_field", ["bearer_token", "token", "api_key"])
+async def test_credential_resolver_posts_command_and_returns_extracted_token(token_field: str):
     credential_ref = uuid4()
     requests: list[httpx.Request] = []
 
@@ -84,9 +88,9 @@ async def test_credential_resolver_posts_command_and_returns_correlated_value():
                 "message_id": message_id,
                 "resource": None,
                 "result": {
-                    "command_type": "credential.resolve",
+                    "command_type": "credential.resolve.cluster",
                     "command_revision": 1,
-                    "credential": "resolved-token",
+                    "credential": {token_field: "resolved-token"},
                 },
             },
         )
@@ -106,11 +110,46 @@ async def test_credential_resolver_posts_command_and_returns_correlated_value():
     assert credential == "resolved-token"
     assert len(requests) == 1
     body = json.loads(requests[0].content)
-    assert body["command"]["command_type"] == "credential.resolve"
+    assert body["command"]["command_type"] == "credential.resolve.cluster"
     assert body["command"]["payload"] == {"credential_ref": str(credential_ref)}
     assert body["source_id"] == "execution-plane"
     assert body["destination_id"] == "syntara-orchestration"
     assert body["scope"]["client_id"] == "syntara-orchestration"
+
+
+@pytest.mark.asyncio
+async def test_credential_resolver_rejects_document_without_supported_token():
+    credential_ref = uuid4()
+
+    def receive(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert isinstance(body, dict)
+        return httpx.Response(
+            200,
+            json={
+                "received": True,
+                "message_id": body["message_id"],
+                "resource": None,
+                "result": {
+                    "command_type": "credential.resolve.cluster",
+                    "command_revision": 1,
+                    "credential": {"username": "service-account"},
+                },
+            },
+        )
+
+    settings = Settings(EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands")
+    callback_client = CallbackHTTPClient(url=settings.credential_resolution_callback_url)
+    await callback_client.close()
+    callback_client._client = httpx.AsyncClient(transport=httpx.MockTransport(receive))
+    credential_client = CredentialResolutionClient(settings, client=callback_client)
+    resolver = ClusterCredentialResolver(settings, credential_client)
+
+    try:
+        with pytest.raises(CredentialResolutionInvalidError, match="Credential did not resolve to an API token"):
+            await resolver.resolve(credential_ref, client_id="syntara-orchestration")
+    finally:
+        await credential_client.close()
 
 
 @pytest.mark.asyncio
@@ -186,9 +225,9 @@ async def test_credential_resolver_rejects_an_unrelated_response():
                     "message_id": str(uuid4()),
                     "resource": None,
                     "result": {
-                        "command_type": "credential.resolve",
+                        "command_type": "credential.resolve.cluster",
                         "command_revision": 1,
-                        "credential": "x",
+                        "credential": {"token": "x"},
                     },
                 },
             )

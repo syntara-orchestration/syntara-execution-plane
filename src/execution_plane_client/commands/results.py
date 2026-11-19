@@ -10,16 +10,36 @@ from pydantic import Field, StrictBool, StrictStr, field_validator
 
 from execution_plane_client.protocol import ResourceReference, WireModel
 
-MAX_WORKLOAD_CREDENTIAL_FIELDS = 32
-MAX_WORKLOAD_CREDENTIAL_BYTES = 32 * 1024
+MAX_CREDENTIAL_FIELDS = 32
+MAX_CREDENTIAL_BYTES = 32 * 1024
 
 
-class CredentialResolveCommandResult(WireModel):
-    """Typed result returned for a credential-resolution command."""
+def validate_credential_document(value: dict[str, str]) -> dict[str, str]:
+    """Bound credential field count and encoded response size."""
+    if not value:
+        message = "Credential document must not be empty"
+        raise ValueError(message)
+    if len(value) > MAX_CREDENTIAL_FIELDS:
+        message = "Credential document must contain at most 32 fields"
+        raise ValueError(message)
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > MAX_CREDENTIAL_BYTES:
+        message = "Credential document exceeds 32 KiB"
+        raise ValueError(message)
+    return value
 
-    command_type: Literal["credential.resolve"] = "credential.resolve"
+
+class CredentialResolveClusterCommandResult(WireModel):
+    """Typed result returned for a cluster credential-resolution command."""
+
+    command_type: Literal["credential.resolve.cluster"] = "credential.resolve.cluster"
     command_revision: Literal[1] = 1
-    credential: Annotated[StrictStr, Field(min_length=1, max_length=65536, repr=False)]
+    credential: dict[
+        Annotated[StrictStr, Field(min_length=1, max_length=128)],
+        Annotated[StrictStr, Field(min_length=1, max_length=8192)],
+    ] = Field(repr=False)
+
+    check_document = field_validator("credential")(validate_credential_document)
 
 
 class CredentialResolveWorkloadCommandResult(WireModel):
@@ -34,21 +54,7 @@ class CredentialResolveWorkloadCommandResult(WireModel):
         Annotated[StrictStr, Field(min_length=1, max_length=8192)],
     ] = Field(repr=False)
 
-    @field_validator("credential")
-    @classmethod
-    def check_document(cls, value: dict[str, str]) -> dict[str, str]:
-        """Bound credential field count and encoded response size."""
-        if not value:
-            message = "Credential document must not be empty"
-            raise ValueError(message)
-        if len(value) > MAX_WORKLOAD_CREDENTIAL_FIELDS:
-            message = "Credential document must contain at most 32 fields"
-            raise ValueError(message)
-        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        if len(encoded) > MAX_WORKLOAD_CREDENTIAL_BYTES:
-            message = "Credential document exceeds 32 KiB"
-            raise ValueError(message)
-        return value
+    check_document = field_validator("credential")(validate_credential_document)
 
 
 class TargetHealthCommandResult(WireModel):
@@ -62,7 +68,7 @@ class TargetHealthCommandResult(WireModel):
 
 
 CommandResult = Annotated[
-    CredentialResolveCommandResult | CredentialResolveWorkloadCommandResult | TargetHealthCommandResult,
+    CredentialResolveClusterCommandResult | CredentialResolveWorkloadCommandResult | TargetHealthCommandResult,
     Field(discriminator="command_type"),
 ]
 

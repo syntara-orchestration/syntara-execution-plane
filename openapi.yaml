@@ -674,29 +674,34 @@ components:
       - updated_at
       title: ClusterRead
       description: Provisioned cluster state, keyed by the actual cluster UUID.
-    CredentialResolveCommandResult:
+    CredentialResolveClusterCommandResult:
       properties:
         command_type:
           type: string
-          const: credential.resolve
+          const: credential.resolve.cluster
           title: Command Type
-          default: credential.resolve
+          default: credential.resolve.cluster
         command_revision:
           type: integer
           const: 1
           title: Command Revision
           default: 1
         credential:
-          type: string
-          maxLength: 65536
-          minLength: 1
+          additionalProperties:
+            type: string
+            maxLength: 8192
+            minLength: 1
+          propertyNames:
+            maxLength: 128
+            minLength: 1
+          type: object
           title: Credential
       additionalProperties: false
       type: object
       required:
       - credential
-      title: CredentialResolveCommandResult
-      description: Typed result returned for a credential-resolution command.
+      title: CredentialResolveClusterCommandResult
+      description: Typed result returned for a cluster credential-resolution command.
     CredentialResolveWorkloadCommandResult:
       properties:
         command_type:
@@ -979,13 +984,13 @@ components:
         result:
           anyOf:
           - oneOf:
-            - $ref: '#/components/schemas/CredentialResolveCommandResult'
+            - $ref: '#/components/schemas/CredentialResolveClusterCommandResult'
             - $ref: '#/components/schemas/CredentialResolveWorkloadCommandResult'
             - $ref: '#/components/schemas/TargetHealthCommandResult'
             discriminator:
               propertyName: command_type
               mapping:
-                credential.resolve: '#/components/schemas/CredentialResolveCommandResult'
+                credential.resolve.cluster: '#/components/schemas/CredentialResolveClusterCommandResult'
                 credential.resolve.workload: '#/components/schemas/CredentialResolveWorkloadCommandResult'
                 execution_target.health: '#/components/schemas/TargetHealthCommandResult'
           - type: 'null'
@@ -1363,7 +1368,7 @@ components:
       - reconciliation_required
       title: CompletionStatus
       description: Work-item states that can be reported by a completion command.
-    CredentialResolve:
+    CredentialResolveCluster:
       properties:
         credential_ref:
           type: string
@@ -1374,8 +1379,9 @@ components:
       type: object
       required:
       - credential_ref
-      title: CredentialResolve
-      description: Resolve an opaque credential reference into a short-lived value.
+      title: CredentialResolveCluster
+      description: Resolve an opaque cluster credential reference into its credential
+        document.
     CredentialResolveWorkload:
       properties:
         work_item_id:
@@ -2149,11 +2155,11 @@ components:
       - occurred_at
       title: CompletionCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    CredentialResolveCommandV1:
+    CredentialResolveClusterCommandV1:
       properties:
         command_type:
           type: string
-          const: credential.resolve
+          const: credential.resolve.cluster
           pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
           title: Command Type
           description: Operation to perform; selects the payload contract.
@@ -2165,7 +2171,7 @@ components:
           description: Version of this operation's payload contract, not a resource
             revision.
         payload:
-          $ref: '#/components/schemas/CredentialResolve'
+          $ref: '#/components/schemas/CredentialResolveCluster'
         occurred_at:
           type: string
           format: date-time
@@ -2177,7 +2183,7 @@ components:
       - command_revision
       - payload
       - occurred_at
-      title: CredentialResolveCommandV1
+      title: CredentialResolveClusterCommandV1
       description: One versioned operation; participants persist only its domain effects.
     CredentialResolveWorkloadCommandV1:
       properties:
