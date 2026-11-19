@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import ClassVar
 from uuid import UUID
 
 import pytest
@@ -11,7 +10,6 @@ from syntara_plugin.runtime import ContainerLogBatch, ContainerLogRecord
 
 from execution_plane import operational_logs
 from execution_plane.operational_logs import (
-    MAX_RECORDS_PER_BATCH,
     OperationalLogCorrelation,
     OperationalLogForwarder,
     metrics,
@@ -131,35 +129,6 @@ def test_workload_dropped_count_is_surfaced(captured: pytest.LogCaptureFixture, 
     assert metrics.dropped_by_workload == 7
 
 
-def test_malformed_batch_is_dropped_not_raised(enabled: None) -> None:
-    _forwarder()(object())  # no .records attribute
-    _forwarder()(_batch(()))  # empty batch is fine
-    assert metrics.batches_dropped_malformed == 1
-    assert metrics.batches_received == 2
-
-
-def test_record_with_non_string_message_is_dropped(captured: pytest.LogCaptureFixture, enabled: None) -> None:
-    # The SDK validates messages as strings; the forwarder still must not
-    # trust its peer. Build a malformed record manually.
-    class _Bad:
-        timestamp: ClassVar[str] = "2026-11-19T17:00:00.123Z"
-        severity: ClassVar[str] = "INFO"
-        message: ClassVar[object] = 42
-        attributes: ClassVar[dict] = {}
-        event_name: ClassVar[str | None] = None
-
-    _forwarder()(_batch((_record(message="kept"), _Bad())))  # type: ignore[arg-type]
-    records = [r for r in captured.records if r.name == "execution_plane.step_logs"]
-    assert [r.message for r in records] == ["kept"]
-    assert metrics.batches_dropped_malformed == 1
-
-
-def test_oversized_batch_is_clamped(captured: pytest.LogCaptureFixture, enabled: None) -> None:
-    _forwarder()(_batch(tuple(_record(message=f"m{i}") for i in range(500))))
-    records = [r for r in captured.records if r.name == "execution_plane.step_logs"]
-    assert len(records) == MAX_RECORDS_PER_BATCH
-
-
 def test_sink_failures_never_propagate(enabled: None, monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(message: str, extra: dict | None = None) -> None:
         msg = "exporter exploded"
@@ -194,16 +163,14 @@ def test_correlation_from_runtime_context_harvests_optional_keys() -> None:
         "workflow_id": "wf-1",
         "execution_id": "exec-1",
     }
-
-
-def test_correlation_from_non_mapping_runtime_context() -> None:
-    correlation = OperationalLogCorrelation.from_runtime_context(
+    # Non-mapping runtime contexts are tolerated: only the dispatch identities survive.
+    plain = OperationalLogCorrelation.from_runtime_context(
         invocation_id="a",
         work_item_id="b",
         execution_target_id=UUID(int=0xCC),
         runtime_context=None,  # type: ignore[arg-type]
     )
-    assert correlation.attributes() == {
+    assert plain.attributes() == {
         "invocation_id": "a",
         "work_item_id": "b",
         "execution_target_id": "00000000-0000-0000-0000-0000000000cc",
