@@ -11,6 +11,7 @@ from syntara_plugin.runtime import ContainerLogBatch, ContainerLogRecord
 from execution_plane import operational_logs
 from execution_plane.operational_logs import (
     MAX_RECORDS_PER_BATCH,
+    OperationalLogCorrelation,
     OperationalLogForwarder,
     metrics,
 )
@@ -63,12 +64,12 @@ def reset_metrics() -> None:
 
 def _forwarder() -> OperationalLogForwarder:
     return OperationalLogForwarder(
-        {
-            "invocation_id": "attempt-1",
-            "work_item_id": "wi-1",
-            "execution_target_id": "target-1",
-            "workflow_id": "wf-1",
-        }
+        OperationalLogCorrelation(
+            invocation_id="attempt-1",
+            work_item_id="wi-1",
+            execution_target_id="target-1",
+            workflow_id="wf-1",
+        )
     )
 
 
@@ -166,3 +167,43 @@ def test_sink_failures_never_propagate(enabled: None, monkeypatch: pytest.Monkey
     monkeypatch.setattr(operational_logs._step_log_logger, "log", boom)
     _forwarder()(_batch((_record(message="x"),)))
     assert metrics.forwarding_failures == 1
+
+
+def test_correlation_from_runtime_context_harvests_optional_keys() -> None:
+    correlation = OperationalLogCorrelation.from_runtime_context(
+        invocation_id="attempt-1",
+        work_item_id="wi-1",
+        execution_target_id="target-1",
+        runtime_context={
+            "workflow_id": "wf-1",
+            "execution_id": "exec-1",
+            "project_id": 42,  # non-string: ignored
+            "driver": "test",  # unrelated: ignored
+        },
+    )
+    assert correlation.invocation_id == "attempt-1"
+    assert correlation.workflow_id == "wf-1"
+    assert correlation.execution_id == "exec-1"
+    assert correlation.project_id is None
+    # attributes() flattens to exactly the present keys
+    assert correlation.attributes() == {
+        "invocation_id": "attempt-1",
+        "work_item_id": "wi-1",
+        "execution_target_id": "target-1",
+        "workflow_id": "wf-1",
+        "execution_id": "exec-1",
+    }
+
+
+def test_correlation_from_non_mapping_runtime_context() -> None:
+    correlation = OperationalLogCorrelation.from_runtime_context(
+        invocation_id="a",
+        work_item_id="b",
+        execution_target_id="c",
+        runtime_context=None,  # type: ignore[arg-type]
+    )
+    assert correlation.attributes() == {
+        "invocation_id": "a",
+        "work_item_id": "b",
+        "execution_target_id": "c",
+    }

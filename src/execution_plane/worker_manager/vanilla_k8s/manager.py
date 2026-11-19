@@ -23,7 +23,7 @@ from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.credential_resolution.sdk_resolver import SDKCredentialResolver
-from execution_plane.operational_logs import OperationalLogForwarder
+from execution_plane.operational_logs import OperationalLogCorrelation, OperationalLogForwarder
 from execution_plane.worker_manager.base import (
     ExecutionStartPersistenceError,
     ExecutionStartRejectedError,
@@ -194,15 +194,12 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         # attempt identity and work item come from EP; the caller-supplied
         # workflow context (workflow_id/execution_id/project_id) rides the
         # non-secret runtime_context when Syntara provides it.
-        correlation: dict[str, str] = {
-            "invocation_id": attempt_id,
-            "work_item_id": identity,
-            "execution_target_id": str(work_item.execution_target_id),
-        }
-        for key in ("workflow_id", "execution_id", "project_id"):
-            value = work_item.runtime_context.get(key) if isinstance(work_item.runtime_context, dict) else None
-            if isinstance(value, str) and value:
-                correlation[key] = value
+        correlation = OperationalLogCorrelation.from_runtime_context(
+            invocation_id=attempt_id,
+            work_item_id=identity,
+            execution_target_id=str(work_item.execution_target_id),
+            runtime_context=work_item.runtime_context,
+        )
         return _DispatchContext(
             image=command.image,
             invocation=command.invocation,

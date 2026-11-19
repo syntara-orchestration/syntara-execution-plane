@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from execution_plane.config.settings import get_settings
@@ -95,17 +96,64 @@ def _forwarding_enabled() -> bool:
         return False
 
 
+@dataclass(frozen=True)
+class OperationalLogCorrelation:
+    """Correlation metadata attached to every forwarded operational record.
+
+    The dispatch-owned identities (attempt, work item, execution target) are
+    always present; the caller-supplied workflow context keys are included
+    only when the non-secret runtime context carries them (Syntara supplies
+    ``workflow_id``/``execution_id``/``project_id``).
+    """
+
+    invocation_id: str
+    work_item_id: str
+    execution_target_id: str
+    workflow_id: str | None = None
+    execution_id: str | None = None
+    project_id: str | None = None
+
+    @classmethod
+    def from_runtime_context(
+        cls,
+        *,
+        invocation_id: str,
+        work_item_id: str,
+        execution_target_id: str,
+        runtime_context: Mapping[str, object],
+    ) -> OperationalLogCorrelation:
+        """Build the correlation, harvesting the optional workflow-context keys."""
+        context = runtime_context if isinstance(runtime_context, Mapping) else {}
+
+        def _optional(key: str) -> str | None:
+            value = context.get(key)
+            return value if isinstance(value, str) and value else None
+
+        return cls(
+            invocation_id=invocation_id,
+            work_item_id=work_item_id,
+            execution_target_id=execution_target_id,
+            workflow_id=_optional("workflow_id"),
+            execution_id=_optional("execution_id"),
+            project_id=_optional("project_id"),
+        )
+
+    def attributes(self) -> dict[str, str]:
+        """Flatten to the attribute set attached to each forwarded record."""
+        return {key: value for key, value in asdict(self).items() if value is not None}
+
+
 class OperationalLogForwarder:
     """Emit one invocation's SDK operational records with correlation metadata.
 
-    The correlation mapping is attached to every forwarded record so the
+    The correlation attributes are attached to every forwarded record so the
     collector can join step logs with the work item, the caller's workflow
     context, and the execution target without any AO-side change.
     """
 
-    def __init__(self, correlation: Mapping[str, str]) -> None:
-        """Capture the correlation attributes attached to every record."""
-        self._correlation = dict(correlation)
+    def __init__(self, correlation: OperationalLogCorrelation) -> None:
+        """Capture the correlation metadata attached to every record."""
+        self._correlation = correlation.attributes()
 
     def __call__(self, batch: object) -> None:
         """Forward one batch; never raises and never fails the work item."""
