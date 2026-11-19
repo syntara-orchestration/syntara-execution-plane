@@ -7,16 +7,16 @@ not fail with FileNotFoundError / connection errors.
 Set ``EP_PERF_REQUIRED=1`` in dedicated perf CI so a missing prerequisite
 fails the job instead of skipping every test green.
 
-Required:
+Required for all PERF tests:
 
 * ``EP_TEST_DATABASE_URL`` — PostgreSQL URL shared with the deployed EP stack
+* ``EP_PERF_CREDENTIAL_ENCRYPTION_KEY`` — same key the deployment uses to encrypt
+  work-item payloads (overrides the dummy key from ``tests/conftest.py``)
+
+Additional requirements for API / pod-dispatch tests (PERF-A / PERF-B / PERF-S):
+
 * ``EP_PERF_API_URL`` — base URL of the deployed EP API
 * ``EP_PERF_NAMESPACE`` — Kubernetes namespace where EP deploys worker pods
-* ``EP_AO_JWT_PRIVATE_KEY_FILE`` — ES256 private key for minting service JWTs
-  (or a candidate path used by ``tools.work_item_client.resolve_private_key_path``)
-* ``EP_API_CA_FILE`` — CA PEM used to verify HTTPS to the EP API when
-  ``EP_PERF_API_URL`` is ``https://...`` (defaults to ``.secrets/certs/ca.pem``)
-* ``EP_NODE_IMAGE`` — worker image the cluster can pull for echo payloads
 * Kubernetes credentials — ``KUBECONFIG`` or an in-cluster service account
 
 Optional:
@@ -28,6 +28,8 @@ Optional:
   ``syntara-orchestration``); used by the JWT and by DB polls
 * ``EP_PERF_REQUIRED`` — when ``1``/``true``/``yes``, missing prerequisites
   raise ``pytest.fail`` instead of ``pytest.skip``
+* ``EP_PERF_OUTBOX_BATCH_SIZE`` — completion-notification backlog for test 3.2 (default 500)
+* ``EP_PERF_OUTAGE_SECONDS`` — mock callback outage duration for test 3.2 (default 120)
 
 All of the above (except ``EP_PERF_REQUIRED``) are checked in fixtures that
 call ``pytest.skip`` by default, so a normal ``pytest`` invocation without a
@@ -84,9 +86,13 @@ def perf_credential_encryption_key(ep_settings_env: None, monkeypatch: pytest.Mo
         monkeypatch.setenv("EP_CREDENTIAL_ENCRYPTION_KEY", key)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def perf_node_image() -> None:
-    """Require ``EP_NODE_IMAGE`` so the cluster does not pull the local-dev default."""
+    """Require ``EP_NODE_IMAGE`` so the cluster does not pull the local-dev default.
+
+    Requested by pod-dispatch / dispatch-overhead tests. DB-only tests (3.1 / 3.2)
+    seed PostgreSQL directly and do not need a worker image.
+    """
     if not os.environ.get("EP_NODE_IMAGE"):
         missing_prerequisite("EP_NODE_IMAGE must be set to a cluster-pullable worker image for perf tests")
 
