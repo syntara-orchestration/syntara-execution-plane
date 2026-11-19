@@ -1,12 +1,4 @@
-# Combined AO + EP Kind demo: setup record
-
-**Status:** the script happy path was exercised against the current AO and EP
-migration branches on 6 October 2026. AO and EP used separate databases on one
-PostgreSQL server; AO submitted through EP's API, and EP dispatched a
-Kubernetes Job whose gRPC result reached AO through the authenticated callback.
-The local Kind cluster used kindnet, so this run does not validate
-NetworkPolicy enforcement. Record a fresh AO/EP commit SHA and node image digest
-when repeating the test against updated PR heads.
+# Combined AO + EP Kind demo
 
 The test target is one script workflow submitted through AO, accepted by the
 separate EP API, run by the EP worker as a cold-start Job, returned over the
@@ -53,9 +45,9 @@ PostgreSQL server.
    and an ambiguous Execute result. An uncertain attempt must remain visible as
    `reconciliation_required` and must not get a second Job automatically.
 
-## Smoke test run record
+## Smoke test
 
-The happy-path test was run from the AO `backend` directory with the local AO
+Run the happy-path test from the AO `backend` directory with the local AO
 and EP smoke stack running:
 
 ```bash
@@ -70,9 +62,7 @@ uv run --no-sync pytest \
 Expected evidence is a completed AO execution and script activity, an EP
 WorkItem with `completed` status and exit code `0`, the returned `stdout` and
 `stderr` in the persisted result, an acknowledged completion notification, and completed
-resource cleanup. The 6 October run returned `stdout = "gate test\n"`, empty
-`stderr`, exit code `0`, and cleanup status `complete`; AO accepted the completion notification
-with HTTP `202`. This test covers the service-to-service happy path, not
+resource cleanup. This test covers the service-to-service happy path, not
 restart/retry recovery or network-policy enforcement.
 
 The EP persistence regression tests can be run against an isolated EP database
@@ -84,48 +74,12 @@ worker, then running:
 uv run pytest tests/integration/test_postgres_persistence_types.py -q
 ```
 
-### HTTP executor smoke test
+## NetworkPolicy validation
 
-On 6 October 2026, the HTTP executor image was submitted to the standalone EP API
-and dispatched by the EP worker as a cold-start Kubernetes Job. The workload used
-the SDK gRPC protocol to call a controlled HTTP service in its execution namespace.
-EP returned HTTP status `200` and the expected response marker, persisted the
-WorkItem as `completed`, and reported resource cleanup as `complete`.
+Kind's default kindnet CNI does not enforce NetworkPolicies. Use an enforcing
+CNI, such as Calico, to test allowed and denied destinations. Also verify that
+the EP service-account Role can `get` `pods/portforward` but cannot read
+`pods/log` or create `pods/exec`.
 
-The run used EP commit `88af810` (`sha256:1c8f61aef4c0350b2493ca2183bd1dc60d1e5176086ba16438001f8792b54bc7`)
-and the HTTP executor built from `syntara-step-types` commit `0909750`
-(`sha256:7d1bbac751931974df19ec337008cbb9f1d830fde0d8e082a196862ef4b67aea`).
-The target was a uniquely named namespace in K3d Kubernetes `v1.31.5+k3s1`
-(`linux/arm64`), using Flannel. The test created and then removed the namespace;
-the EP database and Compose project were isolated and removed afterward.
-
-This was a direct EP WorkItem submission using the first-release API contract,
-which at that revision accepted `workload_type: "script"`; the submitted image was the
-HTTP executor. It validates EP's generic Job/gRPC execution path for that image.
-The current SDK protocol replacement requires new payloads and images; see
-[workload protocol](workload-protocol.md). That historical run does not validate
-the replacement.
-It did not run AO's native `http_request` Temporal activity, exercise AO's
-workflow-to-EP dispatch or completion notification, or test another EP workload type.
-The pod's NetworkPolicy was created with the Job, but Flannel does not enforce
-NetworkPolicies, so this run is not evidence for either allowed-versus-blocked
-egress enforcement or the deny-egress case. Repeat those checks on Calico or an
-enforcing OpenShift CNI.
-
-## NetworkPolicy enforcement status
-
-The smoke Kind cluster currently uses kindnet. It can confirm the Job and
-NetworkPolicy lifecycle, but kindnet does not enforce NetworkPolicies, so a
-successful or failed connection there cannot establish that an egress rule is
-effective. A separate Calico Kind attempt on the current workstation could not
-start because containerd exhausted available inotify watchers. Repeat the
-allowed and denied destination checks with a working Calico Kind cluster or the
-target OpenShift CNI. Also verify the EP service-account Role can `get`
-`pods/portforward` while it cannot read `pods/log` or create `pods/exec`.
-
-The current feature-branch Konflux scripts predate the service split: they run
-Alembic from an AO backend container, write target rows directly to EP tables,
-and configure EP to connect directly to Temporal. They are not valid for this
-topology. The migration PRs must replace that harness before it is enabled as a
-combined-service test. The correct evidence requires exact AO/EP image SHAs,
-node image digest, Kind/Kubernetes version, CNI, and scenario results.
+Record the AO and EP image SHAs, workload image digest, Kubernetes version,
+CNI, and scenario results when validating the combined services.

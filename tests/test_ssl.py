@@ -12,7 +12,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from execution_plane.config import EPSettings, to_asyncpg_url
+from execution_plane.config.database import to_asyncpg_url
+from execution_plane.config.settings import Settings
 from execution_plane.database.ssl import (
     build_ssl_connect_args,
     ssl_connect_args_from_env,
@@ -128,7 +129,7 @@ def test_ssl_connect_args_from_env_require(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_settings_default_ssl_mode_is_prefer() -> None:
-    settings = EPSettings()
+    settings = Settings()
     assert settings.db_ssl_mode == "prefer"
     assert settings.db_ssl_root_cert is None
 
@@ -136,4 +137,4 @@ def test_settings_default_ssl_mode_is_prefer() -> None:
 def test_settings_verify_full_requires_ca(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EP_DB_SSL_MODE", "verify-full")
     with pytest.raises(ValueError, match="EP_DB_SSL_ROOT_CERT"):
-        EPSettings()
+        Settings()

@@ -24,10 +24,9 @@ defined here.
 
 The Work Scheduler claims a work item, then asks the
 [ExecutionTarget Reconciler](executiontarget-reconciler.md) where that work
-should run. For MVP, eligibility is selector matching plus lifecycle state.
-Health-based exclusion is reserved on `HealthFilter` and
-`IneligibilityReason.HEALTH` / `CAPACITY_EXHAUSTED`. This story replaces the
-no-op health filter with a real signal.
+should run. Eligibility combines selector matching, lifecycle state, and
+health. `HealthFilter` excludes degraded targets with
+`IneligibilityReason.HEALTH`.
 
 The Resource Monitor is a **writer**. It probes infrastructure and updates the
 ExecutionTarget Store. It has no durable state of its own beyond what it
@@ -98,13 +97,11 @@ Elastic Kubernetes capacity belongs to:
 
 This story **does not emit** `IneligibilityReason.CAPACITY_EXHAUSTED`. Until
 there is a number the Execution Plane trusts, that reason would be fiction.
-The scheduler contract is unchanged: `CAPACITY_EXHAUSTED` means re-queue
+In the scheduler contract, `CAPACITY_EXHAUSTED` means re-queue
 (scaling may help); this slice only produces `HEALTH`.
 
 An **EP-owned** concurrency cap (`max_concurrent` vs in-flight `WorkItem`s) is
-our bookkeeping, not Kubernetes capacity. It is a follow-up after the Work
-Scheduler exists and needs backpressure. Do not add `pool_size` /
-`current_jobs` columns in this story.
+our bookkeeping, not Kubernetes capacity.
 
 RHEL later can implement a Controller-like remaining-capacity probe behind the
 same `TargetProbe` protocol.
@@ -123,9 +120,7 @@ jobs.”
 
 Probe: `GET /api/v1/namespaces/{target.namespace}` using the **Cluster**
 `endpoint` and the credential resolved from `Cluster.credential_ref`, not
-`ExecutionTarget.endpoint`. Target endpoints may
-be `local://…` (bootstrap / in-process executor); the Cluster row is the
-control-plane connection.
+`ExecutionTarget.endpoint`. The Cluster row provides the control-plane connection.
 
 | Result | Meaning | Persist |
 |---|---|---|
@@ -142,8 +137,7 @@ must stay free of secrets.
 Leave status unchanged (do not probe):
 
 - `ClusterType.RHEL` — no backend yet.
-- Non-HTTP Cluster endpoints (`local://execution-plane`) so the current
-  in-process script executor stays `ACTIVE`.
+- Non-HTTP Cluster endpoints.
 - ExecutionTargets not in `ACTIVE` or `DEGRADED`. Do not revive `FAILED`,
   `DRAINING`, `REGISTERING`, `VALIDATING`, or `BOOTSTRAPPING`.
 
@@ -174,11 +168,11 @@ drain monitor. Target drain semantics are in
 Suggested layout:
 
 ```
-backend/execution-plane/src/execution_plane/resource_monitor/
+src/execution_plane/resource_monitor/
   monitor.py      # loop, hysteresis, persist
   probes.py       # TargetProbe protocol, KubernetesNamespaceProbe, SkipProbe
   client.py       # Kubernetes API client from Cluster.endpoint plus a resolved credential
-backend/execution-plane/tests/resource_monitor/
+tests/resource_monitor/
 ```
 
 ### Probe protocol
@@ -210,7 +204,7 @@ Manager will need the same construction from Cluster credentials. Do not bury
 it inside the probe as a private helper that the Worker Manager cannot import.
 
 The monitor loads Cluster connection metadata through
-`ClusterStore.get_with_credentials()`, which now exposes only the UUID
+`ClusterStore.get_with_credentials()`, which exposes the UUID
 reference and CA certificate rather than a raw credential.
 
 #### TLS
@@ -257,8 +251,7 @@ path. See [cluster-and-target-services.md](cluster-and-target-services.md).
 Filter order stays lifecycle → selector → health → policy.
 `ExecutionTargetReconciler.resolve()` does not change.
 
-Today `LifecycleFilter` treats `degraded` as `LIFECYCLE`, so `HealthFilter`
-never runs. Change that so health owns degraded:
+`LifecycleFilter` passes `degraded` targets to `HealthFilter`:
 
 | Lifecycle | `LifecycleFilter` | `HealthFilter` |
 |---|---|---|
@@ -269,8 +262,7 @@ never runs. Change that so health owns degraded:
 Do not allow `degraded` with “reduced capacity.” There is no reduced-capacity
 number on Kubernetes.
 
-`ExecutionTargetSnapshot.lifecycle` already carries status. No new snapshot
-fields are required.
+`ExecutionTargetSnapshot.lifecycle` carries status.
 
 ### Scheduler contract (AAP-92722)
 
@@ -285,20 +277,6 @@ fields are required.
 
 `HEALTH` as “fail immediately” would drop work that can run once the API
 recovers. Re-queue vs fail is owned by the Work Scheduler, not this component.
-Until AAP-92722 lands, producing `HEALTH` is still the correct filter contract.
-
-## Implementation order
-
-1. This document (the contract reviewers hold the code to).
-2. Store boundary: an explicit Cluster credential read used by the monitor;
-   `record_health` with the transition guards.
-3. Kubernetes client factory + namespace probe. Unit tests with a fake client:
-   success, 404 namespace, 401/403, timeout, skip `local://` and RHEL.
-4. Monitor loop + hysteresis, started from `worker.py`.
-5. Reconciler: allow `degraded` in `LifecycleFilter`; `HealthFilter` denies with
-   `HEALTH`. Update existing filter tests.
-6. Cross-links in sibling execution-plane docs if they still call the health
-   filter a no-op.
 
 ## Testing
 
@@ -327,9 +305,9 @@ Unit tests are the bar. Do not require Kind or OpenShift in CI for this story.
 
 ## Coordination
 
-- **[AAP-92721](https://redhat.atlassian.net/browse/AAP-92721) ExecutionTarget Reconciler:** replace the no-op `HealthFilter` without changing `resolve()`. Allow `degraded` through `LifecycleFilter`.
+- **[AAP-92721](https://redhat.atlassian.net/browse/AAP-92721) ExecutionTarget Reconciler:** `HealthFilter` denies degraded targets with `HEALTH`; `LifecycleFilter` passes them through.
 - **[AAP-92716](https://redhat.atlassian.net/browse/AAP-92716) Cluster / ExecutionTarget architecture:** `ACTIVE → DEGRADED` is already on the target state diagram in [cluster-and-target-services.md](cluster-and-target-services.md). `ExecutionTargetStore.record_health` is the writer for that edge.
 - **[AAP-92722](https://redhat.atlassian.net/browse/AAP-92722) Work Scheduler:** on `NO_MATCHING_TARGETS`, re-queue when any reason is `HEALTH` or `CAPACITY_EXHAUSTED`; fail on selector/lifecycle misses. `CAPACITY_EXHAUSTED` is reserved until a trusted capacity signal exists.
 - **[AAP-93615](https://redhat.atlassian.net/browse/AAP-93615) vanilla Kubernetes Worker Manager:** reuse the Kubernetes client factory; own reactive placement rejection. Do not duplicate bounce-back in the Resource Monitor.
 - **[labels.md](labels.md):** live health is not a label. Do not encode reachability as `healthy=true`.
-- **Local development:** [kubernetes-local-development.md](kubernetes-local-development.md) registers a real kubeconfig-backed Cluster. That path is what the namespace probe exercises. The `local://` bootstrap Cluster is skipped on purpose.
+- **Local development:** [kubernetes-local-development.md](kubernetes-local-development.md) registers a real kubeconfig-backed Cluster. That path is what the namespace probe exercises. Non-HTTP Cluster endpoints are skipped.

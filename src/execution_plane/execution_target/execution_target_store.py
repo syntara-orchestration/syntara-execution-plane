@@ -18,7 +18,7 @@ from execution_plane.query_filters import apply_list_filters
 from execution_plane.query_sorting import apply_cursor_sort
 from execution_plane.store_base import StoreBase
 from execution_plane.work_item.policy import DRAIN_BLOCKING_STATUSES
-from execution_plane_client.models.execution_target import BackendType, TargetStatus
+from execution_plane_client.types import BackendType, TargetStatus
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

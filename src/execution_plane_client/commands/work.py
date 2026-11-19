@@ -1,43 +1,137 @@
 """Scheduling commands for the SDK-owned container gRPC contract."""
 
-from typing import Annotated, ClassVar, Literal
+from enum import StrEnum
+from typing import Annotated, ClassVar
+from uuid import UUID
 
 from pydantic import Field, StrictStr, field_validator
 
 from execution_plane_client.commands.base import CommandPayload
+from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.protocol import PositiveInt, WireModel, validate_json
 
 StepIdentity = Annotated[StrictStr, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._:-]+$")]
 
 
+class WorkloadType(StrEnum):
+    """Workload execution families the Execution Plane can dispatch."""
+
+    CONTAINER = "container"
+
+
+CREDENTIAL_RECIPE_ID_PATTERN = r"^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$"
+CredentialRecipeId = Annotated[
+    StrictStr,
+    Field(min_length=1, max_length=256, pattern=CREDENTIAL_RECIPE_ID_PATTERN),
+]
+
+
+class WorkCredentialBinding(WireModel):
+    """One Plugin SDK recipe-to-AO credential mapping for a work item."""
+
+    credential_recipe_id: CredentialRecipeId = Field(
+        description="Qualified Plugin SDK CredentialRecipe identifier that the workload may request at runtime."
+    )
+    credential_ref: UUID = Field(
+        repr=False,
+        description="Opaque AO credential reference; EP resolves it only after the workload requests this recipe.",
+    )
+
+
 class WorkloadInvocation(WireModel):
-    """Public invocation data; EP supplies the attempt ID and credential mounts.
+    """Public invocation data; EP supplies the attempt ID and credential resolver.
 
     Script environment variables remain ordinary step inputs. Credential-file
     delivery is not implemented yet, so callers cannot supply secret values or
     claim that arbitrary file paths have been mounted by EP.
     """
 
-    workflow_run_id: StepIdentity
-    step_revision_id: StepIdentity
-    inputs: dict[str, object]
-    runtime_context: dict[str, object] = Field(default_factory=dict)
-    timeout_seconds: Annotated[PositiveInt, Field(le=86_400)]
+    step_revision_id: StepIdentity = Field(
+        description=(
+            "Handler identifier advertised by the selected workload image. The plugin runtime uses it to select "
+            "the step implementation; it does not identify this work item or an execution."
+        )
+    )
+    inputs: dict[str, object] = Field(
+        description="Step inputs defined by the selected workload; never use this field for credential bindings."
+    )
+    credential_bindings: list[WorkCredentialBinding] = Field(
+        default_factory=list,
+        max_length=16,
+        repr=False,
+        description="Host-side recipe-to-reference bindings; never plugin inputs or runtime context.",
+    )
+    timeout_seconds: Annotated[
+        PositiveInt,
+        Field(
+            le=86_400,
+            description="Maximum workload execution time in seconds, including SDK streaming but excluding cleanup.",
+        ),
+    ]
 
-    @field_validator("inputs", "runtime_context", mode="before")
+    @field_validator("inputs", mode="before")
     @classmethod
     def check_json(cls, value: object) -> object:
         """Keep nested invocation data finite, portable, and bounded."""
         return validate_json(value)
+
+    @field_validator("credential_bindings")
+    @classmethod
+    def check_unique_recipe_ids(cls, value: list[WorkCredentialBinding]) -> list[WorkCredentialBinding]:
+        """Reject duplicate recipe IDs before host-side credential resolution."""
+        recipe_ids = [binding.credential_recipe_id for binding in value]
+        if len(set(recipe_ids)) != len(recipe_ids):
+            message = "Credential bindings must have unique credential recipe IDs"
+            raise ValueError(message)
+        return value
 
 
 class WorkExecute(CommandPayload):
     """Schedule one workload implementing the SDK container service."""
 
     command_type: ClassVar[str] = "work.execute"
+    command_revision: ClassVar[int] = 1
 
-    image: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
-    selectors: dict[StrictStr, StrictStr] = Field(default_factory=dict)
-    invocation: WorkloadInvocation = Field(repr=False)
-    output_config: dict[str, str] | None = None
-    workload_type: Literal["container"] = "container"
+    work_item_id: UUID = Field(
+        description=(
+            "Caller-assigned UUID used as the primary key (WorkItem.id) of the new EP work item. "
+            "It must be unique across EP work items, including other clients' work. An existing UUID returns "
+            "HTTP 409 and never overwrites or reruns that item. On an uncertain submission retry, retain the UUID "
+            "and read the existing item after a conflict. Use it for reads, cancellation, completion, and credential "
+            "callbacks. Syntara supplies ActivityExecution.id, not the containing Execution.id."
+        )
+    )
+    runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
+
+    image: Annotated[
+        StrictStr,
+        Field(
+            min_length=1,
+            max_length=2048,
+            description="OCI image reference for the isolated cold-start workload container.",
+        ),
+    ]
+    selectors: dict[StrictStr, StrictStr] = Field(
+        default_factory=dict,
+        description="Exact label requirements used to select an execution target; all keys and values must match.",
+    )
+    invocation: WorkloadInvocation = Field(
+        repr=False,
+        description="Validated workload invocation, including host-side credential bindings.",
+    )
+    output_config: dict[str, str] | None = Field(
+        default=None,
+        description="Optional result-field allowlist mapping output names to workload result keys.",
+    )
+    workload_type: WorkloadType = Field(
+        default=WorkloadType.CONTAINER,
+        description="Workload execution family; container is the only supported value.",
+    )
+
+
+class WorkDelete(CommandPayload):
+    """Request asynchronous cancellation, resource cleanup, and removal of owned work."""
+
+    command_type: ClassVar[str] = "work.delete"
+
+    work_item_id: UUID

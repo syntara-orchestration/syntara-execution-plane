@@ -5,10 +5,15 @@ from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
 from execution_plane.worker_manager.vanilla_k8s.transport import job_body, network_policy_body
+from execution_plane_client.commands.work import WorkloadInvocation
 
 
-def _invocation() -> dict[str, object]:
-    return {"timeout_seconds": 60}
+def _invocation() -> WorkloadInvocation:
+    return WorkloadInvocation(
+        step_revision_id="script.v1",
+        inputs={},
+        timeout_seconds=60,
+    )
 
 
 def test_job_body_is_a_single_attempt_worker_allocation() -> None:
@@ -111,7 +116,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
     from unittest.mock import AsyncMock
     from uuid import uuid4
 
-    from execution_plane.config import EPSettings
+    from execution_plane.config.settings import Settings
     from execution_plane.models.work_item import WorkItem, WorkItemStatus
     from execution_plane.worker_manager.vanilla_k8s import manager as module
     from execution_plane_client.models.execution_target import KubernetesPlacement
@@ -145,6 +150,8 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         return True
 
     def run_job(**kwargs: object) -> dict:
+        assert isinstance(kwargs["invocation"], WorkloadInvocation)
+        assert kwargs["runtime_context"] == {"project_id": "p", "execution_id": "e"}
         kwargs["on_result"](frame)
         assert trace[0][0] == "persist"
         trace.append(("cleanup",))
@@ -163,18 +170,22 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         SimpleNamespace(get_with_credentials=AsyncMock(return_value=target)),
         SimpleNamespace(get_with_credentials=AsyncMock(return_value=cluster)),
         SimpleNamespace(set_result=persist, mark_dispatched=mark_dispatched),
-        EPSettings(),
-        credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
+        Settings(),
+        cluster_credential_resolver=SimpleNamespace(resolve=AsyncMock(return_value="token")),
+        workload_credential_resolver=SimpleNamespace(resolve_workload=AsyncMock(return_value={})),
     )
+    work_item_id = uuid4()
     item = WorkItem(
+        id=work_item_id,
         client_id="ao",
         execution_target_id=uuid4(),
         claim_owner_id=uuid4(),
         claim_generation=2,
+        runtime_context={"project_id": "p", "execution_id": "e"},
         payload={
+            "work_item_id": str(work_item_id),
             "image": "node:test",
             "invocation": {
-                "workflow_run_id": "workflow-1",
                 "step_revision_id": "script.v1",
                 "inputs": {},
                 "timeout_seconds": 60,

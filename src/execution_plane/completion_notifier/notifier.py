@@ -10,13 +10,12 @@ import httpx
 import structlog
 
 from execution_plane.callback_client import CallbackHTTPClient
-from execution_plane_client.commands.control import Completion
+from execution_plane_client.commands.control import Completion, CompletionStatus
 from execution_plane_client.commands.results import TransportReceipt
 from execution_plane_client.models.work_item import WorkItemStatus
-from execution_plane_client.protocol import ResourceReference
 
 if TYPE_CHECKING:
-    from execution_plane.config import EPSettings
+    from execution_plane.config.settings import Settings
     from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
 
@@ -29,7 +28,7 @@ MAX_RETRY_SECONDS = 300
 class CompletionNotifier:
     """Send committed work-item completions to a fixed, operator-configured AO URL."""
 
-    def __init__(self, settings: EPSettings) -> None:
+    def __init__(self, settings: Settings) -> None:
         """Prepare the completion notification client from EP-owned identity and endpoint settings."""
         self._local_id = settings.service_jwt_audience
         self._client = CallbackHTTPClient(
@@ -68,23 +67,23 @@ class CompletionNotifier:
             return
 
         statuses = {
-            WorkItemStatus.COMPLETED: "succeeded",
-            WorkItemStatus.FAILED: "failed",
-            WorkItemStatus.CANCELLED: "cancelled",
-            WorkItemStatus.RECONCILIATION_REQUIRED: "outcome_unknown",
+            WorkItemStatus.COMPLETED: CompletionStatus.COMPLETED,
+            WorkItemStatus.FAILED: CompletionStatus.FAILED,
+            WorkItemStatus.CANCELLED: CompletionStatus.CANCELLED,
+            WorkItemStatus.RECONCILIATION_REQUIRED: CompletionStatus.RECONCILIATION_REQUIRED,
         }
         completion = Completion.model_validate(
             {
                 "status": statuses[WorkItemStatus(item.status)],
                 "result": item.result,
-                "resource": ResourceReference(kind="work_item", resource_id=item.id).model_dump(mode="json"),
+                "work_item_id": item.id,
+                "runtime_context": item.runtime_context,
             }
         )
         body = completion.to_message(
             source_id=self._local_id,
             destination_id=item.client_id,
             client_id=item.client_id,
-            parent_command_id=item.id,
             occurred_at=item.completed_at or item.created_at,
         )
         try:

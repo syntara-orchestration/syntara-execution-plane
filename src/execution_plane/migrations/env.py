@@ -9,16 +9,17 @@ each other's tables.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-from logging.config import fileConfig
 from typing import TYPE_CHECKING
 
 from alembic import context
-from sqlalchemy import Table, pool, text
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import Table, text
 from sqlmodel import SQLModel
 
-from execution_plane.database.ssl import ssl_connect_args_from_env, strip_unsupported_asyncpg_ssl_query
+from execution_plane.database.engine import create_unpooled_engine
+from execution_plane.database.ssl import strip_unsupported_asyncpg_ssl_query
+from execution_plane.logging.logging import build_json_formatter
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
@@ -33,8 +34,20 @@ EP_SCHEMA = "execution_plane"
 
 config = context.config
 
+
+def configure_structured_migration_logging() -> None:
+    """Route Alembic and SQLAlchemy logs through EP's structured formatter."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(build_json_formatter())
+    root_logger = logging.getLogger()
+    root_logger.handlers[:] = [handler]
+    root_logger.setLevel(logging.INFO)
+    logging.getLogger("alembic").setLevel(logging.INFO)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
+
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name, disable_existing_loggers=False)
+    configure_structured_migration_logging()
 
 target_metadata = SQLModel.metadata
 
@@ -42,7 +55,8 @@ database_url = config.get_main_option("sqlalchemy.url") or os.environ.get("DATAB
 if not database_url:
     msg = "DATABASE_URL must be set or sqlalchemy.url provided in alembic.ini"
     raise RuntimeError(msg)
-config.set_main_option("sqlalchemy.url", strip_unsupported_asyncpg_ssl_query(database_url))
+migration_database_url = strip_unsupported_asyncpg_ssl_query(database_url)
+config.set_main_option("sqlalchemy.url", migration_database_url)
 
 
 def include_object(
@@ -73,6 +87,8 @@ def run_migrations_offline() -> None:
         version_table_schema=EP_SCHEMA,
     )
     with context.begin_transaction():
+        # Alembic creates its version table before invoking the initial revision.
+        context.execute(f"CREATE SCHEMA IF NOT EXISTS {EP_SCHEMA}")
         context.run_migrations()
 
 
@@ -92,18 +108,15 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """Connect asynchronously and prepare the execution-plane schema."""
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-        connect_args=ssl_connect_args_from_env(),
-    )
-    async with connectable.connect() as connection:
-        await connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {EP_SCHEMA}"))
-        await connection.commit()
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
+    """Prepare the schema using an explicitly unpooled migration engine."""
+    connectable = create_unpooled_engine(migration_database_url)
+    try:
+        async with connectable.connect() as connection:
+            await connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {EP_SCHEMA}"))
+            await connection.commit()
+            await connection.run_sync(do_run_migrations)
+    finally:
+        await connectable.dispose()
 
 
 def run_migrations_online() -> None:

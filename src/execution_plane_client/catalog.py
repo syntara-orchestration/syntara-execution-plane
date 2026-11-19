@@ -3,11 +3,11 @@
 from dataclasses import dataclass
 
 from execution_plane_client.commands.base import CommandPayload
-from execution_plane_client.commands.clusters import ClusterDelete, ClusterProvision, ClusterRegister, ClusterUpdate
-from execution_plane_client.commands.control import CancelCommand, Completion
-from execution_plane_client.commands.credentials import CredentialResolve
+from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
+from execution_plane_client.commands.control import Completion, WorkCancel
+from execution_plane_client.commands.credentials import CredentialResolveCluster, CredentialResolveWorkload
 from execution_plane_client.commands.targets import TargetDelete, TargetHealth, TargetRegister, TargetUpdate
-from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.commands.work import WorkDelete, WorkExecute
 from execution_plane_client.errors import UnsupportedCommand
 from execution_plane_client.protocol import MessageEnvelope
 
@@ -25,20 +25,21 @@ class CommandCatalog:
     """Validate known commands independently of installed handlers."""
 
     def __init__(self) -> None:
-        """Install version-one work, resource and completion contracts."""
+        """Install supported work, resource and completion contracts."""
         payloads = (
             WorkExecute,
+            WorkDelete,
             Completion,
-            CredentialResolve,
+            CredentialResolveCluster,
+            CredentialResolveWorkload,
             ClusterRegister,
-            ClusterProvision,
             ClusterUpdate,
             ClusterDelete,
             TargetRegister,
             TargetUpdate,
             TargetDelete,
             TargetHealth,
-            CancelCommand,
+            WorkCancel,
         )
         self._definitions = {
             (schema.command_type, schema.command_revision): CommandDefinition(
@@ -55,8 +56,6 @@ class CommandCatalog:
             raise UnsupportedCommand from None
 
     def validate(self, message: MessageEnvelope) -> CommandPayload:
-        """Validate the payload and completion parent, returning the typed payload."""
+        """Validate the typed command payload, returning the typed payload."""
         definition = self.definition(message.command.command_type, message.command.command_revision)
-        payload = definition.payload_schema.model_validate(message.command.payload)
-        definition.payload_schema.validate_parent(message.command.parent_command_id)
-        return payload
+        return definition.payload_schema.model_validate(message.command.payload)

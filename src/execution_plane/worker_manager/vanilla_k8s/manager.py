@@ -10,6 +10,8 @@ No dependency on the main syntara package.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import threading
 from dataclasses import dataclass
 from functools import partial
@@ -19,7 +21,8 @@ import structlog
 from pydantic import ValidationError
 from syntara_plugin.runtime import ContainerResult
 
-from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.credential_resolution.errors import CredentialResolutionError
+from execution_plane.credential_resolution.sdk_resolver import SDKCredentialResolver
 from execution_plane.worker_manager.base import (
     ExecutionStartPersistenceError,
     ExecutionStartRejectedError,
@@ -33,17 +36,23 @@ from execution_plane_client.models.work_item import WorkItemStatus
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from syntara_plugin.runtime.container import CredentialResolver
+
     from execution_plane.cluster.cluster_store import ClusterStore
-    from execution_plane.config import EPSettings
+    from execution_plane.config.settings import Settings
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+    from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
     from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
     from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
+    from execution_plane_client.commands.work import WorkloadInvocation
 
 logger = structlog.stdlib.get_logger(__name__)
 
 CLUSTER_CREDENTIAL_RESOLUTION_FAILED = "Cluster credential could not be resolved"
+CLAIM_REFRESH_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -51,13 +60,15 @@ class _DispatchContext:
     """Validated inputs needed to start one cold-start transport attempt."""
 
     image: str
-    invocation: dict[str, Any]
+    invocation: WorkloadInvocation
+    runtime_context: dict[str, object]
     output_config: dict[str, str] | None
     identity: str
     attempt_id: str
     target_config: dict[str, Any]
     cancelled: threading.Event
     execution_start: Callable[[], None]
+    credential_handler: CredentialResolver
 
 
 class RetryableDispatchError(Exception):
@@ -113,15 +124,18 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         target_credentials: ExecutionTargetStore,
         cluster_credentials: ClusterStore,
         work_progress: WorkStore,
-        settings: EPSettings,
-        credential_resolver: CredentialResolver | None = None,
+        settings: Settings,
+        *,
+        cluster_credential_resolver: ClusterCredentialResolver,
+        workload_credential_resolver: WorkloadCredentialResolver,
     ) -> None:
         """Bind this backend to EP-owned stores and cold-start settings."""
         super().__init__(work_progress)
         self._target_credentials = target_credentials
         self._cluster_credentials = cluster_credentials
         self._settings = settings
-        self._credential_resolver = credential_resolver or CredentialResolver(settings)
+        self._cluster_credential_resolver = cluster_credential_resolver
+        self._workload_credential_resolver = workload_credential_resolver
 
     async def _dispatch(self, work_item: WorkItem) -> dict[str, Any]:
         """Allocate the worker, stream its result, and persist the WorkItem outcome.
@@ -152,7 +166,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             raise RetryableDispatchError(message)
 
         try:
-            command = WorkExecute.model_validate(work_item.payload or {})
+            command = WorkExecute.model_validate(work_item.payload)
         except ValidationError as exc:
             message = "Work item payload is not a valid work.execute command"
             raise WorkItemPayloadError(message) from exc
@@ -164,15 +178,26 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
 
         identity = str(work_item.id)
         attempt_id = f"{identity}-{work_item.claim_generation}"
+        credential_handler = SDKCredentialResolver(
+            command.invocation.credential_bindings,
+            self._workload_credential_resolver,
+            loop=asyncio.get_running_loop(),
+            work_item_id=work_item.id,
+            attempt_id=attempt_id,
+            invocation_id=attempt_id,
+            step_revision_id=command.invocation.step_revision_id,
+        )
         return _DispatchContext(
             image=command.image,
-            invocation=command.invocation.model_dump(mode="json"),
+            invocation=command.invocation,
+            runtime_context=work_item.runtime_context,
             output_config=command.output_config,
             identity=identity,
             attempt_id=attempt_id,
             target_config=self._k8s_target(target, cluster, credential),
             cancelled=threading.Event(),
             execution_start=self.execution_start_callback(work_item),
+            credential_handler=credential_handler,
         )
 
     async def _run_transport(
@@ -191,8 +216,18 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             loop=loop,
         )
         on_resource = partial(self._record_resource_state, work_item, loop=loop)
-        transport_task = self._start_transport(context, cancelled, on_result, on_resource)
-        return await self._monitor_transport(work_item, transport_task, cancelled)
+        transport = self._start_transport(context, cancelled, on_result, on_resource)
+        try:
+            return await self._monitor_transport(work_item, transport, cancelled)
+        finally:
+            # A thread cannot be cancelled by cancelling its asyncio Future. Keep
+            # the Future alive and join the thread while its database callbacks
+            # can still use the worker's stores, even on repeated cancellation.
+            cancelled.set()
+            while not transport.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({transport})
+            transport.exception()  # Retrieve any cleanup failure without replacing the original error.
 
     def _start_transport(
         self,
@@ -200,14 +235,17 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         cancelled: threading.Event,
         on_result: Callable[[dict[str, Any]], None],
         on_resource: Callable[[str, str | None, str, str | None], None],
-    ) -> asyncio.Task[dict[str, Any]]:
-        """Start the cold-start Job in a worker thread."""
-        return asyncio.create_task(
-            asyncio.to_thread(
+    ) -> asyncio.Future[dict[str, Any]]:
+        """Submit blocking transport work without creating a detached asyncio task."""
+        return asyncio.get_running_loop().run_in_executor(
+            None,
+            contextvars.copy_context().run,
+            partial(
                 run_job,
                 target=context.target_config,
                 image=context.image,
                 invocation=context.invocation,
+                runtime_context=context.runtime_context,
                 identity=context.identity,
                 attempt_id=context.attempt_id,
                 startup=self._settings.node_startup_seconds,
@@ -217,22 +255,23 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 on_result=on_result,
                 on_resource=on_resource,
                 on_execute_submitted=partial(self._mark_execute_submitted, context),
+                credential_handler=context.credential_handler,
                 node_selectors=context.target_config["node_selectors"],
                 tolerations=context.target_config["tolerations"],
                 allowed_egress_cidrs=self._settings.workload_allowed_egress_cidrs,
                 forbidden_egress_cidrs=self._settings.workload_forbidden_egress_cidrs,
-            )
+            ),
         )
 
     async def _monitor_transport(
         self,
         work_item: WorkItem,
-        transport_task: asyncio.Task[dict[str, Any]],
+        transport: asyncio.Future[dict[str, Any]],
         cancelled: threading.Event,
     ) -> dict[str, Any]:
         """Poll claim cancellation while the transport thread runs."""
-        while not transport_task.done():
-            done, _pending = await asyncio.wait({transport_task}, timeout=5)
+        while not transport.done():
+            done, _pending = await asyncio.wait({transport}, timeout=CLAIM_REFRESH_SECONDS)
             if not done:
                 cancellation_requested = await self._work_progress.refresh_claim(
                     work_item.id,
@@ -242,7 +281,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 if cancellation_requested is not False:
                     cancelled.set()
         try:
-            return await transport_task
+            return await transport
         except TransportError as exc:
             self._translate_transport_error(exc)
 
@@ -378,7 +417,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             message = "Assigned cluster has no credential-resolution client"
             raise RetryableDispatchError(message)
         try:
-            return await self._credential_resolver.resolve(
+            return await self._cluster_credential_resolver.resolve(
                 cluster.credential_ref,
                 client_id=cluster.source_client_id,
             )

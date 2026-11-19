@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from execution_plane.config import get_ep_settings
+from execution_plane.config.settings import get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -33,14 +33,14 @@ def _integration_database_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None
     The root conftest sets EP_DATABASE_URL to a dummy value for unit tests.
     This fixture runs after it (closer-conftest fixtures take priority) and
     re-points the setting at the disposable integration database so that
-    get_ep_settings() returns usable credentials during each test function.
+    get_settings() returns usable credentials during each test function.
     """
     database_url = os.environ.get("EP_TEST_DATABASE_URL")
     if database_url:
         monkeypatch.setenv("EP_DATABASE_URL", database_url)
-        get_ep_settings.cache_clear()
+        get_settings.cache_clear()
     yield
-    get_ep_settings.cache_clear()
+    get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")

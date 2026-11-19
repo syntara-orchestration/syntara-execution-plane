@@ -11,7 +11,7 @@ from execution_plane.models.cluster import Cluster
 from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.models.work_item import WorkItem
 from execution_plane_client.commands.clusters import ClusterRegister
-from execution_plane_client.commands.control import Completion
+from execution_plane_client.commands.control import Completion, CompletionStatus
 from tests.test_command_api import command_message
 
 
@@ -22,7 +22,7 @@ def _validator(document, name="MessageEnvelope") -> Draft202012Validator:
     )
 
 
-@pytest.mark.parametrize("kind", ["cluster.register", "cluster.provision"])
+@pytest.mark.parametrize("kind", ["cluster.register"])
 def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(kind) -> None:
     payload = {
         "resource_id": str(uuid4()),
@@ -50,16 +50,17 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
         (
             "work.execute",
             {
+                "work_item_id": str(uuid4()),
                 "image": "node:test",
                 "invocation": {
-                    "workflow_run_id": "workflow-1",
                     "step_revision_id": "script.v1",
                     "inputs": {},
                     "timeout_seconds": 60,
                 },
             },
         ),
-        ("command.cancel", {"target_command_id": str(uuid4())}),
+        ("work.cancel", {"work_item_id": str(uuid4())}),
+        ("work.delete", {"work_item_id": str(uuid4())}),
         ("cluster.update", {"resource_id": str(uuid4()), "name": "renamed"}),
         ("cluster.delete", {"resource_id": str(uuid4())}),
         (
@@ -83,24 +84,23 @@ def test_command_schema_validates_the_other_installed_commands(kind, payload) ->
     _validator(create_app().openapi()).validate(command_message(kind, payload))
 
 
-def test_completion_schema_requires_parent_and_is_not_accepted_as_an_inbound_command() -> None:
+def test_completion_schema_requires_work_item_id_and_is_not_accepted_as_an_inbound_command() -> None:
     document = create_app().openapi()
     message = (
-        Completion(status="succeeded", result={"stdout": "done"})
+        Completion(work_item_id=uuid4(), status=CompletionStatus.COMPLETED, result={"stdout": "done"})
         .to_message(
             source_id="ep",
             destination_id="ao",
             client_id="ao",
-            parent_command_id=uuid4(),
         )
         .model_dump(mode="json")
     )
     validator = _validator(document, "CompletionMessageEnvelope")
     validator.validate(message)
     assert not _validator(document).is_valid(message)
-    del message["command"]["parent_command_id"]
+    del message["command"]["payload"]["work_item_id"]
     assert not validator.is_valid(message)
-    message["command"]["parent_command_id"] = None
+    message["command"]["payload"]["work_item_id"] = None
     assert not validator.is_valid(message)
 
 
@@ -121,9 +121,9 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     command = components["Command"]
     expected_payloads = {
         "work.execute": "WorkExecute",
-        "command.cancel": "CancelCommand",
+        "work.cancel": "WorkCancel",
+        "work.delete": "WorkDelete",
         "cluster.register": "ClusterRegister",
-        "cluster.provision": "ClusterProvision",
         "cluster.update": "ClusterUpdate",
         "cluster.delete": "ClusterDelete",
         "execution_target.register": "TargetRegister",
@@ -134,16 +134,45 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     assert command["discriminator"]["propertyName"] == "command_type"
     mapping = command["discriminator"]["mapping"]
     assert mapping.keys() == expected_payloads.keys()
+    assert "credential.resolve.workload" not in mapping
     assert command["oneOf"] == [{"$ref": reference} for reference in mapping.values()]
     for kind, payload_name in expected_payloads.items():
         variant = components[mapping[kind].rsplit("/", 1)[-1]]
         assert variant["properties"]["command_type"]["const"] == kind
         assert variant["properties"]["command_revision"]["const"] == 1
+        assert variant["properties"]["command_type"]["description"]
+        assert variant["properties"]["command_revision"]["description"]
         assert variant["properties"]["payload"] == {"$ref": f"#/components/schemas/{payload_name}"}
         assert {"command_type", "command_revision", "payload"} <= set(variant["required"])
         assert components[payload_name]["additionalProperties"] is False
     assert "WorkloadInvocation" in components
     assert "CommandScope" in components
+
+
+def test_workload_credential_bindings_are_documented() -> None:
+    components = create_app().openapi()["components"]["schemas"]
+    binding = components["WorkCredentialBinding"]
+    invocation = components["WorkloadInvocation"]
+
+    assert binding["properties"]["credential_recipe_id"] == {
+        "type": "string",
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": r"^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$",
+        "title": "Credential Recipe Id",
+        "description": "Qualified Plugin SDK CredentialRecipe identifier that the workload may request at runtime.",
+    }
+    assert binding["properties"]["credential_ref"]["format"] == "uuid"
+    assert binding["properties"]["credential_ref"]["description"] == (
+        "Opaque AO credential reference; EP resolves it only after the workload requests this recipe."
+    )
+    assert invocation["properties"]["credential_bindings"] == {
+        "items": {"$ref": "#/components/schemas/WorkCredentialBinding"},
+        "type": "array",
+        "maxItems": 16,
+        "title": "Credential Bindings",
+        "description": "Host-side recipe-to-reference bindings; never plugin inputs or runtime context.",
+    }
 
 
 def test_completion_is_documented_as_an_outbound_command() -> None:
@@ -156,8 +185,7 @@ def test_completion_is_documented_as_an_outbound_command() -> None:
     command = components[command_ref.rsplit("/", 1)[-1]]
     assert command["properties"]["command_type"]["const"] == "work.execute.completed"
     assert command["properties"]["payload"] == {"$ref": "#/components/schemas/Completion"}
-    assert command["properties"]["parent_command_id"]["type"] == "string"
-    assert "parent_command_id" in command["required"]
+    assert "work_item_id" in components["Completion"]["required"]
     receipt = webhook["responses"]["2XX"]["content"]["application/json"]["schema"]
     assert receipt == {"$ref": "#/components/schemas/TransportReceipt"}
 
@@ -171,20 +199,46 @@ def test_transport_receipt_uses_discriminated_command_result() -> None:
 
     assert union["discriminator"]["propertyName"] == "command_type"
     assert mapping == {
-        "credential.resolve": "#/components/schemas/CredentialResolveCommandResult",
+        "credential.resolve.cluster": "#/components/schemas/CredentialResolveClusterCommandResult",
+        "credential.resolve.workload": "#/components/schemas/CredentialResolveWorkloadCommandResult",
         "execution_target.health": "#/components/schemas/TargetHealthCommandResult",
     }
     assert union["oneOf"] == [{"$ref": reference} for reference in mapping.values()]
-    assert components["CredentialResolveCommandResult"]["properties"]["credential"] == {
-        "type": "string",
-        "maxLength": 65536,
-        "minLength": 1,
+    assert components["CredentialResolveClusterCommandResult"]["properties"]["credential"] == {
+        "additionalProperties": {"type": "string", "maxLength": 8192, "minLength": 1},
+        "propertyNames": {"maxLength": 128, "minLength": 1},
+        "type": "object",
         "title": "Credential",
     }
     assert components["TargetHealthCommandResult"]["properties"]["healthy"] == {
         "type": "boolean",
         "title": "Healthy",
     }
+
+
+def test_credential_resolution_payloads_are_documented_without_ingress_handlers() -> None:
+    document = create_app().openapi()
+    components = document["components"]["schemas"]
+    cluster_command = components["CredentialResolveClusterCommandV1"]
+    command = components["CredentialResolveWorkloadCommandV1"]
+    payload = command["properties"]["payload"]
+    command_mapping = components["Command"]["discriminator"]["mapping"]
+
+    assert cluster_command["properties"]["command_type"]["const"] == "credential.resolve.cluster"
+    assert cluster_command["properties"]["payload"]["$ref"] == "#/components/schemas/CredentialResolveCluster"
+    assert set(components["CredentialResolveCluster"]["required"]) == {"credential_ref"}
+    assert command["properties"]["command_type"]["const"] == "credential.resolve.workload"
+    assert {"command_type", "command_revision", "payload"} <= set(command["required"])
+    assert payload["$ref"] == "#/components/schemas/CredentialResolveWorkload"
+    assert set(components["CredentialResolveWorkload"]["required"]) == {
+        "work_item_id",
+        "attempt_id",
+        "credential_ref",
+        "credential_recipe_id",
+        "step_revision_id",
+    }
+    assert "credential.resolve.workload" not in command_mapping
+    assert "credential.resolve.cluster" not in command_mapping
 
 
 def test_command_schema_references_resolve_and_do_not_replace_resource_schemas() -> None:

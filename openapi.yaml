@@ -42,6 +42,10 @@ paths:
   /v1/work-items:
     get:
       summary: Work Items
+      description: List client-owned work. runtime_context[key]=value matches an exact
+        JSON string; an empty value checks key existence. Keys are literal top-level
+        keys and multiple keys are ANDed. Filters apply before pagination and total
+        counts.
       operationId: work_items_v1_work_items_get
       security:
       - HTTPBearer: []
@@ -565,6 +569,8 @@ components:
           type: integer
           const: 1
           title: Protocol Revision
+          description: Envelope contract version; remains 1 during development of
+            the resource-addressed protocol.
           default: 1
         commands:
           additionalProperties:
@@ -668,29 +674,64 @@ components:
       - updated_at
       title: ClusterRead
       description: Provisioned cluster state, keyed by the actual cluster UUID.
-    CredentialResolveCommandResult:
+    CredentialResolveClusterCommandResult:
       properties:
         command_type:
           type: string
-          const: credential.resolve
+          const: credential.resolve.cluster
           title: Command Type
-          default: credential.resolve
+          default: credential.resolve.cluster
         command_revision:
           type: integer
           const: 1
           title: Command Revision
           default: 1
         credential:
-          type: string
-          maxLength: 65536
-          minLength: 1
+          additionalProperties:
+            type: string
+            maxLength: 8192
+            minLength: 1
+          propertyNames:
+            maxLength: 128
+            minLength: 1
+          type: object
           title: Credential
       additionalProperties: false
       type: object
       required:
       - credential
-      title: CredentialResolveCommandResult
-      description: Typed result returned for a credential-resolution command.
+      title: CredentialResolveClusterCommandResult
+      description: Typed result returned for a cluster credential-resolution command.
+    CredentialResolveWorkloadCommandResult:
+      properties:
+        command_type:
+          type: string
+          const: credential.resolve.workload
+          title: Command Type
+          default: credential.resolve.workload
+        command_revision:
+          type: integer
+          const: 1
+          title: Command Revision
+          description: Payload contract version for credential.resolve.workload; matches
+            the request revision.
+          default: 1
+        credential:
+          additionalProperties:
+            type: string
+            maxLength: 8192
+            minLength: 1
+          propertyNames:
+            maxLength: 128
+            minLength: 1
+          type: object
+          title: Credential
+      additionalProperties: false
+      type: object
+      required:
+      - credential
+      title: CredentialResolveWorkloadCommandResult
+      description: Typed result returned for a workload credential-resolution command.
     ExecutionTargetListResponse:
       properties:
         resources:
@@ -934,6 +975,8 @@ components:
           type: string
           format: uuid
           title: Message Id
+          description: The received delivery message's UUID, echoed so the sender
+            can match this receipt.
         resource:
           anyOf:
           - $ref: '#/components/schemas/ResourceReference'
@@ -941,12 +984,14 @@ components:
         result:
           anyOf:
           - oneOf:
-            - $ref: '#/components/schemas/CredentialResolveCommandResult'
+            - $ref: '#/components/schemas/CredentialResolveClusterCommandResult'
+            - $ref: '#/components/schemas/CredentialResolveWorkloadCommandResult'
             - $ref: '#/components/schemas/TargetHealthCommandResult'
             discriminator:
               propertyName: command_type
               mapping:
-                credential.resolve: '#/components/schemas/CredentialResolveCommandResult'
+                credential.resolve.cluster: '#/components/schemas/CredentialResolveClusterCommandResult'
+                credential.resolve.workload: '#/components/schemas/CredentialResolveWorkloadCommandResult'
                 execution_target.health: '#/components/schemas/TargetHealthCommandResult'
           - type: 'null'
           title: Result
@@ -1015,10 +1060,43 @@ components:
           type: string
           format: uuid
           title: Id
-          description: Work item unique identifier
+          description: Primary key of this EP work item, equal to work.execute.payload.work_item_id
+            supplied at creation. Use it to read or cancel this item and correlate
+            completion or credential callbacks. Syntara uses ActivityExecution.id;
+            runtime_context.execution_id identifies its containing execution.
+        runtime_context:
+          additionalProperties: true
+          type: object
+          title: Runtime Context
+          description: Optional caller-defined JSON object, defaulting to {}. Stored
+            once, unencrypted, on the work item and passed to the plugin as context.runtime_context;
+            also returned in work-item reads and completion notifications. Do not
+            include secrets. Syntara supplies project_id (Project.id), workflow_id
+            (Workflow.id), and execution_id (the containing Execution.id); EP does
+            not require these keys. These values do not authorize access, select placement,
+            identify the work item, or control its lifecycle. List filters runtime_context[key]=value
+            match exact JSON strings at literal top-level keys; an empty value checks
+            key existence and multiple keys use AND.
         status:
           $ref: '#/components/schemas/WorkItemStatus'
           description: Work item lifecycle status
+        cancellation_requested:
+          type: boolean
+          title: Cancellation Requested
+          description: 'Whether cancellation intent has been persisted. A true value
+            does not confirm that execution has stopped: status remains dispatched
+            or running until an outcome is known. A result may win the cancellation
+            race. This flag remains true after completion and is also set by deletion.'
+          default: false
+        deletion_requested:
+          type: boolean
+          title: Deletion Requested
+          description: Whether deletion intent has been persisted. Always implies
+            cancellation_requested=true. Active work is cancelled asynchronously,
+            and the record remains readable until resource cleanup is confirmed and
+            the record is removed. This flag does not change an existing terminal
+            outcome or confirm that deletion has completed.
+          default: false
         result:
           anyOf:
           - additionalProperties: true
@@ -1082,25 +1160,12 @@ components:
       - claimed
       - dispatched
       - running
-      - cancel_requested
       - reconciliation_required
       - completed
       - failed
       - cancelled
       title: WorkItemStatus
       description: Lifecycle states of a dispatched work item.
-    CancelCommand:
-      properties:
-        target_command_id:
-          type: string
-          format: uuid
-          title: Target Command Id
-      additionalProperties: false
-      type: object
-      required:
-      - target_command_id
-      title: CancelCommand
-      description: Cancel an existing work command, whose UUID is its work-item UUID.
     ClusterDelete:
       properties:
         resource_id:
@@ -1113,53 +1178,6 @@ components:
       - resource_id
       title: ClusterDelete
       description: Disable and drain an existing cluster addressed by id.
-    ClusterProvision:
-      properties:
-        resource_id:
-          type: string
-          format: uuid
-          title: Resource Id
-        name:
-          type: string
-          maxLength: 255
-          minLength: 1
-          title: Name
-        endpoint:
-          type: string
-          maxLength: 2048
-          title: Endpoint
-        credential_ref:
-          type: string
-          format: uuid
-          title: Credential Ref
-        ca_certificate:
-          anyOf:
-          - type: string
-            maxLength: 65536
-          - type: 'null'
-          title: Ca Certificate
-        labels:
-          additionalProperties:
-            type: string
-          type: object
-          title: Labels
-        enabled:
-          type: boolean
-          title: Enabled
-          default: true
-        is_default:
-          type: boolean
-          title: Is Default
-          default: false
-      additionalProperties: false
-      type: object
-      required:
-      - resource_id
-      - name
-      - endpoint
-      - credential_ref
-      title: ClusterProvision
-      description: Provision through the same cluster and default-target reconciler.
     ClusterRegister:
       properties:
         resource_id:
@@ -1261,14 +1279,14 @@ components:
     Command:
       oneOf:
       - $ref: '#/components/schemas/ClusterDeleteCommandV1'
-      - $ref: '#/components/schemas/ClusterProvisionCommandV1'
       - $ref: '#/components/schemas/ClusterRegisterCommandV1'
       - $ref: '#/components/schemas/ClusterUpdateCommandV1'
-      - $ref: '#/components/schemas/CancelCommandV1'
       - $ref: '#/components/schemas/TargetDeleteCommandV1'
       - $ref: '#/components/schemas/TargetHealthCommandV1'
       - $ref: '#/components/schemas/TargetRegisterCommandV1'
       - $ref: '#/components/schemas/TargetUpdateCommandV1'
+      - $ref: '#/components/schemas/WorkCancelCommandV1'
+      - $ref: '#/components/schemas/WorkDeleteCommandV1'
       - $ref: '#/components/schemas/WorkExecuteCommandV1'
       title: Command
       description: A command type and revision paired with its corresponding payload.
@@ -1276,14 +1294,14 @@ components:
         propertyName: command_type
         mapping:
           cluster.delete: '#/components/schemas/ClusterDeleteCommandV1'
-          cluster.provision: '#/components/schemas/ClusterProvisionCommandV1'
           cluster.register: '#/components/schemas/ClusterRegisterCommandV1'
           cluster.update: '#/components/schemas/ClusterUpdateCommandV1'
-          command.cancel: '#/components/schemas/CancelCommandV1'
           execution_target.delete: '#/components/schemas/TargetDeleteCommandV1'
           execution_target.health: '#/components/schemas/TargetHealthCommandV1'
           execution_target.register: '#/components/schemas/TargetRegisterCommandV1'
           execution_target.update: '#/components/schemas/TargetUpdateCommandV1'
+          work.cancel: '#/components/schemas/WorkCancelCommandV1'
+          work.delete: '#/components/schemas/WorkDeleteCommandV1'
           work.execute: '#/components/schemas/WorkExecuteCommandV1'
     CommandScope:
       properties:
@@ -1302,22 +1320,32 @@ components:
         caller.
     Completion:
       properties:
-        status:
+        work_item_id:
           type: string
-          enum:
-          - succeeded
-          - failed
-          - cancelled
-          - outcome_unknown
-          title: Status
+          format: uuid
+          title: Work Item Id
+          description: Primary key (WorkItem.id) supplied when this work was created;
+            identifies the item whose outcome is reported. Syntara uses it to look
+            up ActivityExecution.id.
+        runtime_context:
+          additionalProperties: true
+          type: object
+          title: Runtime Context
+          description: Optional caller-defined JSON object, defaulting to {}. Stored
+            once, unencrypted, on the work item and passed to the plugin as context.runtime_context;
+            also returned in work-item reads and completion notifications. Do not
+            include secrets. Syntara supplies project_id (Project.id), workflow_id
+            (Workflow.id), and execution_id (the containing Execution.id); EP does
+            not require these keys. These values do not authorize access, select placement,
+            identify the work item, or control its lifecycle. List filters runtime_context[key]=value
+            match exact JSON strings at literal top-level keys; an empty value checks
+            key existence and multiple keys use AND.
+        status:
+          $ref: '#/components/schemas/CompletionStatus'
         result:
           additionalProperties: true
           type: object
           title: Result
-        resource:
-          anyOf:
-          - $ref: '#/components/schemas/ResourceReference'
-          - type: 'null'
         error_code:
           anyOf:
           - type: string
@@ -1326,10 +1354,81 @@ components:
       additionalProperties: false
       type: object
       required:
+      - work_item_id
       - status
       title: Completion
       description: Terminal or uncertain work outcome delivered to the initiating
         client.
+    CompletionStatus:
+      type: string
+      enum:
+      - completed
+      - failed
+      - cancelled
+      - reconciliation_required
+      title: CompletionStatus
+      description: Work-item states that can be reported by a completion command.
+    CredentialResolveCluster:
+      properties:
+        credential_ref:
+          type: string
+          format: uuid
+          title: Credential Ref
+          description: Opaque AO credential reference.
+      additionalProperties: false
+      type: object
+      required:
+      - credential_ref
+      title: CredentialResolveCluster
+      description: Resolve an opaque cluster credential reference into its credential
+        document.
+    CredentialResolveWorkload:
+      properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+          description: Primary key (WorkItem.id) of the EP work item requesting credentials.
+            Syntara uses it to look up ActivityExecution.id and verify the credential
+            binding for that work.
+        attempt_id:
+          type: string
+          maxLength: 255
+          minLength: 1
+          pattern: ^[A-Za-z0-9_.:@/-]+$
+          title: Attempt Id
+          description: EP dispatch-attempt identifier, sent to the plugin as invocation_id;
+            distinct from WorkItem.id.
+        credential_ref:
+          type: string
+          format: uuid
+          title: Credential Ref
+          description: Opaque AO credential reference bound to the requested recipe.
+        credential_recipe_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$
+          title: Credential Recipe Id
+          description: Logical Plugin SDK recipe requested by the workload.
+        step_revision_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[A-Za-z0-9._:-]+$
+          title: Step Revision Id
+          description: Handler identifier from this work item's invocation; identifies
+            the implementation requesting credentials.
+      additionalProperties: false
+      type: object
+      required:
+      - work_item_id
+      - attempt_id
+      - credential_ref
+      - credential_recipe_id
+      - step_revision_id
+      title: CredentialResolveWorkload
+      description: Resolve one credential reference for the identified work item.
     ClientKubernetesPlacement:
       properties:
         type:
@@ -1365,15 +1464,14 @@ components:
           type: string
           format: uuid
           title: Message Id
+          description: UUID assigned by the sender to this delivery message and echoed
+            in its transport receipt. It does not identify a work item or deduplicate
+            submissions; resource IDs in the payload do that.
         message_type:
           type: string
           const: command.submit
           title: Message Type
           default: command.submit
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
         sequence:
           type: integer
           minimum: 0.0
@@ -1399,7 +1497,6 @@ components:
       type: object
       required:
       - message_id
-      - command_id
       - source_id
       - destination_id
       - scope
@@ -1453,11 +1550,7 @@ components:
           minLength: 1
           title: Name
         backend_type:
-          type: string
-          enum:
-          - kubernetes
-          - openshell
-          title: Backend Type
+          $ref: '#/components/schemas/BackendType'
         placement:
           oneOf:
           - $ref: '#/components/schemas/ClientKubernetesPlacement'
@@ -1563,20 +1656,99 @@ components:
       - resource_id
       title: TargetUpdate
       description: Mutable target fields; `is_default=true` promotes this target.
+    WorkCancel:
+      properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+          description: Primary key (WorkItem.id) of the existing EP work item to cancel
+            within the authenticated client.
+      additionalProperties: false
+      type: object
+      required:
+      - work_item_id
+      title: WorkCancel
+      description: Request cancellation of an existing work item.
+    WorkCredentialBinding:
+      properties:
+        credential_recipe_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[a-z][a-z0-9-]{0,62}(?:\.[a-z][a-z0-9-]{0,62})+$
+          title: Credential Recipe Id
+          description: Qualified Plugin SDK CredentialRecipe identifier that the workload
+            may request at runtime.
+        credential_ref:
+          type: string
+          format: uuid
+          title: Credential Ref
+          description: Opaque AO credential reference; EP resolves it only after the
+            workload requests this recipe.
+      additionalProperties: false
+      type: object
+      required:
+      - credential_recipe_id
+      - credential_ref
+      title: WorkCredentialBinding
+      description: One Plugin SDK recipe-to-AO credential mapping for a work item.
+    WorkDelete:
+      properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+      additionalProperties: false
+      type: object
+      required:
+      - work_item_id
+      title: WorkDelete
+      description: Request asynchronous cancellation, resource cleanup, and removal
+        of owned work.
     WorkExecute:
       properties:
+        work_item_id:
+          type: string
+          format: uuid
+          title: Work Item Id
+          description: Caller-assigned UUID used as the primary key (WorkItem.id)
+            of the new EP work item. It must be unique across EP work items, including
+            other clients' work. An existing UUID returns HTTP 409 and never overwrites
+            or reruns that item. On an uncertain submission retry, retain the UUID
+            and read the existing item after a conflict. Use it for reads, cancellation,
+            completion, and credential callbacks. Syntara supplies ActivityExecution.id,
+            not the containing Execution.id.
+        runtime_context:
+          additionalProperties: true
+          type: object
+          title: Runtime Context
+          description: Optional caller-defined JSON object, defaulting to {}. Stored
+            once, unencrypted, on the work item and passed to the plugin as context.runtime_context;
+            also returned in work-item reads and completion notifications. Do not
+            include secrets. Syntara supplies project_id (Project.id), workflow_id
+            (Workflow.id), and execution_id (the containing Execution.id); EP does
+            not require these keys. These values do not authorize access, select placement,
+            identify the work item, or control its lifecycle. List filters runtime_context[key]=value
+            match exact JSON strings at literal top-level keys; an empty value checks
+            key existence and multiple keys use AND.
         image:
           type: string
           maxLength: 2048
           minLength: 1
           title: Image
+          description: OCI image reference for the isolated cold-start workload container.
         selectors:
           additionalProperties:
             type: string
           type: object
           title: Selectors
+          description: Exact label requirements used to select an execution target;
+            all keys and values must match.
         invocation:
           $ref: '#/components/schemas/WorkloadInvocation'
+          description: Validated workload invocation, including host-side credential
+            bindings.
         output_config:
           anyOf:
           - additionalProperties:
@@ -1584,55 +1756,62 @@ components:
             type: object
           - type: 'null'
           title: Output Config
+          description: Optional result-field allowlist mapping output names to workload
+            result keys.
         workload_type:
-          type: string
-          const: container
-          title: Workload Type
+          $ref: '#/components/schemas/WorkloadType'
+          description: Workload execution family; container is the only supported
+            value.
           default: container
       additionalProperties: false
       type: object
       required:
+      - work_item_id
       - image
       - invocation
       title: WorkExecute
       description: Schedule one workload implementing the SDK container service.
     WorkloadInvocation:
       properties:
-        workflow_run_id:
-          type: string
-          maxLength: 256
-          minLength: 1
-          pattern: ^[A-Za-z0-9._:-]+$
-          title: Workflow Run Id
         step_revision_id:
           type: string
           maxLength: 256
           minLength: 1
           pattern: ^[A-Za-z0-9._:-]+$
           title: Step Revision Id
+          description: Handler identifier advertised by the selected workload image.
+            The plugin runtime uses it to select the step implementation; it does
+            not identify this work item or an execution.
         inputs:
           additionalProperties: true
           type: object
           title: Inputs
-        runtime_context:
-          additionalProperties: true
-          type: object
-          title: Runtime Context
+          description: Step inputs defined by the selected workload; never use this
+            field for credential bindings.
+        credential_bindings:
+          items:
+            $ref: '#/components/schemas/WorkCredentialBinding'
+          type: array
+          maxItems: 16
+          title: Credential Bindings
+          description: Host-side recipe-to-reference bindings; never plugin inputs
+            or runtime context.
         timeout_seconds:
           type: integer
           maximum: 86400.0
           exclusiveMinimum: 0.0
           title: Timeout Seconds
+          description: Maximum workload execution time in seconds, including SDK streaming
+            but excluding cleanup.
       additionalProperties: false
       type: object
       required:
-      - workflow_run_id
       - step_revision_id
       - inputs
       - timeout_seconds
       title: WorkloadInvocation
       description: 'Public invocation data; EP supplies the attempt ID and credential
-        mounts.
+        resolver.
 
 
         Script environment variables remain ordinary step inputs. Credential-file
@@ -1640,24 +1819,27 @@ components:
         delivery is not implemented yet, so callers cannot supply secret values or
 
         claim that arbitrary file paths have been mounted by EP.'
+    WorkloadType:
+      type: string
+      enum:
+      - container
+      title: WorkloadType
+      description: Workload execution families the Execution Plane can dispatch.
     ClusterDeleteCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: cluster.delete
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/ClusterDelete'
         occurred_at:
@@ -1667,65 +1849,27 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
       title: ClusterDeleteCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    ClusterProvisionCommandV1:
-      properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
-        command_type:
-          type: string
-          const: cluster.provision
-        command_revision:
-          type: integer
-          const: 1
-        payload:
-          $ref: '#/components/schemas/ClusterProvision'
-        occurred_at:
-          type: string
-          format: date-time
-          title: Occurred At
-      additionalProperties: false
-      type: object
-      required:
-      - command_id
-      - command_type
-      - command_revision
-      - payload
-      - occurred_at
-      title: ClusterProvisionCommandV1
-      description: One versioned operation; participants persist only its domain effects.
     ClusterRegisterCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: cluster.register
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/ClusterRegister'
         occurred_at:
@@ -1735,7 +1879,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1744,22 +1887,19 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     ClusterUpdateCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: cluster.update
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/ClusterUpdate'
         occurred_at:
@@ -1769,65 +1909,27 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
       title: ClusterUpdateCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    CancelCommandV1:
-      properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
-        command_type:
-          type: string
-          const: command.cancel
-        command_revision:
-          type: integer
-          const: 1
-        payload:
-          $ref: '#/components/schemas/CancelCommand'
-        occurred_at:
-          type: string
-          format: date-time
-          title: Occurred At
-      additionalProperties: false
-      type: object
-      required:
-      - command_id
-      - command_type
-      - command_revision
-      - payload
-      - occurred_at
-      title: CancelCommandV1
-      description: One versioned operation; participants persist only its domain effects.
     TargetDeleteCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.delete
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetDelete'
         occurred_at:
@@ -1837,7 +1939,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1846,22 +1947,19 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     TargetHealthCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.health
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetHealth'
         occurred_at:
@@ -1871,7 +1969,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1880,22 +1977,19 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     TargetRegisterCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.register
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetRegister'
         occurred_at:
@@ -1905,7 +1999,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1914,22 +2007,19 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     TargetUpdateCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
           const: execution_target.update
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/TargetUpdate'
         occurred_at:
@@ -1939,31 +2029,87 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
       title: TargetUpdateCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    WorkExecuteCommandV1:
+    WorkCancelCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          anyOf:
-          - type: string
-            format: uuid
-          - type: 'null'
-          title: Parent Command Id
         command_type:
           type: string
-          const: work.execute
+          const: work.cancel
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
+        payload:
+          $ref: '#/components/schemas/WorkCancel'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: WorkCancelCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    WorkDeleteCommandV1:
+      properties:
+        command_type:
+          type: string
+          const: work.delete
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
+        command_revision:
+          type: integer
+          const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
+        payload:
+          $ref: '#/components/schemas/WorkDelete'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: WorkDeleteCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    WorkExecuteCommandV1:
+      properties:
+        command_type:
+          type: string
+          const: work.execute
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
+        command_revision:
+          type: integer
+          const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/WorkExecute'
         occurred_at:
@@ -1973,7 +2119,6 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
@@ -1982,19 +2127,19 @@ components:
       description: One versioned operation; participants persist only its domain effects.
     CompletionCommandV1:
       properties:
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
-        parent_command_id:
-          type: string
-          format: uuid
         command_type:
           type: string
           const: work.execute.completed
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
         command_revision:
           type: integer
           const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
         payload:
           $ref: '#/components/schemas/Completion'
         occurred_at:
@@ -2004,13 +2149,71 @@ components:
       additionalProperties: false
       type: object
       required:
-      - command_id
       - command_type
       - command_revision
       - payload
       - occurred_at
-      - parent_command_id
       title: CompletionCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    CredentialResolveClusterCommandV1:
+      properties:
+        command_type:
+          type: string
+          const: credential.resolve.cluster
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
+        command_revision:
+          type: integer
+          const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
+        payload:
+          $ref: '#/components/schemas/CredentialResolveCluster'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: CredentialResolveClusterCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    CredentialResolveWorkloadCommandV1:
+      properties:
+        command_type:
+          type: string
+          const: credential.resolve.workload
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
+        command_revision:
+          type: integer
+          const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
+        payload:
+          $ref: '#/components/schemas/CredentialResolveWorkload'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: CredentialResolveWorkloadCommandV1
       description: One versioned operation; participants persist only its domain effects.
     CompletionMessageEnvelope:
       properties:
@@ -2018,15 +2221,14 @@ components:
           type: string
           format: uuid
           title: Message Id
+          description: UUID assigned by the sender to this delivery message and echoed
+            in its transport receipt. It does not identify a work item or deduplicate
+            submissions; resource IDs in the payload do that.
         message_type:
           type: string
           const: command.submit
           title: Message Type
           default: command.submit
-        command_id:
-          type: string
-          format: uuid
-          title: Command Id
         sequence:
           type: integer
           minimum: 0.0
@@ -2052,7 +2254,6 @@ components:
       type: object
       required:
       - message_id
-      - command_id
       - source_id
       - destination_id
       - scope

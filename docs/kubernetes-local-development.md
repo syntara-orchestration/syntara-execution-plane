@@ -34,77 +34,13 @@ The local Kubernetes runtime is a development dependency and test target. It
 is not intended to become the hosting environment for the Syntara API or the
 Execution Plane worker as part of this effort.
 
-## Runtime topology
+## Service topology
 
-The intended topology has two execution environments:
-
-1. Podman hosts Syntara, Temporal, PostgreSQL, and the Execution Plane worker.
-2. A local Kubernetes runtime hosts the Cluster/ExecutionTarget workload
-   environment and the Kubernetes workloads created by the Worker Manager.
-
-```mermaid
-flowchart LR
-    subgraph Podman[Local Podman environment]
-        S[Syntara API]
-        TW[Temporal worker]
-        EP[Execution Plane worker]
-        DB[(PostgreSQL\nshared Work Store)]
-        T[Temporal]
-    end
-
-    subgraph Kubernetes[Local Kubernetes environment]
-        C[Cluster\nlocal Kubernetes runtime]
-        NS[ExecutionTarget\ntarget namespace]
-        W[Workload Pod or Job\nvanilla Kubernetes execution]
-    end
-
-    S --> TW
-    TW -->|persist WorkItem| DB
-    DB -->|claim and update WorkItem| EP
-    EP -->|completion notification| T
-    EP -->|Kubernetes API| C
-    C --> NS
-    NS --> W
-    W -->|result and status| EP
-```
-
-## Integration boundaries
-
-The shared database remains the interface between Syntara and the Execution
-Plane for this development environment. No new Execution Plane HTTP service
-is required.
-
-```mermaid
-sequenceDiagram
-    participant AO as Syntara / AO
-    participant DB as Shared PostgreSQL
-    participant EP as Execution Plane worker
-    participant K as Kubernetes API
-    participant W as Workload
-    participant T as Temporal
-
-    AO->>DB: Persist WorkItem
-    DB-->>EP: Notification or poll
-    EP->>DB: Claim WorkItem
-    EP->>K: Resolve Cluster/ExecutionTarget
-    EP->>K: Start vanilla Kubernetes workload
-    K->>W: Schedule workload
-    EP->>K: Monitor and collect result
-    W-->>EP: Exit status and output
-    EP->>DB: Persist result
-    EP->>T: Complete suspended activity
-```
-
-The boundaries are deliberately narrow:
-
-- Syntara owns workflow orchestration and submits durable WorkItems.
-- PostgreSQL owns the shared Work Store and lifecycle state.
-- The Execution Plane owns target selection, dispatch coordination, result
-  persistence, and completion notification.
-- Kubernetes owns workload placement and execution inside the registered
-  Cluster/ExecutionTarget.
-- Temporal remains the completion mechanism for the current Syntara
-  integration.
+AO submits commands to the EP API. EP owns its database, worker, and completion
+notifications; AO handles those notifications and completes Temporal activities.
+The local Kubernetes runtime hosts the workload Jobs. See
+[architecture.md](architecture.md) for the service diagrams and
+[kind-demo-runbook.md](kind-demo-runbook.md) for combined-service setup.
 
 ## Cluster and ExecutionTarget representation
 
@@ -227,8 +163,6 @@ This approach does not require:
 
 - moving Syntara into Kubernetes;
 - moving the Execution Plane worker into Kubernetes;
-- exposing the Execution Plane through a new HTTP service;
-- replacing the shared PostgreSQL Work Store boundary;
 - committing to one specific local Kubernetes distribution permanently; or
 - requiring all workload images to come from one registry.
 

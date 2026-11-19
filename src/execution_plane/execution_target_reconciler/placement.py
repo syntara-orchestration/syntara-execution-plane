@@ -15,7 +15,7 @@ if TYPE_CHECKING:
         WorkRequirements,
     )
     from execution_plane.worker_manager.base import WorkerManager
-    from execution_plane_client.models.execution_target import BackendType
+    from execution_plane_client.types import BackendType
 
 
 class WorkerManagerRegistry:

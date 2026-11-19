@@ -3,29 +3,106 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from execution_plane.models.work_item import WorkItemStatus
-from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.commands.work import WorkCredentialBinding, WorkExecute
 from execution_plane_client.models.work_item import WorkItemRead
 
 
 def _payload(**invocation_overrides: object) -> dict[str, Any]:
     invocation: dict[str, Any] = {
-        "workflow_run_id": "workflow-1",
         "step_revision_id": "script.v1",
         "inputs": {},
         "timeout_seconds": 60,
     }
     invocation.update(invocation_overrides)
-    return {"invocation": invocation, "image": "registry.example/node:latest"}
+    return {"work_item_id": str(uuid4()), "invocation": invocation, "image": "registry.example/node:latest"}
 
 
 def test_work_item_submit_accepts_a_versioned_node_invocation() -> None:
-    WorkExecute.model_validate(_payload())
+    command = WorkExecute.model_validate(_payload())
+
+    assert command.invocation.credential_bindings == []
+
+
+@pytest.mark.parametrize("binding_count", [1, 2])
+def test_work_item_submit_accepts_credential_bindings(binding_count: int) -> None:
+    payload = _payload(
+        credential_bindings=[
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": str(uuid4())},
+            {"credential_recipe_id": "acme.echo.workspace-token", "credential_ref": str(uuid4())},
+        ][:binding_count]
+    )
+
+    command = WorkExecute.model_validate(payload)
+
+    assert [binding.credential_recipe_id for binding in command.invocation.credential_bindings] == [
+        "acme.echo.api-token",
+        "acme.echo.workspace-token",
+    ][:binding_count]
+    assert all(isinstance(binding.credential_ref, UUID) for binding in command.invocation.credential_bindings)
+
+
+def test_credential_bindings_stay_outside_plugin_inputs_and_runtime_context() -> None:
+    payload = _payload(
+        credential_bindings=[
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": str(uuid4())},
+        ]
+    )
+
+    command = WorkExecute.model_validate(payload)
+
+    assert "credential_bindings" not in command.invocation.inputs
+    assert "credential_bindings" not in command.runtime_context
+    assert command.invocation.credential_bindings == [
+        WorkCredentialBinding.model_validate(binding) for binding in payload["invocation"]["credential_bindings"]
+    ]
+
+
+def test_work_item_submit_rejects_duplicate_credential_recipe_ids() -> None:
+    credential_ref = str(uuid4())
+    payload = _payload(
+        credential_bindings=[
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": credential_ref},
+            {"credential_recipe_id": "acme.echo.api-token", "credential_ref": str(uuid4())},
+        ]
+    )
+
+    with pytest.raises(ValidationError, match=r"unique credential recipe IDs"):
+        WorkExecute.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("updates", "match"),
+    [
+        (
+            {"credential_bindings": [{"credential_recipe_id": "not-qualified", "credential_ref": str(uuid4())}]},
+            "credential_recipe_id",
+        ),
+        (
+            {"credential_bindings": [{"credential_recipe_id": "acme.echo.api-token", "credential_ref": "not-a-uuid"}]},
+            "credential_ref",
+        ),
+        (
+            {
+                "credential_bindings": [
+                    {"credential_recipe_id": f"acme.echo.{index}", "credential_ref": str(uuid4())}
+                    for index in range(17)
+                ]
+            },
+            "at most 16",
+        ),
+    ],
+)
+def test_work_item_submit_rejects_invalid_credential_bindings(updates: dict[str, object], match: str) -> None:
+    payload = _payload(**updates)
+
+    with pytest.raises(ValidationError, match=match):
+        WorkExecute.model_validate(payload)
 
 
 def test_work_item_read_excludes_completion_delivery_internals() -> None:
@@ -45,8 +122,11 @@ def test_work_item_read_excludes_completion_delivery_internals() -> None:
     read = WorkItemRead.model_validate(item)
 
     assert set(read.model_dump()) == {
+        "runtime_context",
         "id",
         "status",
+        "cancellation_requested",
+        "deletion_requested",
         "result",
         "result_omitted",
         "result_size_bytes",
@@ -67,15 +147,25 @@ def test_non_object_credentials_raise_validation_error_not_type_error() -> None:
     assert not isinstance(caught.value.__cause__, TypeError)
 
 
-@pytest.mark.parametrize("field", ["inputs", "runtime_context"])
+@pytest.mark.parametrize("field", ["inputs"])
 def test_work_item_submit_rejects_non_object_invocation_fields(field: str) -> None:
     payload = _payload(**{field: "not-an-object"})
     with pytest.raises(ValidationError, match=rf"invocation\.{field}"):
         WorkExecute.model_validate(payload)
 
 
-@pytest.mark.parametrize("field", ["credentials", "credential_file_paths", "workflow_context", "settings", "version"])
-def test_legacy_and_unmounted_credential_fields_are_rejected(field: str) -> None:
+@pytest.mark.parametrize(
+    "field",
+    [
+        "credentials",
+        "credential_file_paths",
+        "workflow_context",
+        "settings",
+        "version",
+        "runtime_context",
+    ],
+)
+def test_unsupported_invocation_fields_are_rejected(field: str) -> None:
     payload = _payload(**{field: {}})
     with pytest.raises(ValidationError, match=rf"invocation\.{field}"):
         WorkExecute.model_validate(payload)
@@ -86,7 +176,7 @@ def test_script_environment_variables_remain_inputs() -> None:
     assert payload.invocation.inputs["environment"] == {"GREETING": "hello"}
 
 
-@pytest.mark.parametrize("field", ["workflow_run_id", "step_revision_id"])
+@pytest.mark.parametrize("field", ["step_revision_id"])
 @pytest.mark.parametrize("value", ["", "bad/id", "*", "x" * 257])
 def test_sdk_identities_are_validated_before_dispatch(field: str, value: str) -> None:
     payload = _payload(**{field: value})

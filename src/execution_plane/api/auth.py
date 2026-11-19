@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from execution_plane.config import EPSettings, get_ep_settings
+from execution_plane.config.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -33,7 +33,7 @@ def _load_public_key(path: str) -> str:
 
 async def get_service_identity(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    settings: Annotated[EPSettings, Depends(get_ep_settings)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ServiceIdentity:
     """Validate signature, issuer, audience and the enabled service client."""
     if credentials is None or credentials.scheme.lower() != "bearer":

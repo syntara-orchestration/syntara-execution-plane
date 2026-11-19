@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
@@ -40,11 +40,10 @@ DEFAULT_TOKEN_TTL = timedelta(hours=8)
 DEFAULT_TOKEN_SCOPES = (
     "work-items:read",
     "work.execute",
-    "command.cancel",
+    "work.cancel",
     "execution-targets:read",
     "clusters:read",
     "cluster.register",
-    "cluster.provision",
     "cluster.update",
     "cluster.delete",
     "execution_target.register",
@@ -233,7 +232,7 @@ def build_payload(
     environment: dict[str, str],
     image: str | None = None,
     selectors: dict[str, str] | None = None,
-    workflow_run_id: str | None = None,
+    runtime_context: dict[str, object] | None = None,
     step_revision_id: str = "script.v1",
 ) -> dict[str, Any]:
     """Build SDK invocation data for a script runner advertising the selected step."""
@@ -241,8 +240,8 @@ def build_payload(
     if environment:
         inputs["environment"] = environment
     return {
+        "runtime_context": runtime_context or {},
         "invocation": {
-            "workflow_run_id": workflow_run_id or str(uuid.uuid4()),
             "step_revision_id": step_revision_id,
             "inputs": inputs,
             "timeout_seconds": timeout_seconds,
@@ -263,12 +262,11 @@ def submit_work_item(
     """POST a work.execute command and return its acknowledgement."""
     client_id = os.environ.get("EP_AO_CLIENT_ID", DEFAULT_JWT_CLIENT_ID)
     body = (
-        WorkExecute.model_validate(payload)
+        WorkExecute.model_validate({**payload, "work_item_id": work_id})
         .to_message(
             source_id=client_id,
             destination_id=os.environ.get("EP_SERVICE_JWT_AUDIENCE", DEFAULT_JWT_AUDIENCE),
             client_id=client_id,
-            command_id=work_id,
         )
         .model_dump(mode="json")
     )
@@ -296,9 +294,21 @@ def get_work_item(api_url: str, token: str, work_id: uuid.UUID) -> dict[str, Any
     return response
 
 
-def list_execution_targets(api_url: str, token: str) -> list[dict[str, Any]]:
-    """Return execution targets visible to the service token."""
-    status, response = ep_request("GET", f"{api_url.rstrip('/')}/v1/execution-targets", token)
+def list_execution_targets(
+    api_url: str,
+    token: str,
+    *,
+    cluster_id: uuid.UUID | None = None,
+    name: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return visible targets, optionally narrowing a setup lookup by cluster and name."""
+    filters = {}
+    if cluster_id is not None:
+        filters["cluster_id"] = str(cluster_id)
+    if name is not None:
+        filters["name"] = name
+    query = f"?{urlencode(filters)}" if filters else ""
+    status, response = ep_request("GET", f"{api_url.rstrip('/')}/v1/execution-targets{query}", token)
     if status >= HTTPStatus.BAD_REQUEST:
         msg = f"Listing execution targets failed ({status}): {response}"
         raise RuntimeError(msg)

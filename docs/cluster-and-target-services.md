@@ -16,16 +16,16 @@ which work can be executed.
 
 ## Architectural principles
 
-- A fully registered Cluster owns at least one ExecutionTarget. The ownership
-  relationship is explicit in the database.
-- Every fully registered Cluster has exactly one protected default target. The
-  default target may be the Cluster's sole target.
+- A registered Cluster may own zero or more ExecutionTargets. Target registration
+  is a separate command, with an explicit ownership relationship in the database.
+- Registering a Cluster does not create a default target. Target commands manage
+  target creation and default selection.
 - Eligibility and lifecycle are separate concerns. `enabled` controls whether
   a resource may participate in selection; lifecycle status records its
   operational state.
 - Consumers depend directly on concrete model stores. Stores own database
   sessions, transactions, and persistence details; orchestration stays in
-  `ClusterRegistrar` and `WorkScheduler`.
+  command handlers and `WorkScheduler`.
 - Deletion is a lifecycle transition followed by asynchronous drain and
   physical finalization. It is not an immediate cascade delete.
 - Connectivity secrets are protected credentials, not ordinary metadata.
@@ -40,8 +40,8 @@ which work can be executed.
 | Field | Semantics |
 |---|---|
 | `id` | UUID primary key |
-| `name` | Required, unique, human-readable name |
-| `endpoint` | Cluster control-plane endpoint; unique across Clusters |
+| `name` | Required, human-readable name |
+| `endpoint` | Cluster control-plane endpoint |
 | `status` | `REGISTERING`, `ACTIVE`, `DRAINING`, or `ERROR` |
 | `enabled` | Whether the Cluster may participate in selection or reconciliation |
 | `is_default` | Whether this is the protected global default Cluster |
@@ -53,32 +53,30 @@ which work can be executed.
 | `updated_by` | Actor or service identity that last changed the row |
 | `updated_at` | Last metadata or lifecycle update timestamp |
 
-The Cluster `endpoint` identifies the control-plane endpoint. It is unique
-across Clusters: two Clusters cannot represent the same endpoint.
+The Cluster `endpoint` identifies the control-plane endpoint.
 `credential_ref` is opaque to EP. EP never persists, logs, or returns the raw
 credential value. Before dispatch, health probing, or Kubernetes reconciliation,
 EP sends a `credential.resolve` command to
 `EP_CREDENTIAL_RESOLUTION_CALLBACK_URL` at the caller's command ingress and uses the correlated
 credential value only in memory.
 
-`REGISTERING` represents a Cluster whose connectivity, dependencies, or target
-configuration is not yet complete. `ACTIVE` means the Cluster is available to
-participate in reconciliation and target selection. `DRAINING` prevents new
-work and indicates graceful removal. `ERROR` is a terminal state: registration
-or reconciliation failed; an `ERROR` Cluster is disabled and unavailable for
-selection and requires operator intervention to resolve.
-`status_message` records the associated human-readable detail.
+`REGISTERING` is the transient state used while constructing a new Cluster
+inside its registration transaction. Successful registration commits the Cluster
+as `ACTIVE`, even when it has no targets. `enabled` independently controls
+eligibility. `DRAINING` prevents new work and indicates graceful removal;
+`ERROR` records a failed drain. Re-registering a Cluster restores its `ACTIVE`
+state and desired configuration without reactivating its targets.
 
 #### Cluster lifecycle states
 
 ```mermaid
 stateDiagram-v2
     [*] --> REGISTERING
-    REGISTERING --> ACTIVE : Discovery succeeds
-    REGISTERING --> ERROR : Discovery fails
+    REGISTERING --> ACTIVE : Registration commits
     ACTIVE --> DRAINING : Delete requested
     DRAINING --> ERROR : Drain fails
-    ERROR --> [*] : Terminal — requires operator intervention
+    ERROR --> ACTIVE : Explicit cluster registration
+    DRAINING --> ACTIVE : Explicit cluster registration
 ```
 
 ### ExecutionTarget
@@ -92,8 +90,8 @@ exactly one Cluster.
 | `cluster_id` | Non-null foreign key to `execution_plane.clusters.id` |
 | `name` | User-facing target name |
 | `backend_type` | Supported execution backend, such as `kubernetes` or `openshell` |
-| `endpoint` | Endpoint used for worker connectivity |
-| `credential_ref` | Required AO UUID identifying the target credential |
+| `endpoint` | Target endpoint metadata; Kubernetes dispatch uses the Cluster endpoint |
+| `credential_ref` | Required AO UUID identifying the target credential; Kubernetes dispatch uses the Cluster credential |
 | `status` | `REGISTERING`, `VALIDATING`, `BOOTSTRAPPING`, `ACTIVE`, `DEGRADED`, `DRAINING`, or `FAILED` |
 | `enabled` | Eligibility/configuration gate |
 | `is_default` | Whether this is the Cluster's protected default target |
@@ -108,13 +106,14 @@ exactly one Cluster.
 `backend_type` identifies the execution backend used by the target. Supported
 backends include a vanilla Kubernetes API and an OpenShell gateway. In this
 document, an execution backend or backend provider is the external system that
-hosts work; it is distinct from the discovery mechanism used during Cluster
-registration.
+hosts work.
 
 The target `credential_ref` follows the same protection rules as the Cluster
-reference. A target may reference its own AO credential when the backend
-requires one; the Cluster credential is not implicitly exposed through the
-target model.
+reference. Kubernetes dispatch connects using `Cluster.endpoint`,
+`Cluster.ca_certificate`, and the credential resolved from
+`Cluster.credential_ref`. The target's `placement` supplies the namespace, node
+selectors, and tolerations. Target `endpoint` and `credential_ref` are not used
+for Kubernetes connectivity.
 
 #### ExecutionTarget lifecycle states
 
@@ -135,16 +134,14 @@ stateDiagram-v2
     FAILED --> [*] : Terminal — requires operator intervention
 ```
 
-The relationship is one-to-many with a mandatory child:
+The relationship allows a Cluster with no targets:
 
 ```text
-Cluster 1 ──────── 1..* ExecutionTarget
+Cluster 1 ──────── 0..* ExecutionTarget
 ```
 
-The `1..*` cardinality applies to a fully registered Cluster. A Cluster record
-is created first in `REGISTERING` and may temporarily have no targets while
-discovery is in progress. It cannot become `ACTIVE` until the first target has
-been created as the protected default; additional targets are optional.
+An `ACTIVE` Cluster need not have an ExecutionTarget. Callers register targets
+explicitly, supplying backend, placement, and default-selection requirements.
 
 `WorkItem.execution_target_id` references the target selected for a claimed
 work item. Administrative reads include draining records, while selection
@@ -154,7 +151,7 @@ default.
 
 ### WorkItem and audit contract
 
-`WorkItem` remains the durable unit of work exchanged between Execution Plane Consumers (such as a Temporal worker) and the Execution Plane worker. Its existing lifecycle timestamps,
+`WorkItem` is the durable unit of work exchanged between Execution Plane Consumers (such as a Temporal worker) and the Execution Plane worker. Its lifecycle timestamps,
 including `claimed_at`, `completed_at`, and `signaled_at`, describe work
 processing and are distinct from audit timestamps.
 
@@ -183,8 +180,8 @@ The database and stores enforce the following invariants:
    replacement first.
 5. Every ExecutionTarget has a non-null `cluster_id` referencing an existing
    Cluster.
-6. Every `ACTIVE` Cluster has at least one ExecutionTarget.
-7. Every `ACTIVE` Cluster has exactly one `is_default=True` target.
+6. An `ACTIVE` Cluster may have zero ExecutionTargets.
+7. At most one target per Cluster has `is_default=True`.
 8. A partial unique index on `execution_targets.cluster_id` where `is_default`
    is true enforces uniqueness of the default target.
 9. The current default target can have its metadata updated, but it cannot be
@@ -197,106 +194,24 @@ The database and stores enforce the following invariants:
 12. A draining target cannot receive new work and cannot be physically deleted
    until its active work has completed.
 13. A Cluster cannot be physically deleted while related targets remain.
-14. Every Cluster has a unique `endpoint`. Two Clusters cannot represent the
-    same endpoint.
 
-The at-least-one-child invariant is represented by registration and lifecycle
-logic; a simple foreign key cannot enforce it. `ClusterStore` always creates
-the Cluster record in `REGISTERING` before discovery. `REGISTERING` may
-therefore temporarily have no targets, and is unavailable for selection.
-The default target is created through `ExecutionTargetStore`, and the
-Cluster cannot become `ACTIVE` until that target exists.
+## Independent cluster and target registration
 
-After the initial target exists, target-owned endpoint, credential, placement
-and label fields are managed through ExecutionTarget commands. Cluster
-registration and binding updates do not rewrite those fields, even when the
-current default was promoted independently after Cluster provisioning.
+`cluster.register` creates or updates only the caller-owned Cluster. The command
+handler uses one transaction-backed `ClusterStore` for ownership checks,
+configuration updates, activation, and Cluster default selection. The advisory
+locks remain held until the changes commit. A failed registration rolls back the
+whole operation and does not leave a partially registered Cluster.
 
-## Registration and discovery operation
+Registration succeeds with zero targets. Registering, updating, or reactivating a
+Cluster never creates, updates, or activates ExecutionTargets. Deletion still
+coordinates draining of existing children before removing the parent.
 
-Registration is a domain operation orchestrated by `ClusterRegistrar` and
-persisted by `ClusterStore`. The Registrar owns discovery workflow and
-discovery-mechanism interaction; the Store owns persistence, transactions, and
-lifecycle state changes.
-
-At registration, `ClusterRegistrar` first asks `ClusterStore` to create and
-persist the Cluster in `REGISTERING`. It then invokes a discovery mechanism to
-validate connectivity, discover configured targets, and determine which target
-is the protected default. The discovery mechanism returns domain-level target
-definitions and discovery state; it does not return ORM instances or receive
-database sessions.
-
-The discovery boundary is:
-
-```text
-ClusterRegistrar
-  -> ClusterStore.create(cluster_definition)
-  -> ClusterDiscoveryMechanism.discover(cluster_definition)
-  -> ExecutionTargetStore.create(cluster_id, target_definition)
-  -> ExecutionTargetStore.create(...)
-```
-
-The registration sequence keeps persistence behind the Store while leaving
-workflow orchestration in the Registrar. The discovery mechanism returns domain
-data and does not receive a database session. `ClusterRegistrar` selects which
-discovered target is the default and passes that designation to
-`ExecutionTargetStore`; it does not create target records itself.
-
-```mermaid
-sequenceDiagram
-    participant C as Caller
-    participant R as ClusterRegistrar
-    participant S as ClusterStore
-    participant TR as TargetRegistrationStore
-    participant TS as ExecutionTargetStore
-    participant D as DiscoveryMechanism
-    participant DB as execution_plane DB
-
-    C->>R: register(cluster_definition)
-    R->>S: create(cluster_definition, REGISTERING)
-    S->>DB: Insert Cluster REGISTERING and commit
-    S-->>R: Cluster ID
-    R->>D: discover(cluster_definition)
-    D-->>R: discovery result and target definitions
-    alt discovered and usable
-        Note right of R: Select exactly one discovered target as default
-        R->>TR: create default target
-        TR->>TS: create target with is_default true
-        TS->>DB: Insert default ExecutionTarget
-        DB-->>TS: Default target persisted
-        TS-->>TR: Default target
-        TR-->>R: Default target
-        loop Additional discovered targets
-            R->>TR: create non-default target
-            TR->>TS: create target with is_default false
-            TS->>DB: Insert ExecutionTarget
-            DB-->>TS: Target persisted
-            TS-->>TR: ExecutionTarget
-            TR-->>R: ExecutionTarget or failure
-        end
-        R->>S: mark_active(cluster_id, status_message)
-        S->>DB: Set Cluster ACTIVE and commit registration
-    else failed
-        R->>S: record_discovery_state(cluster_id, ERROR, message)
-        S->>DB: Disable Cluster, set ERROR and commit status_message
-    end
-    S-->>R: Updated Cluster state
-    R-->>C: Cluster state
-```
-
-Discovery outcomes are `discovered` or `failed`. For a discovered
-configuration, `ClusterRegistrar` creates every target through
-`ExecutionTargetStore`, including exactly one target with
-`is_default=True`, and only then marks the Cluster `ACTIVE` through
-`ClusterStore`. If one or more additional (non-default) targets fail to
-register, the failures are logged and the Cluster still transitions to
-`ACTIVE` provided the default target was created successfully; in this case
-`status_message` records which targets could not be registered. If discovery
-itself fails or the default target cannot be created, the existing Cluster is
-updated with `enabled=False`, status `ERROR`, and a suitable
-`status_message`; it is never made `ACTIVE`. `ERROR` is a terminal state.
-In the MVP, the discovery mechanism may be a no-op and targets may be declared
-manually, but every `ACTIVE` Cluster still has a protected default target.
+Callers that need an execution destination submit `execution_target.register`
+after registering the Cluster. They supply the target's placement (including the
+Kubernetes namespace) and choose whether to promote it to default. Subsequent
+changes use target commands. CI and local setup tools follow this same two-step
+flow and reuse the existing target on repeated setup runs.
 
 ## Deletion and draining operation
 
@@ -404,10 +319,10 @@ from selection.
 Consumers depend directly on `ClusterStore`, `ExecutionTargetStore`, and
 `WorkStore`. Each store provides one concrete persistence API for its primary
 model, without consumer-specific protocol classes or forwarding services.
-`WorkStore` also retains the existing completion-outbox operations.
+`WorkStore` also owns completion-outbox operations.
 
-`ClusterRegistrar` coordinates discovery, provisioning, and synchronized
-Cluster/default-target updates. `WorkScheduler` coordinates claim and placement.
+`ClusterRegisterCommandHandler` coordinates Cluster registration in a caller-owned
+transaction. Target handlers manage targets. `WorkScheduler` coordinates claim and placement.
 Commands, queries, worker managers, drain monitoring, and reconciliation use
 the concrete stores for persistence operations. Stores own sessions and
 transactions.
@@ -415,20 +330,16 @@ transactions.
 ```mermaid
 flowchart LR
     Caller[Commands, queries, and workers]
-    CR[ClusterRegistrar]
     SC[WorkScheduler]
     CS[ClusterStore]
     TS[ExecutionTargetStore]
     WS[WorkStore]
     DB[(execution_plane PostgreSQL schema)]
 
-    Caller --> CR
     Caller --> SC
     Caller --> CS
     Caller --> TS
     Caller --> WS
-    CR --> CS
-    CR --> TS
     SC --> WS
     CS --> DB
     TS --> DB
@@ -439,16 +350,17 @@ flowchart LR
 
 `ClusterStore` and `ExecutionTargetStore` follow the same persistence pattern as
 `WorkStore`:
-they own their async engines and session factories, open short-lived sessions,
-own commit/rollback behavior, expose domain operations rather than sessions,
-and support asynchronous disposal/context-manager usage.
+they borrow application-owned engines and open short-lived sessions, or borrow
+a caller-owned transaction. A store bound with `from_transaction()` flushes
+changes and leaves commit and rollback to its caller. Stores expose domain
+operations and support asynchronous disposal/context-manager usage when owning
+an engine.
 
 `ClusterStore` provides creation of the `REGISTERING` record, retrieval,
 listing, Cluster status transitions, Cluster drain requests, and finalization
 guarded by the no-children invariant. Its cluster drain transaction also marks
 the cluster's target rows draining so the parent and children cannot observe
-inconsistent states. It does not select or invoke a discovery mechanism and does
-not create ExecutionTargets.
+inconsistent states. Cluster registration does not create ExecutionTargets.
 
 `ExecutionTargetStore` provides target creation, retrieval, listing with
 optional eligibility filtering, narrow metadata updates, drain requests, and
@@ -458,9 +370,9 @@ the worker's drain monitor has established that the target is safe to remove.
 
 ### Domain orchestration
 
-`ClusterRegistrar` exposes registration, provisioning, and synchronized
-Cluster/default-target updates. `WorkScheduler` owns claim-and-place
-orchestration. Other consumers use the concrete stores directly.
+`ClusterRegisterCommandHandler` owns the registration transaction.
+`WorkScheduler` owns claim-and-place orchestration. Other consumers use the
+concrete stores directly.
 
 Administrative reads preserve lifecycle state while selection-oriented reads
 exclude unavailable resources. `DrainMonitor` proves that a target is drained
@@ -479,25 +391,18 @@ values are never returned. APIs expose only a redacted status or equivalent
 non-secret metadata. Credentials must also be excluded from logs, labels,
 ordinary model serialization, and audit payloads.
 
-The existing router is temporarily hosted by Syntara. The store and orchestration
-boundaries are independent of that hosting arrangement so the Execution Plane
-can later become a standalone service.
-
 ## Schema and operational considerations
 
 The `execution_plane` schema contains the Cluster, ExecutionTarget, and
 WorkItem tables. The schema must provide:
 
 - a foreign key from `execution_targets.cluster_id` to `clusters.id`;
-- a unique constraint on `clusters.endpoint`;
+- a partial unique index for the global default Cluster;
 - a partial unique index for one default target per Cluster;
 - indexes for Cluster names, Cluster endpoints, target membership, lifecycle
   status, enabled state, and eligible-target queries;
 - audit columns on every database model;
 - required UUID `credential_ref` values for target and Cluster credentials.
-
-This branch is green-field: the original schema is changed directly and no
-raw-credential migration or backfill is provided.
 
 The design does not prescribe whether the drained predicate is based solely on
 terminal WorkItems, claimed workers, or an additional worker heartbeat. That
@@ -508,5 +413,5 @@ enough to ensure that finalization cannot race with active execution.
 
 - [AAP-92716](https://redhat.atlassian.net/browse/AAP-92716) describes the
   broader service concept and lifecycle concerns.
-- [`integration.md`](integration.md) documents the current temporary boundary
+- [`integration.md`](integration.md) documents the service boundary
   crossings between Syntara and the Execution Plane.

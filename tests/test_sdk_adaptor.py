@@ -1,6 +1,6 @@
 """Exercise EP against the installed SDK's actual protobuf service."""
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Event, Thread
@@ -12,15 +12,24 @@ import pytest
 from syntara_plugin.runtime import (
     ContainerInvocationError,
     ContainerResult,
+    CredentialAccessError,
+    CredentialRequestContext,
     FailureCode,
     StepRegistry,
     add_container_runtime_service,
 )
+from syntara_plugin.runtime.container import CredentialResolver
 from syntara_plugin.runtime.protocol import container_pb2 as pb
 from syntara_plugin.runtime.protocol import container_pb2_grpc as rpc
 
-from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
+from execution_plane.worker_manager.vanilla_k8s.manager import (
+    NodeExecutionError,
+    VanillaK8sWorkerManager,
+    _map_result,
+)
 from execution_plane.worker_manager.vanilla_k8s.sdk_adaptor import WorkloadRpcError, invoke
+from execution_plane_client.commands.work import WorkloadInvocation
+from execution_plane_client.models.work_item import WorkItemStatus
 
 _DIGEST = "sha256:" + "a" * 64
 
@@ -44,47 +53,109 @@ def _server(*, handler=None, service=None, step="script.v1") -> Iterator[grpc.Ch
             server.stop(grace=0).wait()
 
 
-def _invoke(channel, **overrides: object) -> dict[str, Any]:
+def _invoke(
+    channel,
+    *,
+    credential_bindings: list[dict[str, object]] | None = None,
+    **overrides: object,
+) -> dict[str, Any]:
+    approved_recipes = {binding["credential_recipe_id"] for binding in credential_bindings or []}
+
+    def reject_credential(context: CredentialRequestContext) -> dict[str, str]:
+        reason = "missing" if context.name not in approved_recipes else "unavailable"
+        raise CredentialAccessError(reason)
+
     kwargs = {
         "identity": "work-1-attempt-2",
         "progress": lambda _event: None,
         "cancelled": Event(),
         "startup": 0.2,
         "grace": 1,
+        "credential_handler": reject_credential,
     }
+    kwargs["runtime_context"] = {"driver": "test"}
     kwargs.update(overrides)
+    invocation = {
+        "step_revision_id": "script.v1",
+        "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
+        "timeout_seconds": 2,
+    }
+    if credential_bindings is not None:
+        invocation["credential_bindings"] = credential_bindings
     return invoke(
         channel,
-        {
-            "workflow_run_id": "workflow-1",
-            "step_revision_id": "script.v1",
-            "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
-            "runtime_context": {"driver": "test"},
-            "timeout_seconds": 2,
-        },
+        WorkloadInvocation.model_validate(invocation),
         **kwargs,
     )
 
 
-def test_sdk_service_receives_identity_inputs_and_empty_credential_paths():
+def test_invoke_passes_the_host_credential_handler_to_the_sdk_stream():
+    channel = Mock()
+    captured_handler: CredentialResolver | None = None
+
+    def mock_stream(
+        _request: object,
+        *,
+        timeout_seconds: float | None = None,
+        credential_handler: CredentialResolver | None = None,
+    ) -> Iterator[ContainerResult]:
+        nonlocal captured_handler
+        captured_handler = credential_handler
+        yield ContainerResult("sha256:" + "a" * 64, output={"result": "done"})
+
+    mock_client = Mock()
+    mock_client.stream = mock_stream
+    mock_client.health = Mock(return_value=["script.v1"])
+
+    def host_handler(_context: CredentialRequestContext) -> Mapping[str, Any]:
+        return {"token": "resolved-token"}
+
+    with patch("execution_plane.worker_manager.vanilla_k8s.sdk_adaptor.ContainerClient", return_value=mock_client):
+        _invoke(channel, credential_handler=host_handler)
+
+    assert captured_handler is host_handler
+
+
+@pytest.mark.parametrize(
+    ("credential_bindings", "expected_error"),
+    [
+        ([], "missing"),
+        (
+            [{"credential_recipe_id": "acme.echo.database", "credential_ref": "00000000-0000-0000-0000-000000000001"}],
+            "unavailable",
+        ),
+    ],
+)
+def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests(
+    credential_bindings: list[dict[str, object]], expected_error: str
+):
     calls = []
 
     def handler(invocation) -> ContainerResult:
         assert invocation.invocation_id == "work-1-attempt-2"
-        assert invocation.workflow_run_id == "workflow-1"
+
         assert invocation.step_revision_id == "script.v1"
-        assert invocation.credential_file_paths == {}
         assert invocation.inputs["environment"] == {"GREETING": "hello"}
         assert invocation.inputs["large_integer"] == 2**60
         assert invocation.inputs["null"] is None
         assert invocation.runtime_context == {"driver": "test"}
         calls.append("execute")
-        return ContainerResult(_DIGEST, output={"stdout": "hello"})
+        credentials = invocation.credential_provider.restrict(
+            frozenset({"acme.echo.database"}),
+            lambda _document: None,
+        )
+        with pytest.raises(CredentialAccessError) as error:
+            credentials.read("acme.echo.database")
+        return ContainerResult(_DIGEST, output={"credential_error": error.value.reason})
 
     with _server(handler=handler) as channel:
-        result = _invoke(channel, on_execute_submitted=lambda: calls.append("submitted"))
+        result = _invoke(
+            channel,
+            credential_bindings=credential_bindings,
+            on_execute_submitted=lambda: calls.append("submitted"),
+        )
     assert calls == ["submitted", "execute"]
-    assert _map_result(result, None)["output"] == {"stdout": "hello"}
+    assert _map_result(result, None)["output"] == {"credential_error": expected_error}
 
 
 def test_selected_step_must_be_advertised_before_submission():
@@ -217,8 +288,10 @@ class _Service(rpc.ContainerServiceServicer):
     def Health(self, request, context) -> pb.HealthResponse:  # noqa: N802
         return pb.HealthResponse(ready=True, runtime_abi=self.abi, step_revision_ids=["script.v1"])
 
-    def Execute(self, request, context) -> Iterator[pb.ExecutionEvent]:  # noqa: N802
-        yield from self.events(request, context)
+    def Execute(self, request, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
+        first = next(request)
+        for event in self.events(first.start, context):
+            yield pb.ExecuteServerMessage(event=event)
 
 
 def _terminal(identity="work-1-attempt-2") -> pb.ExecutionEvent:
@@ -226,6 +299,33 @@ def _terminal(identity="work-1-attempt-2") -> pb.ExecutionEvent:
         invocation_id=identity,
         result=pb.Result(output_schema_digest=_DIGEST, output_json=b'{"stdout":"done"}'),
     )
+
+
+def test_log_batch_does_not_replace_terminal_result():
+    class LoggingService(_Service):
+        def Execute(self, request, context) -> Iterator[pb.ExecuteServerMessage]:  # noqa: N802
+            invocation_id = next(request).start.invocation_id
+            yield pb.ExecuteServerMessage(
+                log_batch=pb.LogBatch(
+                    invocation_id=invocation_id,
+                    version=1,
+                    events=[
+                        pb.LogEvent(
+                            timestamp="2026-11-16T17:00:00.000Z",
+                            severity="INFO",
+                            message="Step completed",
+                            attributes_json=b"{}",
+                        )
+                    ],
+                )
+            )
+            yield pb.ExecuteServerMessage(event=_terminal(invocation_id))
+
+    progress = []
+    with _server(service=LoggingService(None)) as channel:
+        frame = _invoke(channel, progress=progress.append)
+    assert _map_result(frame, None)["output"] == {"stdout": "done"}
+    assert progress == []
 
 
 def test_progress_is_forwarded_before_the_result():
@@ -330,54 +430,25 @@ def test_cancellation_closes_the_channel_when_the_workload_ignores_cancel():
     assert not error.value.retryable
 
 
-def test_stream_timeout_should_match_contract_timeout_not_contract_plus_grace():
-    """Verify that client.stream receives timeout_seconds from contract, not contract + grace.
+def test_workload_timeout_reaches_failed_without_cancellation():
+    """Receive the SDK timeout over real gRPC and map it to EP's FAILED state."""
+    stopped, cancelled = Event(), Event()
 
-    The SDK's _execution_deadline clamps the stream timeout to invocation.timeout_seconds:
-        return min(invocation.timeout_seconds, float(timeout_seconds))
+    def handler(invocation) -> ContainerResult:
+        assert invocation.cancellation.wait(5)
+        stopped.set()
+        return ContainerResult(_DIGEST, output={"late": True})
 
-    So passing (contract_timeout + grace) gets silently clamped back to contract_timeout.
-    This test verifies we pass the correct value directly, not relying on SDK clamping.
-
-    EXPECTED BEHAVIOR:
-        - Contract timeout: 10 seconds
-        - Grace period: 5 seconds
-        - Stream should receive: 10 seconds (NOT 15)
-
-    This test FAILS on devel (which passes 15, then SDK clamps to 10).
-    This test PASSES on refactor/sdk-workload-protocol (which passes 10 directly).
-    """
-    channel = Mock()
-
-    # Track what timeout_seconds is actually passed to client.stream()
-    actual_timeout = None
-
-    def mock_stream(request, *, timeout_seconds=None) -> Iterator[ContainerResult]:
-        nonlocal actual_timeout
-        actual_timeout = timeout_seconds
-        # Return a valid result
-        yield ContainerResult("sha256:" + "a" * 64, output={"result": "done"})
-
-    mock_client = Mock()
-    mock_client.stream = mock_stream
-    mock_client.health = Mock(return_value=["script.v1"])
-
-    with patch("execution_plane.worker_manager.vanilla_k8s.sdk_adaptor.ContainerClient", return_value=mock_client):
-        _invoke(
-            channel,
-            identity="work-1",
-            progress=lambda _: None,
-            cancelled=Event(),
-            startup=0.1,
-            grace=5,  # Grace period
-        )
-
-    # The SDK should receive the contract timeout (10), not contract + grace (15)
-    assert actual_timeout == 2, (
-        f"client.stream should receive timeout_seconds=2 (contract timeout), "
-        f"but received timeout_seconds={actual_timeout}. "
-        f"Passing contract+grace is wrong even though SDK clamps it."
-    )
+    with _server(handler=handler) as channel:
+        frame = _invoke(channel, cancelled=cancelled)
+    assert stopped.wait(1)
+    assert not cancelled.is_set()
+    assert frame["kind"] == "failure"
+    assert frame["code"] == "TIMEOUT"
+    result, status = VanillaK8sWorkerManager._result_and_status(frame, None, cancelled)
+    assert status is WorkItemStatus.FAILED
+    assert result["failure_code"] == "TIMEOUT"
+    assert result["outcome"] == "not_completed"
 
 
 def test_channel_should_not_be_closed_in_invoke_finally_block():

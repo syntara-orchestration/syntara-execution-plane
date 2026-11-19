@@ -200,25 +200,25 @@ async def test_list_redacts_credential_refs_and_supports_status_and_enabled_filt
 
 
 @pytest.mark.asyncio
-async def test_record_discovery_state_rolls_back_for_a_missing_cluster() -> None:
+async def test_activate_rolls_back_for_a_missing_cluster() -> None:
     session = _Session()
     store = _store(session)
 
     with pytest.raises(ClusterNotFoundError):
-        await store.record_discovery_state(uuid.uuid4(), ClusterStatus.ERROR, "failed", uuid.uuid4())
+        await store.activate(uuid.uuid4(), uuid.uuid4())
 
     assert session.rollbacks == 1
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_record_discovery_state_does_not_undo_a_delete_request() -> None:
+async def test_activate_does_not_undo_a_delete_request() -> None:
     cluster = _cluster(status=ClusterStatus.DRAINING)
     cluster.enabled = False
     session = _Session(cluster=cluster)
     store = _store(session)
 
-    result = await store.record_discovery_state(cluster.id, ClusterStatus.ACTIVE, None, uuid.uuid4())
+    result = await store.activate(cluster.id, uuid.uuid4())
 
     assert result.status is ClusterStatus.DRAINING
     assert result.enabled is False

@@ -23,25 +23,27 @@ import pytest
 from kubernetes.client import ApiException, BatchV1Api, CoreV1Api, V1Job, V1Pod, V1PodSpec
 
 from execution_plane.cluster.cluster_store import ClusterStore
-from execution_plane.config import EPSettings, get_ep_settings
+from execution_plane.config.settings import Settings, get_settings
 from execution_plane.execution_target.execution_target_store import ExecutionTargetStore
 from execution_plane.execution_target_reconciler.adapters import build_placement_resolver
 from execution_plane.execution_target_reconciler.placement import WorkerManagerRegistry
-from execution_plane.models.execution_target import BackendType
-from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
-from execution_plane_client.models.execution_target import KubernetesPlacement
+from execution_plane_client.commands.work import WorkExecute
+from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
+from execution_plane_client.models.work_item import WorkItemStatus
 from tools.work_item_client import build_payload, default_node_image
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
-    from execution_plane.credential_resolution.resolver import CredentialResolver
+    from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+    from execution_plane.credential_resolution.workload import WorkloadCredentialResolver
     from execution_plane.models.cluster import Cluster
     from execution_plane.models.execution_target import ExecutionTarget
+    from execution_plane.models.work_item import WorkItem
 
 _NODE_IMAGE = default_node_image()
 _WORKLOAD_WAIT_SECONDS = 5
@@ -51,6 +53,18 @@ _DISPATCH_CLEANUP_TIMEOUT_SECONDS = 30
 # Retryable transport errors leave items pending for a later claim; drain
 # a few stale items before giving up on claiming the one just dispatched.
 _DISPATCH_CLAIM_ATTEMPTS = 8
+# The SIGTERM regression probe forces a grace period far above any healthy
+# dispatch duration: a node that honors SIGTERM finishes its Job-deletion
+# teardown in seconds, while one that ignores it survives until the grace
+# SIGKILL and pays the full window (see the test using it).
+_SIGTERM_PROBE_GRACE_SECONDS = 90
+# A short execution budget with a much longer script so the step reliably
+# outruns its timeout without any cancellation request. The dispatch must then
+# finish well inside the sleep window: if it took as long as the sleep, the
+# timeout never preempted the step.
+_TIMEOUT_WORKLOAD_BUDGET_SECONDS = 5
+_TIMEOUT_WORKLOAD_SLEEP_SECONDS = 120
+_TIMEOUT_MAX_ELAPSED_SECONDS = 60
 
 
 async def _read_job(batch_api: BatchV1Api, job_name: str, namespace: str) -> V1Job | None:
@@ -114,8 +128,18 @@ async def _wait_for_work_status(
         item = await store.get(item_id, client_id=client_id)
         if item is not None and item.status is status:
             return item
+        observed = f"status={item.status.value}; result={item.result!r}" if item is not None else "not found"
+        if item is not None and item.status in {
+            WorkItemStatus.COMPLETED,
+            WorkItemStatus.FAILED,
+            WorkItemStatus.CANCELLED,
+            WorkItemStatus.RECONCILIATION_REQUIRED,
+        }:
+            pytest.fail(f"Work item {item_id} terminated while waiting for {status.value}; {observed}")
         if time.monotonic() >= deadline:
-            pytest.fail(f"Work item {item_id} did not reach {status.value} within {timeout_seconds}s")
+            pytest.fail(
+                f"Work item {item_id} did not reach {status.value} within {timeout_seconds}s; last observed {observed}"
+            )
         await asyncio.sleep(0.5)
 
 
@@ -159,8 +183,9 @@ async def _work_service(
     database_url: str,
     cluster_store: ClusterStore,
     target_store: ExecutionTargetStore,
-    settings: EPSettings,
-    credential_resolver: CredentialResolver,
+    settings: Settings,
+    cluster_credential_resolver: ClusterCredentialResolver,
+    workload_credential_resolver: WorkloadCredentialResolver,
 ) -> AsyncIterator[_WorkFixture]:
     worker_managers = WorkerManagerRegistry()
     placement_resolver = build_placement_resolver(cluster_store, target_store, worker_managers)
@@ -171,7 +196,8 @@ async def _work_service(
             cluster_store,
             work_item_store,
             settings,
-            credential_resolver=credential_resolver,
+            cluster_credential_resolver=cluster_credential_resolver,
+            workload_credential_resolver=workload_credential_resolver,
         )
         worker_managers.register(BackendType.KUBERNETES, workload_manager)
         yield _WorkFixture(work_item_store, work_scheduler, worker_managers)
@@ -184,10 +210,11 @@ async def _dispatch_item(
     client_id: str,
     payload: dict[str, object],
 ) -> _DispatchedItem:
+    command = WorkExecute.model_validate(payload | {"work_item_id": uuid.uuid4()})
     item = await work.store.dispatch(
         client_id=client_id,
-        item_id=uuid.uuid4(),
-        payload=payload,
+        item_id=command.work_item_id,
+        payload=command.model_dump(mode="json"),
     )
 
     # A retryable transport error leaves the item pending for a later
@@ -312,7 +339,8 @@ async def _assert_job_cleaned_up(
 @pytest.mark.asyncio
 async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
     ep_cluster: Cluster,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """Submit a script work item and assert it completes through a single dispatch cycle.
 
@@ -321,7 +349,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
     assigns its target, and _process_item() drives the cold-start pod lifecycle.
     """
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-dispatch"
 
     async with (
@@ -334,6 +362,7 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             dispatched = await _dispatch_item(
                 work,
@@ -359,14 +388,82 @@ async def test_work_item_dispatched_to_kind_cluster_reaches_completed(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_work_item_dispatch_teardown_does_not_wait_out_the_grace_period(
+    ep_cluster: Cluster,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
+) -> None:
+    """Assert the node exits on SIGTERM instead of surviving to the grace SIGKILL.
+
+    The workload image's Python process runs as PID 1 in its container, and the
+    kernel ignores unhandled signals for PID 1. Before the SDK fix pinned in
+    this branch (syntara-plugin-sdk#44), the node survived the transport's
+    Job-deletion SIGTERM until the SIGKILL at ``terminationGracePeriodSeconds``
+    — so every dispatch waited out the full grace period during cleanup, even
+    though the workload itself finishes in seconds.
+
+    This test forces a grace period far above any healthy dispatch duration.
+    A dispatch cycle that completes well inside that window proves the node
+    shut down cooperatively; a cycle at or above it means SIGTERM handling
+    regressed (stale node image or SDK pin).
+    """
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_settings().model_copy(update={"node_grace_seconds": _SIGTERM_PROBE_GRACE_SECONDS})
+    client_id = "ep-it-dispatch"
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+            integration_workload_credential_resolver,
+        ) as work:
+            dispatched = await _dispatch_item(
+                work,
+                work.worker_managers,
+                client_id=client_id,
+                payload=build_payload(
+                    language="bash",
+                    code="echo ep-integration-sigterm-ok",
+                    timeout_seconds=120,
+                    environment={},
+                    image=_NODE_IMAGE,
+                ),
+            )
+            assigned = dispatched.assigned
+
+            started = time.monotonic()
+            final_item = await _process_until_terminal(assigned, work, target_store, settings, client_id=client_id)
+            duration = time.monotonic() - started
+
+    assert final_item is not None
+    assert final_item.status is WorkItemStatus.COMPLETED, (
+        f"Expected COMPLETED but got {final_item.status}; result={final_item.result}"
+    )
+    assert duration < _SIGTERM_PROBE_GRACE_SECONDS, (
+        f"Dispatch took {duration:.1f}s with a {_SIGTERM_PROBE_GRACE_SECONDS}s grace period: "
+        "the node did not exit on SIGTERM and the teardown waited out the grace window. "
+        "The node image probably predates the SIGTERM fix (stale SDK pin in "
+        "tests/fixtures/sdk_script/Containerfile, or a stale image loaded into the cluster)."
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_pod_spec(
     ep_cluster: Cluster,
     kubernetes_batch_api: BatchV1Api,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """AAP-97337: configured node selectors must reach the dispatched PodSpec."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-node-selector"
 
     async with (
@@ -395,6 +492,7 @@ async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_po
                 target_store,
                 settings,
                 integration_credential_resolver,
+                integration_workload_credential_resolver,
             ) as work:
                 dispatched = await _dispatch_item(
                     work,
@@ -462,11 +560,12 @@ async def test_work_item_dispatched_to_kind_cluster_includes_node_selector_in_po
 async def test_work_item_cancel_reaches_cancelled(
     ep_cluster: Cluster,
     kubernetes_batch_api: BatchV1Api,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """AAP-95962: cancel a running script work item and confirm it reaches CANCELLED."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-cancel"
 
     async with (
@@ -483,6 +582,7 @@ async def test_work_item_cancel_reaches_cancelled(
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             dispatched = await _dispatch_item(
                 work,
@@ -515,7 +615,8 @@ async def test_work_item_cancel_reaches_cancelled(
                 )
 
                 cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
-                assert cancel_requested.status is WorkItemStatus.CANCEL_REQUESTED
+                assert cancel_requested.cancellation_requested is True
+                assert cancel_requested.status is WorkItemStatus.RUNNING
                 assert running_item.status is WorkItemStatus.RUNNING
 
                 await processing_task
@@ -544,6 +645,83 @@ async def test_work_item_cancel_reaches_cancelled(
     assert final_item.result["execution_started"] is True
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_work_item_timeout_reaches_terminal_status(
+    ep_cluster: Cluster,
+    kubernetes_batch_api: BatchV1Api,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
+) -> None:
+    """A workload that exceeds its timeout budget reaches a terminal status.
+
+    Dispatch a script that sleeps well past a short ``timeout_seconds`` budget,
+    with no cancellation request, and assert the terminal status it settles into.
+    Also assert the dispatch finishes well inside the sleep window — otherwise the
+    timeout never actually preempted the step and the script simply ran to its end.
+    """
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_settings()
+    client_id = "ep-it-timeout"
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        target = await _first_target(target_store, ep_cluster.id)
+        assert isinstance(target.placement, KubernetesPlacement)
+        namespace = target.placement.namespace
+
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+            integration_workload_credential_resolver,
+        ) as work:
+            dispatched = await _dispatch_item(
+                work,
+                work.worker_managers,
+                client_id=client_id,
+                payload=build_payload(
+                    language="bash",
+                    code=f"sleep {_TIMEOUT_WORKLOAD_SLEEP_SECONDS}",
+                    timeout_seconds=_TIMEOUT_WORKLOAD_BUDGET_SECONDS,
+                    environment={},
+                    image=_NODE_IMAGE,
+                ),
+            )
+            item = dispatched.item
+            assigned = dispatched.assigned
+            job_name = dispatched.job_name
+            core_api = CoreV1Api(kubernetes_batch_api.api_client)
+
+            started = time.monotonic()
+            await _process_item(assigned, work.store, target_store, work.worker_managers, settings)
+            elapsed = time.monotonic() - started
+
+            await _assert_job_cleaned_up(
+                kubernetes_batch_api,
+                core_api,
+                job_name,
+                namespace,
+            )
+            final_item = await work.store.get(item.id, client_id=client_id)
+
+    # The timeout must have preempted the step: the dispatch has to settle well
+    # before the script's own sleep would have ended, or it never actually fired.
+    assert elapsed < _TIMEOUT_MAX_ELAPSED_SECONDS, (
+        f"Dispatch took {elapsed:.1f}s for a {_TIMEOUT_WORKLOAD_BUDGET_SECONDS}s "
+        f"budget; the {_TIMEOUT_WORKLOAD_SLEEP_SECONDS}s script was not preempted"
+    )
+
+    assert final_item is not None
+    assert final_item.status is WorkItemStatus.FAILED, (
+        f"Expected FAILED but got {final_item.status}; result={final_item.result}"
+    )
+
+
 _PARALLEL_SLEEP_SECONDS = 4
 
 
@@ -551,7 +729,8 @@ _PARALLEL_SLEEP_SECONDS = 4
 @pytest.mark.asyncio
 async def test_multiple_work_items_dispatch_concurrently(
     ep_cluster: Cluster,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
 ) -> None:
     """Two sleep workloads dispatched concurrently must complete faster than sequential would allow.
 
@@ -560,7 +739,7 @@ async def test_multiple_work_items_dispatch_concurrently(
     dispatches work items in parallel rather than one at a time.
     """
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-parallel"
 
     async with (
@@ -573,6 +752,7 @@ async def test_multiple_work_items_dispatch_concurrently(
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             payload = build_payload(
                 language="bash",
@@ -610,12 +790,13 @@ async def test_multiple_work_items_dispatch_concurrently(
 async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelled(
     ep_cluster: Cluster,
     kubernetes_batch_api: BatchV1Api,
-    integration_credential_resolver: CredentialResolver,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cancel after external dispatch but before Execute reaches CANCELLED safely."""
     database_url = os.environ["EP_TEST_DATABASE_URL"]
-    settings = get_ep_settings()
+    settings = get_settings()
     client_id = "ep-it-cancel-before-running"
     original_execution_start_callback = VanillaK8sWorkerManager.execution_start_callback
     execute_release = threading.Event()
@@ -650,6 +831,7 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
             target_store,
             settings,
             integration_credential_resolver,
+            integration_workload_credential_resolver,
         ) as work:
             dispatched = await _dispatch_item(
                 work,
@@ -682,7 +864,8 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
                 )
 
                 cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
-                assert cancel_requested.status is WorkItemStatus.CANCEL_REQUESTED
+                assert cancel_requested.cancellation_requested is True
+                assert cancel_requested.status is WorkItemStatus.DISPATCHED
                 assert dispatched_item.status is WorkItemStatus.DISPATCHED
 
                 execute_release.set()

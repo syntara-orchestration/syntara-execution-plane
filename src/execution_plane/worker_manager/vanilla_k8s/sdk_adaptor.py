@@ -13,18 +13,23 @@ from typing import TYPE_CHECKING, Any
 from syntara_plugin.runtime import (
     ContainerClient,
     ContainerInvocation,
+    ContainerLogBatch,
     ContainerProgress,
     ContainerRemoteError,
     ContainerResult,
 )
-from syntara_plugin.runtime.container import ANY_STEP_REVISION
-
-from execution_plane_client.commands.work import WorkloadInvocation
+from syntara_plugin.runtime.container import (
+    ANY_STEP_REVISION,
+    CredentialResolver,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import grpc
+    from syntara_plugin.runtime.container import CredentialResolver
+
+    from execution_plane_client.commands.work import WorkloadInvocation
 
 PORT = 50051
 MAX_MESSAGE_BYTES = 2_097_152
@@ -111,30 +116,29 @@ def _failure_frame(error: ContainerRemoteError, *, cancelled: bool = False) -> d
     return {"kind": "failure", "code": error.code.value, "retryable": error.retryable, "outcome": error.outcome}
 
 
-def invoke(
+def invoke(  # noqa: C901
     channel: grpc.Channel,
-    invocation: dict[str, Any],
+    invocation: WorkloadInvocation,
     *,
     identity: str,
     progress: Callable[[dict[str, Any]], None],
     cancelled: threading.Event,
+    runtime_context: dict[str, object] | None = None,
     startup: float = 120,
     grace: int = 30,
     on_execute_submitted: Callable[[], None] | None = None,
+    credential_handler: CredentialResolver,
 ) -> dict[str, Any]:
     """Negotiate the SDK service, execute once, and consume its entire stream."""
-    data = WorkloadInvocation.model_validate(invocation)
     request = ContainerInvocation(
         invocation_id=identity,
-        workflow_run_id=data.workflow_run_id,
-        step_revision_id=data.step_revision_id,
-        inputs=data.inputs,
-        runtime_context=data.runtime_context,
-        credential_file_paths={},
-        timeout_seconds=data.timeout_seconds,
+        step_revision_id=invocation.step_revision_id,
+        inputs=invocation.inputs,
+        runtime_context=runtime_context or {},
+        timeout_seconds=invocation.timeout_seconds,
     )
     client = ContainerClient(channel)
-    _wait_for_health(client, data.step_revision_id, cancelled, startup)
+    _wait_for_health(client, invocation.step_revision_id, cancelled, startup)
     if cancelled.is_set():
         message = "Workload execution cancelled before submission"
         raise WorkloadRpcError(message, cancelled=True)
@@ -150,11 +154,13 @@ def invoke(
     watcher.start()
     result: ContainerResult | None = None
     try:
-        # The SDK clamps the Execute deadline to the invocation's own
-        # timeout_seconds, so transport cannot outlive the step's contract
-        # budget. The cancellation grace window is enforced by the watcher
-        # (Cancel + channel close) and run_job's Job deletion, not the wire.
-        for event in client.stream(request, timeout_seconds=data.timeout_seconds):
+        # Let the SDK retain its bounded terminal-result delivery window after
+        # the execution budget. An explicit RPC deadline equal to that budget
+        # cuts off the workload's timeout failure before EP can receive it.
+        for event in client.stream(
+            request,
+            credential_handler=credential_handler,
+        ):
             if result is not None:
                 message = "Workload returned events after its terminal result"
                 raise WorkloadRpcError(message)
@@ -166,6 +172,9 @@ def invoke(
                         "data": {"sequence": event.sequence, "message": event.message, "percent": event.percent},
                     }
                 )
+            elif isinstance(event, ContainerLogBatch):
+                # Log export is not implemented; keep consuming the execution stream.
+                continue
             else:
                 result = event
         if result is None:

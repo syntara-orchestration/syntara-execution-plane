@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import ssl
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
@@ -28,13 +27,15 @@ from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.context import EPCommandContext
 from execution_plane.commands.queries import EPResourceQueries
 from execution_plane.commands.registry import build_ep_registry
-from execution_plane.config import get_ep_settings
-from execution_plane.database.engine import create_ep_engine
+from execution_plane.config.settings import get_settings
+from execution_plane.database.engine import create_pooled_engine
 from execution_plane.execution_target.execution_target_store import (
     ClusterNotAvailableError,
     DefaultExecutionTargetError,
     TargetNotEligibleForDefaultError,
 )
+from execution_plane.logging.lifecycle import start_loggers, stop_loggers
+from execution_plane.logging.logging import build_uvicorn_logging_config
 from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNotFoundError
 from execution_plane_client.catalog import CommandCatalog
 from execution_plane_client.commands.results import TransportReceipt
@@ -75,8 +76,9 @@ def _extract_filters(request: Request) -> dict[str, str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open an EP-owned database pool for the HTTP service lifetime."""
-    settings = get_ep_settings()
-    engine = create_ep_engine(settings.database_url)
+    start_loggers()
+    settings = get_settings()
+    engine = create_pooled_engine(settings.database_url)
     app.state.ep_settings = settings
     app.state.ep_engine = engine
     app.state.ep_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -84,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await engine.dispose()
+        stop_loggers()
 
 
 def strict_json(data: bytes) -> object:
@@ -164,7 +167,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             if (
                 message.scope.client_id != identity.client_id
                 or message.source_id != identity.client_id
-                or message.destination_id != get_ep_settings().service_jwt_audience
+                or message.destination_id != get_settings().service_jwt_audience
                 or message.command.command_type not in identity.scopes
             ):
                 raise HTTPException(status_code=403, detail="Command is not authorized")
@@ -189,6 +192,11 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
 
     @app.get(
         "/v1/work-items",
+        description=(
+            "List client-owned work. runtime_context[key]=value matches an exact JSON string; "
+            "an empty value checks key existence. Keys are literal top-level keys and multiple "
+            "keys are ANDed. Filters apply before pagination and total counts."
+        ),
         responses={422: {"description": "Invalid query parameters or cursor"}},
     )
     async def work_items(
@@ -295,7 +303,15 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
     ) -> ExecutionTargetRead:
         return await EPResourceQueries(request.app.state.ep_engine, identity.client_id).target(resource_id)
 
-    configure_command_openapi(app, catalog, registry.capabilities())
+    configure_command_openapi(
+        app,
+        catalog,
+        registry.capabilities(),
+        [
+            catalog.definition("credential.resolve.cluster", 1),
+            catalog.definition("credential.resolve.workload", 1),
+        ],
+    )
     return app
 
 
@@ -304,15 +320,19 @@ app = create_app()
 
 def main() -> None:
     """Run the standalone HTTP server with optional service-owned TLS."""
-    logging.basicConfig(level=logging.INFO)
-    settings = get_ep_settings()
-    uvicorn.run(
-        "execution_plane.api.main:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        ssl_certfile=settings.api_tls_cert_path,
-        ssl_keyfile=settings.api_tls_key_path,
-        ssl_ca_certs=settings.api_tls_client_ca_path,
-        ssl_cert_reqs=ssl.CERT_OPTIONAL if settings.api_tls_client_ca_path else ssl.CERT_NONE,
-        timeout_graceful_shutdown=settings.api_graceful_shutdown_seconds,
-    )
+    settings = get_settings()
+    start_loggers()
+    try:
+        uvicorn.run(
+            "execution_plane.api.main:app",
+            host=settings.api_host,
+            port=settings.api_port,
+            ssl_certfile=settings.api_tls_cert_path,
+            ssl_keyfile=settings.api_tls_key_path,
+            ssl_ca_certs=settings.api_tls_client_ca_path,
+            ssl_cert_reqs=ssl.CERT_OPTIONAL if settings.api_tls_client_ca_path else ssl.CERT_NONE,
+            timeout_graceful_shutdown=settings.api_graceful_shutdown_seconds,
+            log_config=build_uvicorn_logging_config(settings.log_level),
+        )
+    finally:
+        stop_loggers()

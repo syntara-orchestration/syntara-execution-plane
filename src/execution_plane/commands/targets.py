@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from execution_plane.commands.clusters import ResourceNotFoundError
 from execution_plane.commands.constants import SYSTEM_ACTOR_ID
 from execution_plane.commands.context import EPCommandContext
-from execution_plane.config import get_ep_settings
-from execution_plane.credential_resolution.resolver import CredentialResolutionError, CredentialResolver
+from execution_plane.config.settings import get_settings
+from execution_plane.credential_resolution.client import CredentialResolutionClient
+from execution_plane.credential_resolution.cluster import ClusterCredentialResolver
+from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     ExecutionTargetStore,
@@ -27,8 +29,9 @@ from execution_plane_client.commands.targets import (
 )
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
-from execution_plane_client.models.execution_target import BackendType, ExecutionTargetPlacement
+from execution_plane_client.models.execution_target import ExecutionTargetPlacement
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
+from execution_plane_client.types import BackendType
 
 
 def _validated_payload[T: CommandPayload](payload: CommandPayload, expected: type[T]) -> T:
@@ -167,8 +170,9 @@ class TargetHealthCommandHandler:
             if cluster is None or cluster.source_client_id != context.client_id:
                 raise ResourceNotFoundError
 
-        settings = get_ep_settings()
-        async with CredentialResolver(settings) as credential_resolver:
+        settings = get_settings()
+        async with CredentialResolutionClient(settings) as credential_client:
+            credential_resolver = ClusterCredentialResolver(settings, credential_client)
             try:
                 credential = await credential_resolver.resolve(
                     cluster.credential_ref,

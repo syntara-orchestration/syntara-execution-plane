@@ -11,7 +11,7 @@ import pytest
 from execution_plane import callback_client as callback_client_module
 from execution_plane.callback_client import CallbackHTTPClient
 from execution_plane.completion_notifier import notifier as event_delivery
-from execution_plane.config import EPSettings
+from execution_plane.config.settings import Settings
 
 
 def test_completion_notification_client_loads_identity_into_ca_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -21,7 +21,7 @@ def test_completion_notification_client_loads_identity_into_ca_context(monkeypat
     client_factory = MagicMock()
     monkeypatch.setattr(callback_client_module.ssl, "create_default_context", context_factory)
     monkeypatch.setattr(callback_client_module.httpx, "AsyncClient", client_factory)
-    settings = EPSettings(
+    settings = Settings(
         EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test",
         EP_COMPLETION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands",
         EP_CALLBACK_CA_CERT_PATH="/secrets/ca.pem",
@@ -42,8 +42,9 @@ def test_completion_notification_client_loads_identity_into_ca_context(monkeypat
     assert "cert" not in client_factory.call_args.kwargs
 
 
+@pytest.mark.parametrize("runtime_context", [None, {"project_id": "project", "nested": {"tags": ["one"]}}])
 @pytest.mark.parametrize("lose_first_acknowledgement", [False, True])
-async def test_completion_retries_correlate_with_work_item(lose_first_acknowledgement):
+async def test_completion_retries_correlate_with_work_item(lose_first_acknowledgement, runtime_context):
     """Repeated deliveries identify the same work and preserve its completion content."""
     from datetime import UTC, datetime
     from uuid import uuid4
@@ -65,7 +66,7 @@ async def test_completion_retries_correlate_with_work_item(lose_first_acknowledg
             raise httpx.ReadError(error, request=request)
         return httpx.Response(202, json={"received": True, "message_id": str(envelope.message_id)})
 
-    settings = EPSettings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands")
+    settings = Settings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands")
     delivery = event_delivery.CompletionNotifier(settings)
     await delivery.close()
     callback_client = CallbackHTTPClient(url=settings.completion_callback_url)
@@ -76,6 +77,7 @@ async def test_completion_retries_correlate_with_work_item(lose_first_acknowledg
         id=uuid4(),
         client_id="ao",
         status=WorkItemStatus.COMPLETED,
+        runtime_context=runtime_context or {},
         result={"stdout": "done"},
         created_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
@@ -90,12 +92,14 @@ async def test_completion_retries_correlate_with_work_item(lose_first_acknowledg
     finally:
         await delivery.close()
     assert len(bodies) == 2
+    assert bodies[0].message_id != bodies[1].message_id
+    assert bodies[0].command.payload["runtime_context"] == (runtime_context or {})
     assert bodies[0].command.payload == bodies[1].command.payload
     for body in bodies:
         assert body.command.command_type == "work.execute.completed"
-        assert body.command.parent_command_id == item.id
+        assert body.command.payload["work_item_id"] == str(item.id)
         assert body.command.occurred_at == item.completed_at
-        assert body.command.payload["status"] == "succeeded"
+        assert body.command.payload["status"] == "completed"
         assert body.command.payload["result"] == {"stdout": "done"}
     assert service.record_completion_notification_delivery.await_count == (1 if lose_first_acknowledgement else 2)
     assert service.record_completion_notification_attempt.await_count == int(lose_first_acknowledgement)
@@ -110,7 +114,7 @@ async def test_wrong_completion_receipt_is_retried():
 
     from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 
-    delivery = event_delivery.CompletionNotifier(EPSettings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands"))
+    delivery = event_delivery.CompletionNotifier(Settings(EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands"))
     await delivery.close()
     callback_client = CallbackHTTPClient(url="https://ao.test/v1/commands")
     await callback_client.close()
@@ -146,7 +150,7 @@ async def test_unconfigured_completion_notification_is_retained():
     from execution_plane.models.work_item import CompletionNotificationState, WorkItem, WorkItemStatus
 
     delivery = event_delivery.CompletionNotifier(
-        EPSettings(EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test")
+        Settings(EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test")
     )
     item = WorkItem(
         id=uuid4(),
@@ -180,7 +184,7 @@ async def test_run_processes_claimed_items_and_sleeps_when_idle(monkeypatch: pyt
 
     monkeypatch.setattr(event_delivery, "DELIVERY_POLL_SECONDS", 0)
     delivery = event_delivery.CompletionNotifier(
-        EPSettings(
+        Settings(
             EP_DATABASE_URL="postgresql+asyncpg://user:password@localhost/test",
             EP_COMPLETION_CALLBACK_URL="https://ao.test/v1/commands",
         )

@@ -18,9 +18,11 @@ from execution_plane.models.sqlmodel_types import DiscriminatedJSONB
 from execution_plane_client.models.execution_target import (
     EXECUTION_TARGET_FILTERABLE_FIELDS,
     EXECUTION_TARGET_SORTABLE_FIELDS,
-    BackendType,
     ExecutionTargetPlacement,
     ExecutionTargetPlacementTypes,
+)
+from execution_plane_client.types import (
+    BackendType,
     TargetStatus,
 )
 

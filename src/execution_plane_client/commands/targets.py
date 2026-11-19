@@ -11,6 +11,7 @@ from pydantic import Field, StrictBool, StrictStr, field_validator, model_valida
 from execution_plane_client.commands import ResourceIdentity, validate_endpoint
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.protocol import WireModel
+from execution_plane_client.types import BackendType
 
 _LABEL_NAME = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
@@ -88,7 +89,7 @@ class TargetDefinition(WireModel):
     """Desired execution-target configuration."""
 
     name: Annotated[StrictStr, Field(min_length=1, max_length=255)]
-    backend_type: Literal["kubernetes", "openshell"]
+    backend_type: BackendType
     placement: Placement
     endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
     credential_ref: UUID
@@ -103,7 +104,7 @@ class TargetDefinition(WireModel):
     @model_validator(mode="after")
     def check_backend(self) -> Self:
         """Reject backend/placement pairs unsupported by the provider adapters."""
-        if (self.backend_type == "kubernetes") != isinstance(self.placement, KubernetesPlacement):
+        if (self.backend_type == BackendType.KUBERNETES) != isinstance(self.placement, KubernetesPlacement):
             message = "Backend does not support this placement"
             raise ValueError(message)
         return self

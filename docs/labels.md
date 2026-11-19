@@ -15,9 +15,7 @@ are for, what they are not for, who writes them, and how they meet
 ExecutionTarget.
 
 Matching, default routing, and ineligibility reasons live in the
-[ExecutionTarget Reconciler](executiontarget-reconciler.md). This document does not
-re-specify that algorithm. It exists because review of that design
-showed the *vocabulary* and *ownership* of labels were still ambiguous.
+[ExecutionTarget Reconciler](executiontarget-reconciler.md). This document describes the vocabulary and ownership of labels.
 
 Worked inventories (empty selectors, `region` / `env`, volume
 workspace, object-store workspace, OpenShell) are in
@@ -66,14 +64,13 @@ eligible ExecutionTarget set  →  Work Scheduler picks one
 
 ## Terminology
 
-Do not call both sides "selectors." Review mixed those words; they are
-not interchangeable.
+Labels describe targets; selectors express work requirements.
 
 | Term | Definition |
 |---|---|
 | **Label** | A `key → string value` advertised on a Cluster or ExecutionTarget. Extra labels on the target are allowed and do not rank it. |
 | **Selector** | A `key → string value` required by a work item. Every requested key must exist on the target with that exact value. |
-| **Natural label** | Written by provisioning / discovery from facts about the target (cluster type, cluster identity, observed region). |
+| **Natural label** | Written from explicit configuration and known facts about the target (cluster type, cluster identity, observed region). |
 | **User label** | Written by an administrator (or later a designer-facing control) to express intent the platform cannot infer. |
 | **Reserved key** | A key the EP itself interprets. Default routing does **not** use a label; it uses `ExecutionTarget.is_default`. |
 
@@ -100,7 +97,7 @@ requires the reconciler to understand live infrastructure.
 ## How labels get onto an ExecutionTarget
 
 An ExecutionTarget (and its Cluster) only matches work if someone has
-written the corresponding keys. Discovery cannot invent meaning from
+written the corresponding keys. Registration cannot invent meaning from
 an unlabeled host or cluster object.
 
 ### Natural labels (preferred for facts)
@@ -196,7 +193,7 @@ Sources AO may combine **before** the selector map exists:
 
 | Source | Typical keys | Notes |
 |---|---|---|
-| Execution Profile or node routing controls | `region`, `gpu`, similar | routing selectors as defined during PoC. |
+| Execution Profile or node routing controls | `region`, `gpu`, similar | Routing requirements supplied by AO. |
 | Future project / org / system defaults | same shape | Combination rules are an AO design. EP only sees the result. |
 
 ### What "global labels only" means
