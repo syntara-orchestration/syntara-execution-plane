@@ -197,7 +197,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         correlation = OperationalLogCorrelation.from_runtime_context(
             invocation_id=attempt_id,
             work_item_id=identity,
-            execution_target_id=str(work_item.execution_target_id),
+            execution_target_id=work_item.execution_target_id,
             runtime_context=work_item.runtime_context,
         )
         return _DispatchContext(

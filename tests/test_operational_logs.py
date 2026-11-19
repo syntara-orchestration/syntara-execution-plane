@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import ClassVar
+from uuid import UUID
 
 import pytest
 from syntara_plugin.runtime import ContainerLogBatch, ContainerLogRecord
@@ -67,7 +68,7 @@ def _forwarder() -> OperationalLogForwarder:
         OperationalLogCorrelation(
             invocation_id="attempt-1",
             work_item_id="wi-1",
-            execution_target_id="target-1",
+            execution_target_id=UUID("00000000-0000-0000-0000-0000000000aa"),
             workflow_id="wf-1",
         )
     )
@@ -88,7 +89,7 @@ def test_records_are_forwarded_with_correlation_attributes(captured: pytest.LogC
     first = records[0]
     assert first.invocation_id == "attempt-1"
     assert first.work_item_id == "wi-1"
-    assert first.execution_target_id == "target-1"
+    assert first.execution_target_id == "00000000-0000-0000-0000-0000000000aa"
     assert first.workflow_id == "wf-1"
     assert first.attempt == 2
     assert first.step_log_severity == "INFO"
@@ -173,7 +174,7 @@ def test_correlation_from_runtime_context_harvests_optional_keys() -> None:
     correlation = OperationalLogCorrelation.from_runtime_context(
         invocation_id="attempt-1",
         work_item_id="wi-1",
-        execution_target_id="target-1",
+        execution_target_id=UUID("00000000-0000-0000-0000-0000000000bb"),
         runtime_context={
             "workflow_id": "wf-1",
             "execution_id": "exec-1",
@@ -185,11 +186,11 @@ def test_correlation_from_runtime_context_harvests_optional_keys() -> None:
     assert correlation.workflow_id == "wf-1"
     assert correlation.execution_id == "exec-1"
     assert correlation.project_id is None
-    # attributes() flattens to exactly the present keys
+    # attributes() flattens to exactly the present keys, stringifying the UUID
     assert correlation.attributes() == {
         "invocation_id": "attempt-1",
         "work_item_id": "wi-1",
-        "execution_target_id": "target-1",
+        "execution_target_id": "00000000-0000-0000-0000-0000000000bb",
         "workflow_id": "wf-1",
         "execution_id": "exec-1",
     }
@@ -199,11 +200,11 @@ def test_correlation_from_non_mapping_runtime_context() -> None:
     correlation = OperationalLogCorrelation.from_runtime_context(
         invocation_id="a",
         work_item_id="b",
-        execution_target_id="c",
+        execution_target_id=UUID(int=0xCC),
         runtime_context=None,  # type: ignore[arg-type]
     )
     assert correlation.attributes() == {
         "invocation_id": "a",
         "work_item_id": "b",
-        "execution_target_id": "c",
+        "execution_target_id": "00000000-0000-0000-0000-0000000000cc",
     }

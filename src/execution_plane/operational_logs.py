@@ -24,10 +24,13 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from execution_plane.config.settings import get_settings
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 #: Defense in depth: the SDK clamps batches at 128 events / 256 KiB; the
 #: forwarder does not trust its peer and clamps again.
@@ -108,7 +111,7 @@ class OperationalLogCorrelation:
 
     invocation_id: str
     work_item_id: str
-    execution_target_id: str
+    execution_target_id: UUID
     workflow_id: str | None = None
     execution_id: str | None = None
     project_id: str | None = None
@@ -119,7 +122,7 @@ class OperationalLogCorrelation:
         *,
         invocation_id: str,
         work_item_id: str,
-        execution_target_id: str,
+        execution_target_id: UUID,
         runtime_context: Mapping[str, object],
     ) -> OperationalLogCorrelation:
         """Build the correlation, harvesting the optional workflow-context keys."""
@@ -139,8 +142,23 @@ class OperationalLogCorrelation:
         )
 
     def attributes(self) -> dict[str, str]:
-        """Flatten to the attribute set attached to each forwarded record."""
-        return {key: value for key, value in asdict(self).items() if value is not None}
+        """Flatten to the attribute set attached to each forwarded record.
+
+        The stringification happens here, at the very end, so the field keeps
+        its domain type (UUID) everywhere else — the same name never holds
+        two different types along the way.
+        """
+        flattened: dict[str, str] = {
+            "invocation_id": self.invocation_id,
+            "work_item_id": self.work_item_id,
+            "execution_target_id": str(self.execution_target_id),
+        }
+        optional = {
+            "workflow_id": self.workflow_id,
+            "execution_id": self.execution_id,
+            "project_id": self.project_id,
+        }
+        return flattened | {key: value for key, value in optional.items() if value is not None}
 
 
 class OperationalLogForwarder:
