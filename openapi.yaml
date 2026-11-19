@@ -871,11 +871,18 @@ components:
             type: string
           type: array
           title: Node Selectors
+          description: Pod nodeSelector entries in key=value form. Nodes must match
+            every entry; an empty list imposes no label restriction. On update, omission
+            preserves the stored list and [] clears it.
         tolerations:
           items:
             type: string
           type: array
           title: Tolerations
+          description: Pod taints to tolerate, using key=value:effect (Equal) or key:effect
+            (Exists). Effect may be NoSchedule, PreferNoSchedule, or NoExecute; omitting
+            it matches all effects. An empty key with Exists matches all keys. On
+            update, omission preserves the list and [] clears it.
       type: object
       required:
       - namespace
@@ -937,6 +944,9 @@ components:
         healthy:
           type: boolean
           title: Healthy
+          description: 'Whether the namespace probe succeeded. For Kubernetes this
+            checks namespace readability, not workload execution. Check skipped first:
+            a skipped probe also returns true.'
         message:
           anyOf:
           - type: string
@@ -945,6 +955,9 @@ components:
         skipped:
           type: boolean
           title: Skipped
+          description: True when no health check ran because the backend, endpoint,
+            or cluster/target lifecycle is outside probe scope; healthy then does
+            not establish readiness.
           default: false
       additionalProperties: false
       type: object
@@ -970,6 +983,8 @@ components:
           type: boolean
           const: true
           title: Received
+          description: Confirms the command handler returned successfully. Asynchronous
+            work, cancellation, and deletion may still be in progress.
           default: true
         message_id:
           type: string
@@ -1193,16 +1208,22 @@ components:
           type: string
           maxLength: 2048
           title: Endpoint
+          description: Kubernetes API HTTPS URL used for namespace probes and workload
+            management; embedded credentials, query strings, and fragments are prohibited.
         credential_ref:
           type: string
           format: uuid
           title: Credential Ref
+          description: Reference resolved through the initiating client for the cluster
+            management credential; must be nonzero when registering an enabled cluster.
         ca_certificate:
           anyOf:
           - type: string
             maxLength: 65536
           - type: 'null'
           title: Ca Certificate
+          description: PEM CA certificate bundle used to verify the cluster API TLS
+            certificate. Omit on registration to use the default trust store.
         labels:
           additionalProperties:
             type: string
@@ -1211,10 +1232,15 @@ components:
         enabled:
           type: boolean
           title: Enabled
+          description: Whether the cluster can supply targets for new work. A disabled
+            cluster is excluded from placement.
           default: true
         is_default:
           type: boolean
           title: Is Default
+          description: Promote this cluster to the default used for fallback placement.
+            An existing default cannot be demoted or disabled directly; promote another
+            cluster first.
           default: false
       additionalProperties: false
       type: object
@@ -1242,17 +1268,23 @@ components:
           - type: string
           - type: 'null'
           title: Endpoint
+          description: Kubernetes API HTTPS URL used for namespace probes and workload
+            management; embedded credentials, query strings, and fragments are prohibited.
         credential_ref:
           anyOf:
           - type: string
             format: uuid
           - type: 'null'
           title: Credential Ref
+          description: Reference resolved through the initiating client for the cluster
+            management credential; must be nonzero when registering an enabled cluster.
         ca_certificate:
           anyOf:
           - type: string
           - type: 'null'
           title: Ca Certificate
+          description: Replacement PEM CA certificate bundle for cluster API TLS verification.
+            Omission or null currently leaves the stored certificate unchanged.
         labels:
           anyOf:
           - additionalProperties:
@@ -1265,11 +1297,16 @@ components:
           - type: boolean
           - type: 'null'
           title: Enabled
+          description: Whether the cluster can supply targets for new work. A disabled
+            cluster is excluded from placement.
         is_default:
           anyOf:
           - type: boolean
           - type: 'null'
           title: Is Default
+          description: Promote this cluster to the default used for fallback placement.
+            An existing default cannot be demoted or disabled directly; promote another
+            cluster first.
       additionalProperties: false
       type: object
       required:
@@ -1342,15 +1379,23 @@ components:
             key existence and multiple keys use AND.
         status:
           $ref: '#/components/schemas/CompletionStatus'
+          description: Reported work outcome. reconciliation_required means the outcome
+            is uncertain and must not be treated as a confirmed terminal result.
         result:
           additionalProperties: true
           type: object
           title: Result
+          description: Persisted workload output or failure details sent back to the
+            initiating client; its contents depend on the invoked step and output
+            mapping.
         error_code:
           anyOf:
           - type: string
           - type: 'null'
           title: Error Code
+          description: Optional machine-readable failure classification. The current
+            EP completion notifier leaves this null; failure details are carried in
+            result.
       additionalProperties: false
       type: object
       required:
@@ -1442,16 +1487,25 @@ components:
           minLength: 1
           pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
           title: Namespace
+          description: Existing Kubernetes namespace in which EP creates workload
+            pods and checks target health.
         node_selectors:
           items:
             type: string
           type: array
           title: Node Selectors
+          description: Pod nodeSelector entries in key=value form. Nodes must match
+            every entry; an empty list imposes no label restriction. On update, omission
+            preserves the stored list and [] clears it.
         tolerations:
           items:
             type: string
           type: array
           title: Tolerations
+          description: Pod taints to tolerate, using key=value:effect (Equal) or key:effect
+            (Exists). Effect may be NoSchedule, PreferNoSchedule, or NoExecute; omitting
+            it matches all effects. An empty key with Exists matches all keys. On
+            update, omission preserves the list and [] clears it.
       additionalProperties: false
       type: object
       required:
@@ -1556,6 +1610,9 @@ components:
           - $ref: '#/components/schemas/ClientKubernetesPlacement'
           - $ref: '#/components/schemas/ClientRHELPlacement'
           title: Placement
+          description: Namespace and pod scheduling rules for this target. Updates
+            require namespace; omitted scheduling lists retain their stored values.
+            The placement type cannot be changed.
           discriminator:
             propertyName: type
             mapping:
@@ -1566,15 +1623,23 @@ components:
           maxLength: 2048
           minLength: 1
           title: Endpoint
+          description: HTTPS provider management endpoint, without embedded credentials,
+            query, or fragment. Kubernetes workloads use the parent cluster connection.
         credential_ref:
           type: string
           format: uuid
           title: Credential Ref
+          description: Opaque management credential reference. Kubernetes execution
+            resolves the parent cluster credential instead; the AO facade supplies
+            the zero UUID here.
         labels:
           additionalProperties:
             type: string
           type: object
           title: Labels
+          description: User labels matched by work.execute selectors when routing
+            workloads. Updates replace user labels; {} clears them. EP retains its
+            reserved identity labels.
         cluster_id:
           type: string
           format: uuid
@@ -1582,6 +1647,9 @@ components:
         is_default:
           type: boolean
           title: Is Default
+          description: Promote this target to the cluster default, replacing the previous
+            default. The target and cluster must be active and enabled. To demote
+            a default, promote another target rather than setting this field to false.
           default: false
       additionalProperties: false
       type: object
@@ -1615,6 +1683,8 @@ components:
             minLength: 1
           - type: 'null'
           title: Endpoint
+          description: Replacement HTTPS provider management endpoint. Omit to keep
+            the stored endpoint; explicit null is rejected.
         placement:
           anyOf:
           - oneOf:
@@ -1627,12 +1697,17 @@ components:
                 rhel: '#/components/schemas/ClientRHELPlacement'
           - type: 'null'
           title: Placement
+          description: Namespace and pod scheduling rules for this target. Updates
+            require namespace; omitted scheduling lists retain their stored values.
+            The placement type cannot be changed.
         credential_ref:
           anyOf:
           - type: string
             format: uuid
           - type: 'null'
           title: Credential Ref
+          description: Replacement opaque provider management credential reference;
+            Kubernetes continues to use the parent cluster credential.
         labels:
           anyOf:
           - additionalProperties:
@@ -1640,16 +1715,24 @@ components:
             type: object
           - type: 'null'
           title: Labels
+          description: User labels matched by work.execute selectors when routing
+            workloads. Updates replace user labels; {} clears them. EP retains its
+            reserved identity labels.
         is_default:
           anyOf:
           - type: boolean
           - type: 'null'
           title: Is Default
+          description: Promote this target to the cluster default, replacing the previous
+            default. The target and cluster must be active and enabled. To demote
+            a default, promote another target rather than setting this field to false.
         enabled:
           anyOf:
           - type: boolean
           - type: 'null'
           title: Enabled
+          description: Whether the scheduler may assign new workloads to this target;
+            disabling it does not request cancellation of work already assigned.
       additionalProperties: false
       type: object
       required:

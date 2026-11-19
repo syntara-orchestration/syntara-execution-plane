@@ -62,9 +62,21 @@ class TargetHealthCommandResult(WireModel):
 
     command_type: Literal["execution_target.health"] = "execution_target.health"
     command_revision: Literal[1] = 1
-    healthy: StrictBool
+    healthy: StrictBool = Field(
+        description=(
+            "Whether the namespace probe succeeded. For Kubernetes this checks namespace "
+            "readability, not workload execution. Check skipped first: a skipped probe also "
+            "returns true."
+        )
+    )
     message: StrictStr | None = None
-    skipped: StrictBool = False
+    skipped: StrictBool = Field(
+        default=False,
+        description=(
+            "True when no health check ran because the backend, endpoint, or cluster/target "
+            "lifecycle is outside probe scope; healthy then does not establish readiness."
+        ),
+    )
 
 
 CommandResult = Annotated[
@@ -76,7 +88,13 @@ CommandResult = Annotated[
 class TransportReceipt(WireModel):
     """Receipt of a handled request, without a persisted command record."""
 
-    received: Literal[True] = True
+    received: Literal[True] = Field(
+        default=True,
+        description=(
+            "Confirms the command handler returned successfully. Asynchronous work, cancellation, "
+            "and deletion may still be in progress."
+        ),
+    )
     message_id: UUID = Field(
         description="The received delivery message's UUID, echoed so the sender can match this receipt."
     )
