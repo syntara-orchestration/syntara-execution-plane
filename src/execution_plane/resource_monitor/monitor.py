@@ -11,7 +11,7 @@ import structlog
 from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.execution_target.execution_target_store import ExecutionTargetNotFoundError
 from execution_plane.resource_monitor.probes import DispatchingTargetProbe, ProbeResult
-from execution_plane_client.models.execution_target import TargetStatus
+from execution_plane_client.types import TargetStatus
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore

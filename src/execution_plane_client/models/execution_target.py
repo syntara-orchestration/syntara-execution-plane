@@ -2,16 +2,15 @@
 
 import re
 from datetime import datetime
-from enum import StrEnum
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
-from execution_plane_client.commands.targets import BackendType as BackendType  # noqa: PLC0414 - deliberate re-export
 from execution_plane_client.commands.targets import KubernetesPlacement as CommandKubernetesPlacement
 from execution_plane_client.models.shared import EPListParams, ResourcesResponse
+from execution_plane_client.types import BackendType, TargetStatus
 
 _LABEL_NAME = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
@@ -45,18 +44,6 @@ EXECUTION_TARGET_SORTABLE_FIELDS = [
     "enabled",
     "is_default",
 ]
-
-
-class TargetStatus(StrEnum):
-    """Lifecycle states of an execution target."""
-
-    REGISTERING = "registering"
-    VALIDATING = "validating"
-    BOOTSTRAPPING = "bootstrapping"
-    ACTIVE = "active"
-    DEGRADED = "degraded"
-    DRAINING = "draining"
-    FAILED = "failed"
 
 
 def _is_valid_label_key(value: str) -> bool:

@@ -16,7 +16,7 @@ from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.query_filters import apply_list_filters
 from execution_plane.query_sorting import apply_cursor_sort
 from execution_plane.store_base import StoreBase
-from execution_plane_client.models.execution_target import TargetStatus
+from execution_plane_client.types import TargetStatus
 
 if TYPE_CHECKING:
     import builtins

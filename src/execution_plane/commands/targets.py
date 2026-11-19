@@ -29,8 +29,9 @@ from execution_plane_client.commands.targets import (
 )
 from execution_plane_client.errors import ProtocolConflict, UnsupportedCommand
 from execution_plane_client.handlers import HandlingResult
-from execution_plane_client.models.execution_target import BackendType, ExecutionTargetPlacement
+from execution_plane_client.models.execution_target import ExecutionTargetPlacement
 from execution_plane_client.protocol import MessageEnvelope, ResourceReference
+from execution_plane_client.types import BackendType
 
 
 def _validated_payload[T: CommandPayload](payload: CommandPayload, expected: type[T]) -> T:

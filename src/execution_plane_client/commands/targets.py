@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from enum import StrEnum
 from typing import Annotated, ClassVar, Literal, Self
 from uuid import UUID  # noqa: TC003 - Pydantic evaluates fields.
 
@@ -12,18 +11,12 @@ from pydantic import Field, StrictBool, StrictStr, field_validator, model_valida
 from execution_plane_client.commands import ResourceIdentity, validate_endpoint
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.protocol import WireModel
+from execution_plane_client.types import BackendType
 
 _LABEL_NAME = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9_.-]*[A-Za-z0-9])?$")
 _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 _LABEL_LIMIT = 63
 _DOMAIN_LIMIT = 253
-
-
-class BackendType(StrEnum):
-    """Supported execution target backends."""
-
-    KUBERNETES = "kubernetes"
-    OPENSHELL = "openshell"
 
 
 def _label_key(value: str) -> bool:

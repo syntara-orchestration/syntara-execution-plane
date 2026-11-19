@@ -11,7 +11,8 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 
 from execution_plane.resource_monitor.client import api_client_from_cluster
-from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
+from execution_plane_client.models.execution_target import KubernetesPlacement
+from execution_plane_client.types import BackendType
 
 if TYPE_CHECKING:
     from execution_plane.cluster.cluster_store import ClusterStore
