@@ -1618,6 +1618,70 @@ components:
       type: object
       title: RHELPlacement
       description: Placement for a supported RHEL backend.
+    ResolvedExecution:
+      properties:
+        bindings:
+          items:
+            $ref: '#/components/schemas/ResolvedExecutionBinding'
+          type: array
+          maxItems: 1
+          minItems: 1
+          title: Bindings
+      additionalProperties: false
+      type: object
+      required:
+      - bindings
+      title: ResolvedExecution
+      description: Resolved binding metadata that EP mounts into a selected workload.
+    ResolvedExecutionBinding:
+      properties:
+        step_revision_id:
+          type: string
+          pattern: ^sha256:[a-f0-9]{64}$
+          title: Step Revision Id
+        step_identity:
+          type: string
+          maxLength: 256
+          minLength: 1
+          pattern: ^[A-Za-z0-9._:-]+$
+          title: Step Identity
+        runtime_kind:
+          type: string
+          const: custom-runner
+          title: Runtime Kind
+        entry_point:
+          type: string
+          maxLength: 512
+          minLength: 1
+          title: Entry Point
+        abi:
+          type: string
+          const: syntara.container/v1alpha1
+          title: Abi
+        schema_digests:
+          additionalProperties:
+            type: string
+            pattern: ^sha256:[a-f0-9]{64}$
+          propertyNames:
+            enum:
+            - input
+            - output
+            - error
+          type: object
+          maxProperties: 3
+          minProperties: 2
+          title: Schema Digests
+      additionalProperties: false
+      type: object
+      required:
+      - step_revision_id
+      - step_identity
+      - runtime_kind
+      - entry_point
+      - abi
+      - schema_digests
+      title: ResolvedExecutionBinding
+      description: One compiled custom-runner binding selected for a workload invocation.
     TargetDelete:
       properties:
         resource_id:
@@ -1983,6 +2047,12 @@ components:
           maxItems: 2
           title: Host Operations
           description: Host callbacks the trusted dispatcher may route for this Action.
+        resolved_execution:
+          anyOf:
+          - $ref: '#/components/schemas/ResolvedExecution'
+          - type: 'null'
+          description: Trusted compiled custom-runner binding metadata. EP writes
+            this document as a read-only runtime file; it is not a step input or credential.
         timeout_seconds:
           type: integer
           maximum: 86400.0
