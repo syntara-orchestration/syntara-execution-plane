@@ -110,6 +110,33 @@ def _reconcile_target(config_values: dict[str, str], namespace: str) -> list[tup
                     ).items
                     if pods:
                         continue
+                    resolved_name = f"{resource_name}-resolved"
+                    try:
+                        resolved_config = pod_api.read_namespaced_config_map(
+                            resolved_name, namespace, _request_timeout=10
+                        )
+                    except ApiException as config_error:
+                        if config_error.status != HTTPStatus.NOT_FOUND:
+                            continue
+                    else:
+                        config_metadata = resolved_config.metadata
+                        config_labels = config_metadata.labels or {} if config_metadata else {}
+                        if (
+                            config_metadata is None
+                            or not config_metadata.uid
+                            or config_labels.get("app.kubernetes.io/managed-by") != "execution-plane"
+                            or config_labels.get("execution-plane.syntara.io/work-item") != str(parsed_item_id)
+                            or config_labels.get("execution-plane.syntara.io/attempt") != attempt_id
+                        ):
+                            continue
+                        pod_api.delete_namespaced_config_map(
+                            resolved_name,
+                            namespace,
+                            body=client.V1DeleteOptions(
+                                preconditions=client.V1Preconditions(uid=str(config_metadata.uid))
+                            ),
+                            _request_timeout=10,
+                        )
                     network_api.delete_namespaced_network_policy(metadata.name, namespace, _request_timeout=10)
                     removed.append((str(parsed_item_id), resource_name, generation))
                     logger.info("Removed orphaned workload NetworkPolicy", namespace=namespace, policy=metadata.name)

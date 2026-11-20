@@ -46,6 +46,7 @@ Its invocation contains:
     "environment": {"GREETING": "hello"}
   },
   "credential_bindings": [],
+  "resolved_execution": null,
   "timeout_seconds": 60
 }
 ```
@@ -57,6 +58,14 @@ attempt has an ID of `<work UUID>-<claim generation>`. The Kubernetes transport
 passes that attempt ID to the SDK as `invocation_id` and uses it to name and
 label the attempt's resources. Claim generations also fence worker updates so
 a stale worker cannot modify a newer attempt.
+
+Custom-runner invocations may include `resolved_execution`, containing the exact
+compiled step revision, identity, entry point, ABI, and schema digests. EP checks
+that its revision matches `step_revision_id`, writes the SDK's camel-case
+resolved-execution document into an immutable ConfigMap, and mounts it read-only
+at `/run/syntara/resolved.json`. EP sets `SYNTARA_RESOLVED_EXECUTION` to that
+path. The ConfigMap is labeled and cleaned up with the attempt. This metadata is
+separate from step inputs and credentials.
 
 Script environment variables are ordinary inputs. Optional `credential_bindings`
 map `credential_recipe_id` to an AO `credential_ref` UUID. EP accepts up to 16

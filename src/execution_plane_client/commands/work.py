@@ -1,16 +1,43 @@
 """Scheduling commands for the SDK-owned container gRPC contract."""
 
 from enum import StrEnum
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 from uuid import UUID
 
-from pydantic import Field, StrictStr, field_validator
+from pydantic import Field, StrictStr, field_validator, model_validator
 
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.models.runtime_context import RuntimeContext
 from execution_plane_client.protocol import PositiveInt, WireModel, validate_json
 
 StepIdentity = Annotated[StrictStr, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._:-]+$")]
+SchemaDigest = Annotated[StrictStr, Field(pattern=r"^sha256:[a-f0-9]{64}$")]
+SchemaDigestName = Literal["input", "output", "error"]
+
+
+class ResolvedExecutionBinding(WireModel):
+    """One compiled custom-runner binding selected for a workload invocation."""
+
+    step_revision_id: Annotated[StrictStr, Field(pattern=r"^sha256:[a-f0-9]{64}$")]
+    step_identity: StepIdentity
+    runtime_kind: Literal["custom-runner"]
+    entry_point: Annotated[StrictStr, Field(min_length=1, max_length=512)]
+    abi: Literal["syntara.container/v1alpha1"]
+    schema_digests: dict[SchemaDigestName, SchemaDigest] = Field(min_length=2, max_length=3)
+
+    @model_validator(mode="after")
+    def require_input_and_output_digests(self) -> Self:
+        """Require the two schemas used for every executable custom runner."""
+        if not {"input", "output"}.issubset(self.schema_digests):
+            message = "resolved execution requires input and output schema digests"
+            raise ValueError(message)
+        return self
+
+
+class ResolvedExecution(WireModel):
+    """Resolved binding metadata that EP mounts into a selected workload."""
+
+    bindings: list[ResolvedExecutionBinding] = Field(min_length=1, max_length=1)
 
 
 class WorkloadType(StrEnum):
@@ -75,6 +102,25 @@ class WorkloadInvocation(WireModel):
             message = "host_operations must be unique"
             raise ValueError(message)
         return value
+
+    resolved_execution: ResolvedExecution | None = Field(
+        default=None,
+        repr=False,
+        description=(
+            "Trusted compiled custom-runner binding metadata. EP writes this document as a read-only runtime file; "
+            "it is not a step input or credential."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def resolved_revision_matches_invocation(self) -> Self:
+        """Ensure the mounted binding names the exact handler this work will execute."""
+        if self.resolved_execution is not None:
+            binding = self.resolved_execution.bindings[0]
+            if binding.step_revision_id != self.step_revision_id:
+                message = "resolved execution revision must match step_revision_id"
+                raise ValueError(message)
+        return self
 
     timeout_seconds: Annotated[
         PositiveInt,
