@@ -12,8 +12,7 @@ def test_prepare_build_requirements_adds_the_pinned_vcs_backend(
     requirements = tmp_path / "requirements.txt"
     output = tmp_path / "requirements-build-input.txt"
     requirements.write_text(
-        "httpx==0.28.1\n"
-        "syntara-plugin-contracts @ git+https://example.invalid/sdk.git@abc123#subdirectory=contracts\n",
+        "httpx==0.28.1\nsyntara-plugin-contracts @ git+https://example.invalid/sdk.git@abc123#subdirectory=contracts\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(prepare_build_requirements, "_REQUIREMENTS", requirements)
