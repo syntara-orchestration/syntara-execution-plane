@@ -7,26 +7,23 @@ here so offline builds can install that source archive from Hermeto's cache.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[2]
+_REQUIREMENTS = _ROOT / "requirements.txt"
+_OUTPUT = _ROOT / ".requirements-build-input.txt"
 _CONTRACTS_VCS_PREFIX = "syntara-plugin-contracts @ git+"
 _CONTRACTS_BUILD_REQUIREMENTS = ("hatchling==1.32.4",)
 
 
 def main() -> int:
     """Write public requirements and VCS PEP 517 backends to one input file."""
-    if len(sys.argv) != 3:
-        message = "usage: prepare_build_requirements.py REQUIREMENTS OUTPUT"
-        raise SystemExit(message)
-    requirements = Path(sys.argv[1])
-    output = Path(sys.argv[2])
-    lines = requirements.read_text(encoding="utf-8").splitlines()
+    lines = _REQUIREMENTS.read_text(encoding="utf-8").splitlines()
     has_contracts_vcs = any(line.startswith(_CONTRACTS_VCS_PREFIX) for line in lines)
     if has_contracts_vcs:
         lines = [line for line in lines if not line.startswith(_CONTRACTS_VCS_PREFIX)]
         lines.extend(_CONTRACTS_BUILD_REQUIREMENTS)
-    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _OUTPUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return 0
 
 

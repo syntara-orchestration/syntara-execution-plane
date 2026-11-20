@@ -130,7 +130,57 @@ def _deliver_log_batch(event: ContainerLogBatch, sink: Callable[[ContainerLogBat
         logger.warning("Operational log batch forwarding failed", exc_info=True)
 
 
-def invoke(  # noqa: C901 - stream consumption plus safe telemetry delivery
+def _consume_stream(
+    client: ContainerClient,
+    request: ContainerInvocation,
+    *,
+    progress: Callable[[dict[str, Any]], None],
+    cancelled: threading.Event,
+    credential_handler: CredentialResolver,
+    host_handler: HostOperationHandler | None,
+    log_sink: Callable[[ContainerLogBatch], None] | None,
+) -> dict[str, Any]:
+    """Consume workload events and require exactly one terminal result."""
+    result: ContainerResult | None = None
+    try:
+        for event in client.stream(
+            request,
+            credential_handler=credential_handler,
+            host_handler=host_handler,
+        ):
+            if result is not None:
+                message = "Workload returned events after its terminal result"
+                raise WorkloadRpcError(message)
+            if isinstance(event, ContainerProgress):
+                progress(
+                    {
+                        "kind": "progress",
+                        "event": event.state,
+                        "data": {
+                            "sequence": event.sequence,
+                            "message": event.message,
+                            "percent": event.percent,
+                        },
+                    }
+                )
+            elif isinstance(event, ContainerLogBatch):
+                # Log delivery is best-effort; any batch after the terminal result
+                # is rejected at the top of this loop.
+                _deliver_log_batch(event, log_sink)
+                continue
+            else:
+                result = event
+    except ContainerRemoteError as error:
+        if error.source == "workload" and result is None:
+            return _failure_frame(error, cancelled=cancelled.is_set())
+        raise
+    if result is None:
+        message = "Workload stream ended without a terminal result"
+        raise WorkloadRpcError(message)
+    return {"kind": "result", "result": result}
+
+
+def invoke(
     channel: grpc.Channel,
     invocation: WorkloadInvocation,
     *,
@@ -168,42 +218,20 @@ def invoke(  # noqa: C901 - stream consumption plus safe telemetry delivery
         name="workload-grpc-cancel",
     )
     watcher.start()
-    result: ContainerResult | None = None
     try:
         # Let the SDK retain its bounded terminal-result delivery window after
         # the execution budget. An explicit RPC deadline equal to that budget
         # cuts off the workload's timeout failure before EP can receive it.
-        for event in client.stream(
+        return _consume_stream(
+            client,
             request,
+            progress=progress,
+            cancelled=cancelled,
             credential_handler=credential_handler,
             host_handler=host_handler,
-        ):
-            if result is not None:
-                message = "Workload returned events after its terminal result"
-                raise WorkloadRpcError(message)
-            if isinstance(event, ContainerProgress):
-                progress(
-                    {
-                        "kind": "progress",
-                        "event": event.state,
-                        "data": {"sequence": event.sequence, "message": event.message, "percent": event.percent},
-                    }
-                )
-            elif isinstance(event, ContainerLogBatch):
-                # Best-effort operational telemetry (AAP-102015): a sink failure
-                # is never fatal. Like any event, a batch after the terminal
-                # result fails the stream (checked at the top of the loop).
-                _deliver_log_batch(event, log_sink)
-                continue
-            else:
-                result = event
-        if result is None:
-            message = "Workload stream ended without a terminal result"
-            raise WorkloadRpcError(message)
-        return {"kind": "result", "result": result}
-    except ContainerRemoteError as error:
-        if error.source == "workload" and result is None:
-            return _failure_frame(error, cancelled=cancelled.is_set())
+            log_sink=log_sink,
+        )
+    except ContainerRemoteError:
         message = "Workload did not return a valid terminal outcome"
         raise WorkloadRpcError(message, cancelled=cancelled.is_set()) from None
     except ValueError:
