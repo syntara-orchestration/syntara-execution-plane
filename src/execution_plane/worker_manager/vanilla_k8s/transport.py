@@ -148,6 +148,29 @@ def _node_selector(values: list[str]) -> dict[str, str]:
     return result
 
 
+def pre_execution_failure_reason(pod: object) -> str | None:
+    """Return a terminal reason when Kubernetes cannot start the worker Pod."""
+    status = getattr(pod, "status", None)
+    conditions = getattr(status, "conditions", None) or []
+    for condition in conditions:
+        if (
+            getattr(condition, "type", None) == "PodScheduled"
+            and getattr(condition, "status", None) == "False"
+            and getattr(condition, "reason", None) in {"Unschedulable", "FailedScheduling"}
+        ):
+            reason = getattr(condition, "reason", None)
+            return f"Kubernetes worker Pod could not be scheduled ({reason})"
+
+    container_statuses = getattr(status, "container_statuses", None) or []
+    image_pull_reasons = {"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
+    for container_status in container_statuses:
+        waiting = getattr(getattr(container_status, "state", None), "waiting", None)
+        reason = getattr(waiting, "reason", None)
+        if reason in image_pull_reasons:
+            return f"Kubernetes worker image could not be pulled ({reason})"
+    return None
+
+
 def _tolerations(values: list[str]) -> list[dict[str, str]]:
     """Convert the typed placement model's compact toleration strings."""
     result: list[dict[str, str]] = []
@@ -459,6 +482,9 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                         ):
                             message = "Kubernetes worker Pod ownership does not match its Job"
                             raise TransportError(message, submitted=True)
+                        pre_execution_failure = pre_execution_failure_reason(pod)
+                        if pre_execution_failure is not None:
+                            raise TransportError(pre_execution_failure)
                         pod_name = pod.metadata.name if pod.metadata else None
                         phase = pod.status.phase if pod.status else None
                         if phase == "Running" and pod_name:
