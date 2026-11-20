@@ -556,6 +556,34 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    AgentOperationCommandResult:
+      properties:
+        command_type:
+          type: string
+          const: agent.operation
+          title: Command Type
+          default: agent.operation
+        command_revision:
+          type: integer
+          const: 1
+          title: Command Revision
+          default: 1
+        request_id:
+          type: string
+          maxLength: 256
+          minLength: 1
+          title: Request Id
+        result:
+          additionalProperties: true
+          type: object
+          title: Result
+      additionalProperties: false
+      type: object
+      required:
+      - request_id
+      - result
+      title: AgentOperationCommandResult
+      description: The typed response to one agent host operation.
     BackendType:
       type: string
       enum:
@@ -1002,9 +1030,11 @@ components:
             - $ref: '#/components/schemas/CredentialResolveClusterCommandResult'
             - $ref: '#/components/schemas/CredentialResolveWorkloadCommandResult'
             - $ref: '#/components/schemas/TargetHealthCommandResult'
+            - $ref: '#/components/schemas/AgentOperationCommandResult'
             discriminator:
               propertyName: command_type
               mapping:
+                agent.operation: '#/components/schemas/AgentOperationCommandResult'
                 credential.resolve.cluster: '#/components/schemas/CredentialResolveClusterCommandResult'
                 credential.resolve.workload: '#/components/schemas/CredentialResolveWorkloadCommandResult'
                 execution_target.health: '#/components/schemas/TargetHealthCommandResult'
@@ -1943,6 +1973,16 @@ components:
           title: Credential Bindings
           description: Host-side recipe-to-reference bindings; never plugin inputs
             or runtime context.
+        host_operations:
+          items:
+            type: string
+            enum:
+            - agent.model.turn
+            - agent.mcp.call
+          type: array
+          maxItems: 2
+          title: Host Operations
+          description: Host callbacks the trusted dispatcher may route for this Action.
         timeout_seconds:
           type: integer
           maximum: 86400.0

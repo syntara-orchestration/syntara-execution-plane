@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 2
 requires-python = ">=3.12, <3.15"
 
 [[package]]
@@ -606,7 +606,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "syntara-plugin-contracts", specifier = "==0.1.0a6" },
+    { name = "syntara-plugin-contracts", git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git?subdirectory=sdks%2Fpython%2Fpackages%2Fcontracts&rev=ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 
@@ -1931,8 +1931,8 @@ wheels = [
 
 [[package]]
 name = "syntara-plugin-contracts"
-version = "0.1.0a6"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.0a7"
+source = { git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git?subdirectory=sdks%2Fpython%2Fpackages%2Fcontracts&rev=ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef#ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef" }
 dependencies = [
     { name = "grpcio" },
     { name = "jsonschema" },
@@ -1940,10 +1940,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "referencing" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/3b/e1b9880d6c46ae2374686d4fe82ed78beb135cd04ab721ced0e0ac944747/syntara_plugin_contracts-0.1.0a6.tar.gz", hash = "sha256:0f3b84e22cc8ec03fa1b59b353fcef268f93df8f88af119593732e0ccced8c9f", size = 114825, upload-time = "2026-11-17T22:04:07.031Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/34/cde0e62ae0ce063891f661c18ce2b605e8a528648f43d07a09b934eb65d7/syntara_plugin_contracts-0.1.0a6-py3-none-any.whl", hash = "sha256:95d49c6d328227948e58189b8420da2bf4ae75010bf024cd7ebaf0969813805b", size = 161827, upload-time = "2026-11-17T22:04:05.749Z" },
 ]
 
 [[package]]

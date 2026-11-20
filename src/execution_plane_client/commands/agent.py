@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, cast
 from uuid import UUID  # noqa: TC003 -- Pydantic resolves this annotation when constructing the wire model.
 
 from pydantic import Field, StrictStr, field_validator
@@ -33,7 +33,7 @@ class AgentOperation(CommandPayload):
     @classmethod
     def bound_payload(cls, value: dict[str, object]) -> dict[str, object]:
         """Keep callback payloads within the ordinary command envelope limit."""
-        return validate_json(value)
+        return cast("dict[str, object]", validate_json(value))
 
 
 class AgentOperationCommandResult(WireModel):
@@ -48,4 +48,4 @@ class AgentOperationCommandResult(WireModel):
     @classmethod
     def bound_result(cls, value: dict[str, object]) -> dict[str, object]:
         """Keep callback results within the ordinary command envelope limit."""
-        return validate_json(value)
+        return cast("dict[str, object]", validate_json(value))

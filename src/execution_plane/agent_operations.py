@@ -8,13 +8,13 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from syntara_plugin.runtime import HostOperationError
 
 from execution_plane.callback_client import CallbackHTTPClient
-from execution_plane_client.commands.agent import AgentOperation, AgentOperationCommandResult
+from execution_plane_client.commands.agent import AgentOperation, AgentOperationCommandResult, AgentOperationName
 from execution_plane_client.commands.results import TransportReceipt
 
 if TYPE_CHECKING:
@@ -59,12 +59,13 @@ class AgentOperationResolver:
             raise HostOperationError("deadline_exceeded", "Host operation deadline expired.")
 
         request_id = context.request_id
+        operation = cast("AgentOperationName", context.operation)
         envelope = AgentOperation(
             work_item_id=self._work_item_id,
             agent_invocation_id=self._invocation_id,
             attempt_id=self._attempt_id,
             step_revision_id=self._step_revision_id,
-            operation=context.operation,
+            operation=operation,
             request_id=request_id,
             payload=dict(context.payload),
         ).to_message(
