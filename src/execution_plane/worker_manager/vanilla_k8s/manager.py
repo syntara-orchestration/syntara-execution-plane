@@ -16,11 +16,13 @@ import threading
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, NoReturn
+from uuid import UUID
 
 import structlog
 from pydantic import ValidationError
 from syntara_plugin.runtime import ContainerResult
 
+from execution_plane.agent_operations import AgentOperationResolver
 from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.credential_resolution.sdk_resolver import SDKCredentialResolver
 from execution_plane.operational_logs import OperationalLogCorrelation, OperationalLogForwarder
@@ -38,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from syntara_plugin.runtime import ContainerLogBatch
-    from syntara_plugin.runtime.container import CredentialResolver
+    from syntara_plugin.runtime.container import CredentialResolver, HostOperationHandler
 
     from execution_plane.cluster.cluster_store import ClusterStore
     from execution_plane.config.settings import Settings
@@ -71,6 +73,7 @@ class _DispatchContext:
     cancelled: threading.Event
     execution_start: Callable[[], None]
     credential_handler: CredentialResolver
+    host_handler: HostOperationHandler | None
     log_sink: Callable[[ContainerLogBatch], None]
 
 
@@ -190,6 +193,23 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             invocation_id=attempt_id,
             step_revision_id=command.invocation.step_revision_id,
         )
+        host_handler: HostOperationHandler | None = None
+        if command.invocation.host_operations:
+            raw_invocation_id = work_item.runtime_context.get("agent_invocation_id")
+            try:
+                agent_invocation_id = UUID(str(raw_invocation_id))
+            except (TypeError, ValueError):
+                message = "Agent workload is missing its server-assigned invocation identity"
+                raise WorkItemPayloadError(message) from None
+            host_handler = AgentOperationResolver(
+                self._settings,
+                loop=asyncio.get_running_loop(),
+                work_item_id=work_item.id,
+                attempt_id=attempt_id,
+                step_revision_id=command.invocation.step_revision_id,
+                invocation_id=agent_invocation_id,
+                allowed_operations=frozenset(command.invocation.host_operations),
+            )
         # Correlation for the operational log conduit (AAP-102015): the
         # attempt identity and work item come from EP; the caller-supplied
         # workflow context (workflow_id/execution_id/project_id) rides the
@@ -211,6 +231,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             cancelled=threading.Event(),
             execution_start=self.execution_start_callback(work_item),
             credential_handler=credential_handler,
+            host_handler=host_handler,
             log_sink=OperationalLogForwarder(correlation),
         )
 
@@ -270,6 +291,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
                 on_resource=on_resource,
                 on_execute_submitted=partial(self._mark_execute_submitted, context),
                 credential_handler=context.credential_handler,
+                host_handler=context.host_handler,
                 log_sink=context.log_sink,
                 node_selectors=context.target_config["node_selectors"],
                 tolerations=context.target_config["tolerations"],

@@ -1,7 +1,7 @@
 """Scheduling commands for the SDK-owned container gRPC contract."""
 
 from enum import StrEnum
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
 from pydantic import Field, StrictStr, field_validator
@@ -61,6 +61,21 @@ class WorkloadInvocation(WireModel):
         repr=False,
         description="Host-side recipe-to-reference bindings; never plugin inputs or runtime context.",
     )
+    host_operations: list[Literal["agent.model.turn", "agent.mcp.call"]] = Field(
+        default_factory=list,
+        max_length=2,
+        description="Host callbacks the trusted dispatcher may route for this Action.",
+    )
+
+    @field_validator("host_operations")
+    @classmethod
+    def unique_host_operations(cls, value: list[str]) -> list[str]:
+        """Reject repeated capabilities in a workload grant."""
+        if len(value) != len(set(value)):
+            message = "host_operations must be unique"
+            raise ValueError(message)
+        return value
+
     timeout_seconds: Annotated[
         PositiveInt,
         Field(
