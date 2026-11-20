@@ -37,12 +37,14 @@ class CallbackHTTPClient:
         """Return whether a callback URL and client are available."""
         return self._client is not None and self._url is not None
 
-    async def post_json(self, body: Mapping[str, object]) -> httpx.Response:
+    async def post_json(self, body: Mapping[str, object], *, timeout_seconds: float | None = None) -> httpx.Response:
         """Post one JSON body to the configured callback URL."""
         if self._client is None or self._url is None:
             message = "Callback client is not configured"
             raise RuntimeError(message)
-        return await self._client.post(self._url, json=dict(body))
+        if timeout_seconds is None:
+            return await self._client.post(self._url, json=dict(body))
+        return await self._client.post(self._url, json=dict(body), timeout=timeout_seconds)
 
     async def close(self) -> None:
         """Close the reusable HTTP connection pool."""

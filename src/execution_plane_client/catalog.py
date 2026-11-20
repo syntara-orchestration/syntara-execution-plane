@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from execution_plane_client.commands.agent import AgentOperation
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.bulk_work import WorkCancelBulk, WorkDeleteBulk
 from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
@@ -28,6 +29,7 @@ class CommandCatalog:
     def __init__(self) -> None:
         """Install supported work, resource and completion contracts."""
         payloads = (
+            AgentOperation,
             WorkExecute,
             WorkCancelBulk,
             WorkDeleteBulk,

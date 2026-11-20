@@ -22,6 +22,7 @@ from syntara_plugin.runtime import (
 from syntara_plugin.runtime.container import (
     ANY_STEP_REVISION,
     CredentialResolver,
+    HostOperationHandler,
 )
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -141,6 +142,7 @@ def invoke(  # noqa: C901 - stream consumption plus safe telemetry delivery
     grace: int = 30,
     on_execute_submitted: Callable[[], None] | None = None,
     credential_handler: CredentialResolver,
+    host_handler: HostOperationHandler | None = None,
     log_sink: Callable[[ContainerLogBatch], None] | None = None,
 ) -> dict[str, Any]:
     """Negotiate the SDK service, execute once, and consume its entire stream."""
@@ -174,6 +176,7 @@ def invoke(  # noqa: C901 - stream consumption plus safe telemetry delivery
         for event in client.stream(
             request,
             credential_handler=credential_handler,
+            host_handler=host_handler,
         ):
             if result is not None:
                 message = "Workload returned events after its terminal result"
