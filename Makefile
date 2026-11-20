@@ -43,7 +43,11 @@ openapi:
 sync-requirements:
 	uv export --frozen --python=3.12 --no-dev --no-editable --no-emit-package colorama --no-emit-package execution-plane-client --no-emit-workspace --output-file requirements.txt >/dev/null
 	uv run tools/ci/filter_requirements_hashes.py
-	uvx --from pybuild-deps==0.6.1 --python 3.12 pybuild-deps compile --generate-hashes -o requirements-build.txt requirements.txt
+	@set -eu; \
+	build_input=.requirements-build-input.txt; \
+	trap 'rm -f "$$build_input"' EXIT; \
+	uv run python tools/ci/prepare_build_requirements.py requirements.txt "$$build_input"; \
+	uvx --from pybuild-deps==0.6.1 --python 3.12 pybuild-deps compile --generate-hashes -o requirements-build.txt "$$build_input"
 
 # Resolve rpms.in.yaml against the runtime UBI image into rpms.lock.yaml.
 # Hermeto uses the lockfile to prefetch RPMs for isolated microdnf installs.

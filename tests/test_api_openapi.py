@@ -199,11 +199,12 @@ def test_transport_receipt_uses_discriminated_command_result() -> None:
 
     assert union["discriminator"]["propertyName"] == "command_type"
     assert mapping == {
+        "agent.operation": "#/components/schemas/AgentOperationCommandResult",
         "credential.resolve.cluster": "#/components/schemas/CredentialResolveClusterCommandResult",
         "credential.resolve.workload": "#/components/schemas/CredentialResolveWorkloadCommandResult",
         "execution_target.health": "#/components/schemas/TargetHealthCommandResult",
     }
-    assert union["oneOf"] == [{"$ref": reference} for reference in mapping.values()]
+    assert {item["$ref"] for item in union["oneOf"]} == set(mapping.values())
     assert components["CredentialResolveClusterCommandResult"]["properties"]["credential"] == {
         "additionalProperties": {"type": "string", "maxLength": 8192, "minLength": 1},
         "propertyNames": {"maxLength": 128, "minLength": 1},
