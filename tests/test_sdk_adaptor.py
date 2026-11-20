@@ -98,9 +98,11 @@ def test_invoke_passes_the_host_credential_handler_to_the_sdk_stream():
         *,
         timeout_seconds: float | None = None,
         credential_handler: CredentialResolver | None = None,
+        host_handler: object | None = None,
     ) -> Iterator[ContainerResult]:
         nonlocal captured_handler
         captured_handler = credential_handler
+        assert host_handler is None
         yield ContainerResult("sha256:" + "a" * 64, output={"result": "done"})
 
     mock_client = Mock()
