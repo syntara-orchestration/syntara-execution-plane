@@ -67,6 +67,7 @@ def test_sdk_script_image_uses_the_ep_contracts_source() -> None:
         f"#subdirectory={contracts_source['subdirectory']}"
     )
     containerfile = (Path(__file__).parent / "fixtures" / "sdk_script" / "Containerfile").read_text()
+    assert "apt-get install -y --no-install-recommends git" in containerfile
     match = re.search(
         r'^RUN pip install --no-cache-dir "(syntara-plugin-contracts @ git\+[^"\n]+)"$',
         containerfile,

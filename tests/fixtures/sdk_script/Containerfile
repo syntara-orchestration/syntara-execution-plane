@@ -1,6 +1,8 @@
 FROM docker.io/library/python:3.12-slim
 
 # Use the exact contracts source pinned by EP until the matching prerelease is published.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir "syntara-plugin-contracts @ git+https://github.com/syntara-orchestration/syntara-plugin-sdk.git@ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef#subdirectory=sdks/python/packages/contracts"
 
 COPY worker.py /opt/sdk-test-worker.py
