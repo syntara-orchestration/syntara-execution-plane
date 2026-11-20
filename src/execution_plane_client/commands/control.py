@@ -45,9 +45,27 @@ class Completion(CommandPayload):
     )
     runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
 
-    status: CompletionStatus
-    result: dict[str, object] = Field(default_factory=dict, repr=False)
-    error_code: str | None = None
+    status: CompletionStatus = Field(
+        description=(
+            "Reported work outcome. reconciliation_required means the outcome is uncertain and "
+            "must not be treated as a confirmed terminal result."
+        )
+    )
+    result: dict[str, object] = Field(
+        default_factory=dict,
+        repr=False,
+        description=(
+            "Persisted workload output or failure details sent back to the initiating client; its "
+            "contents depend on the invoked step and output mapping."
+        ),
+    )
+    error_code: str | None = Field(
+        default=None,
+        description=(
+            "Optional machine-readable failure classification. The current EP completion notifier "
+            "leaves this null; failure details are carried in result."
+        ),
+    )
 
     @field_validator("result", mode="before")
     @classmethod

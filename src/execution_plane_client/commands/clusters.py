@@ -21,12 +21,40 @@ class ClusterConfigBase(WireModel):
     """Registration configuration fields used by handlers to copy and compare clusters."""
 
     name: Annotated[StrictStr, Field(min_length=1, max_length=255)]
-    endpoint: Annotated[StrictStr, Field(max_length=2048)]
-    credential_ref: UUID
-    ca_certificate: Annotated[StrictStr, Field(max_length=65536)] | None = Field(default=None, repr=False)
+    endpoint: Annotated[StrictStr, Field(max_length=2048)] = Field(
+        description=(
+            "Kubernetes API HTTPS URL used for namespace probes and workload management; embedded "
+            "credentials, query strings, and fragments are prohibited."
+        )
+    )
+    credential_ref: UUID = Field(
+        description=(
+            "Reference resolved through the initiating client for the cluster management "
+            "credential; must be nonzero when registering an enabled cluster."
+        )
+    )
+    ca_certificate: Annotated[StrictStr, Field(max_length=65536)] | None = Field(
+        default=None,
+        repr=False,
+        description=(
+            "PEM CA certificate bundle used to verify the cluster API TLS certificate. Omit on "
+            "registration to use the default trust store."
+        ),
+    )
     labels: dict[str, str] = Field(default_factory=dict)
-    enabled: StrictBool = True
-    is_default: StrictBool = False
+    enabled: StrictBool = Field(
+        default=True,
+        description=(
+            "Whether the cluster can supply targets for new work. A disabled cluster is excluded from placement."
+        ),
+    )
+    is_default: StrictBool = Field(
+        default=False,
+        description=(
+            "Promote this cluster to the default used for fallback placement. An existing default "
+            "cannot be demoted or disabled directly; promote another cluster first."
+        ),
+    )
 
 
 class ClusterRegister(ClusterConfigBase, ResourceIdentity, CommandPayload):
@@ -73,12 +101,42 @@ class ClusterUpdate(ResourceIdentity, CommandPayload):
     command_type: ClassVar[str] = "cluster.update"
 
     name: StrictStr | None = None
-    endpoint: StrictStr | None = None
-    credential_ref: UUID | None = None
-    ca_certificate: StrictStr | None = Field(default=None, repr=False)
+    endpoint: StrictStr | None = Field(
+        default=None,
+        description=(
+            "Kubernetes API HTTPS URL used for namespace probes and workload management; embedded "
+            "credentials, query strings, and fragments are prohibited."
+        ),
+    )
+    credential_ref: UUID | None = Field(
+        default=None,
+        description=(
+            "Reference resolved through the initiating client for the cluster management "
+            "credential; must be nonzero when registering an enabled cluster."
+        ),
+    )
+    ca_certificate: StrictStr | None = Field(
+        default=None,
+        repr=False,
+        description=(
+            "Replacement PEM CA certificate bundle for cluster API TLS verification. Omission or "
+            "null currently leaves the stored certificate unchanged."
+        ),
+    )
     labels: dict[str, str] | None = None
-    enabled: StrictBool | None = None
-    is_default: StrictBool | None = None
+    enabled: StrictBool | None = Field(
+        default=None,
+        description=(
+            "Whether the cluster can supply targets for new work. A disabled cluster is excluded from placement."
+        ),
+    )
+    is_default: StrictBool | None = Field(
+        default=None,
+        description=(
+            "Promote this cluster to the default used for fallback placement. An existing default "
+            "cannot be demoted or disabled directly; promote another cluster first."
+        ),
+    )
 
     def _message_payload(self) -> dict[str, object]:
         return self.model_dump(mode="json", exclude_unset=True)

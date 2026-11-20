@@ -210,7 +210,9 @@ def test_transport_receipt_uses_discriminated_command_result() -> None:
         "type": "object",
         "title": "Credential",
     }
-    assert components["TargetHealthCommandResult"]["properties"]["healthy"] == {
+    healthy = components["TargetHealthCommandResult"]["properties"]["healthy"]
+    assert healthy["description"]
+    assert {key: value for key, value in healthy.items() if key != "description"} == {
         "type": "boolean",
         "title": "Healthy",
     }
