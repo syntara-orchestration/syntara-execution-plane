@@ -41,9 +41,26 @@ class KubernetesPlacement(WireModel):
     """Kubernetes placement contract, independent of Kubernetes libraries."""
 
     type: Literal["kubernetes"] = "kubernetes"
-    namespace: Annotated[StrictStr, Field(min_length=1, max_length=63, pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")]
-    node_selectors: list[str] = Field(default_factory=list)
-    tolerations: list[str] = Field(default_factory=list)
+    namespace: Annotated[StrictStr, Field(min_length=1, max_length=63, pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")] = (
+        Field(description="Existing Kubernetes namespace in which EP creates workload pods and checks target health.")
+    )
+    node_selectors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Pod nodeSelector entries in key=value form. Nodes must match every entry; an empty "
+            "list imposes no label restriction. On update, omission preserves the stored list and "
+            "[] clears it."
+        ),
+    )
+    tolerations: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Pod taints to tolerate, using key=value:effect (Equal) or key:effect (Exists). Effect "
+            "may be NoSchedule, PreferNoSchedule, or NoExecute; omitting it matches all effects. "
+            "An empty key with Exists matches all keys. On update, omission preserves the list and "
+            "[] clears it."
+        ),
+    )
 
     @field_validator("node_selectors")
     @classmethod
@@ -90,10 +107,32 @@ class TargetDefinition(WireModel):
 
     name: Annotated[StrictStr, Field(min_length=1, max_length=255)]
     backend_type: BackendType
-    placement: Placement
-    endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
-    credential_ref: UUID
-    labels: dict[str, str] = Field(default_factory=dict)
+    placement: Placement = Field(
+        description=(
+            "Namespace and pod scheduling rules for this target. Updates require namespace; "
+            "omitted scheduling lists retain their stored values. The placement type cannot be "
+            "changed."
+        )
+    )
+    endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)] = Field(
+        description=(
+            "HTTPS provider management endpoint, without embedded credentials, query, or fragment. "
+            "Kubernetes workloads use the parent cluster connection."
+        )
+    )
+    credential_ref: UUID = Field(
+        description=(
+            "Opaque management credential reference. Kubernetes execution resolves the parent "
+            "cluster credential instead; the AO facade supplies the zero UUID here."
+        )
+    )
+    labels: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "User labels matched by work.execute selectors when routing workloads. Updates replace "
+            "user labels; {} clears them. EP retains its reserved identity labels."
+        ),
+    )
 
     @field_validator("endpoint")
     @classmethod
@@ -116,7 +155,14 @@ class TargetRegister(TargetDefinition, ResourceIdentity, CommandPayload):
     command_type: ClassVar[str] = "execution_target.register"
 
     cluster_id: UUID
-    is_default: StrictBool = False
+    is_default: StrictBool = Field(
+        default=False,
+        description=(
+            "Promote this target to the cluster default, replacing the previous default. The "
+            "target and cluster must be active and enabled. To demote a default, promote another "
+            "target rather than setting this field to false."
+        ),
+    )
 
 
 class TargetDelete(ResourceIdentity, CommandPayload):
@@ -131,12 +177,50 @@ class TargetUpdate(ResourceIdentity, CommandPayload):
     command_type: ClassVar[str] = "execution_target.update"
 
     name: Annotated[StrictStr, Field(min_length=1, max_length=255)] | None = None
-    endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)] | None = None
-    placement: Placement | None = None
-    credential_ref: UUID | None = None
-    labels: dict[str, str] | None = None
-    is_default: StrictBool | None = None
-    enabled: StrictBool | None = None
+    endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)] | None = Field(
+        default=None,
+        description=(
+            "Replacement HTTPS provider management endpoint. Omit to keep the stored endpoint; "
+            "explicit null is rejected."
+        ),
+    )
+    placement: Placement | None = Field(
+        default=None,
+        description=(
+            "Namespace and pod scheduling rules for this target. Updates require namespace; "
+            "omitted scheduling lists retain their stored values. The placement type cannot be "
+            "changed."
+        ),
+    )
+    credential_ref: UUID | None = Field(
+        default=None,
+        description=(
+            "Replacement opaque provider management credential reference; Kubernetes continues to "
+            "use the parent cluster credential."
+        ),
+    )
+    labels: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "User labels matched by work.execute selectors when routing workloads. Updates replace "
+            "user labels; {} clears them. EP retains its reserved identity labels."
+        ),
+    )
+    is_default: StrictBool | None = Field(
+        default=None,
+        description=(
+            "Promote this target to the cluster default, replacing the previous default. The "
+            "target and cluster must be active and enabled. To demote a default, promote another "
+            "target rather than setting this field to false."
+        ),
+    )
+    enabled: StrictBool | None = Field(
+        default=None,
+        description=(
+            "Whether the scheduler may assign new workloads to this target; disabling it does not "
+            "request cancellation of work already assigned."
+        ),
+    )
 
     def _message_payload(self) -> dict[str, object]:
         payload = self.model_dump(mode="json", exclude_unset=True)

@@ -77,8 +77,23 @@ class KubernetesPlacement(BaseModel):
         pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
         description="Kubernetes namespace reserved for execution workloads",
     )
-    node_selectors: list[str] = Field(default_factory=list)
-    tolerations: list[str] = Field(default_factory=list)
+    node_selectors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Pod nodeSelector entries in key=value form. Nodes must match every entry; an empty "
+            "list imposes no label restriction. On update, omission preserves the stored list and "
+            "[] clears it."
+        ),
+    )
+    tolerations: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Pod taints to tolerate, using key=value:effect (Equal) or key:effect (Exists). Effect "
+            "may be NoSchedule, PreferNoSchedule, or NoExecute; omitting it matches all effects. "
+            "An empty key with Exists matches all keys. On update, omission preserves the list and "
+            "[] clears it."
+        ),
+    )
 
     @field_validator("node_selectors")
     @classmethod
@@ -176,9 +191,28 @@ class ExecutionTargetCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
-    placement: KubernetesTargetPlacement
-    labels: dict[str, str] = Field(default_factory=dict)
-    is_default: bool = False
+    placement: KubernetesTargetPlacement = Field(
+        description=(
+            "Namespace and pod scheduling rules for this target. Updates require namespace; "
+            "omitted scheduling lists retain their stored values. The placement type cannot be "
+            "changed."
+        )
+    )
+    labels: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "User labels matched by work.execute selectors when routing workloads. Updates replace "
+            "user labels; {} clears them. EP retains its reserved identity labels."
+        ),
+    )
+    is_default: bool = Field(
+        default=False,
+        description=(
+            "Promote this target to the cluster default, replacing the previous default. The "
+            "target and cluster must be active and enabled. To demote a default, promote another "
+            "target rather than setting this field to false."
+        ),
+    )
 
 
 class ExecutionTargetUpdate(BaseModel):
@@ -187,10 +221,36 @@ class ExecutionTargetUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", json_schema_extra={"minProperties": 1})
 
     name: Annotated[str, Field(min_length=1, max_length=255)] | SkipJsonSchema[None] = None
-    placement: KubernetesTargetPlacement | SkipJsonSchema[None] = None
-    labels: dict[str, str] | SkipJsonSchema[None] = None
-    is_default: bool | SkipJsonSchema[None] = None
-    enabled: bool | SkipJsonSchema[None] = None
+    placement: KubernetesTargetPlacement | SkipJsonSchema[None] = Field(
+        default=None,
+        description=(
+            "Namespace and pod scheduling rules for this target. Updates require namespace; "
+            "omitted scheduling lists retain their stored values. The placement type cannot be "
+            "changed."
+        ),
+    )
+    labels: dict[str, str] | SkipJsonSchema[None] = Field(
+        default=None,
+        description=(
+            "User labels matched by work.execute selectors when routing workloads. Updates replace "
+            "user labels; {} clears them. EP retains its reserved identity labels."
+        ),
+    )
+    is_default: bool | SkipJsonSchema[None] = Field(
+        default=None,
+        description=(
+            "Promote this target to the cluster default, replacing the previous default. The "
+            "target and cluster must be active and enabled. To demote a default, promote another "
+            "target rather than setting this field to false."
+        ),
+    )
+    enabled: bool | SkipJsonSchema[None] = Field(
+        default=None,
+        description=(
+            "Whether the scheduler may assign new workloads to this target; disabling it does not "
+            "request cancellation of work already assigned."
+        ),
+    )
 
     @model_validator(mode="after")
     def check_fields(self) -> Self:
@@ -205,7 +265,12 @@ class ExecutionTargetDeleteAccepted(BaseModel):
     """EP accepted deletion; draining and physical removal happen independently."""
 
     id: UUID
-    accepted: Literal[True] = True
+    accepted: Literal[True] = Field(
+        default=True,
+        description=(
+            "Confirms that EP accepted the deletion request, not that draining or physical removal has finished."
+        ),
+    )
 
 
 class ExecutionTargetHealthResult(BaseModel):
@@ -213,6 +278,18 @@ class ExecutionTargetHealthResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    healthy: bool
+    healthy: bool = Field(
+        description=(
+            "Whether the namespace probe succeeded. For Kubernetes this checks namespace "
+            "readability, not workload execution. Check skipped first: a skipped probe also "
+            "returns true."
+        )
+    )
     message: str | None = None
-    skipped: bool = False
+    skipped: bool = Field(
+        default=False,
+        description=(
+            "True when no health check ran because the backend, endpoint, or cluster/target "
+            "lifecycle is outside probe scope; healthy then does not establish readiness."
+        ),
+    )
