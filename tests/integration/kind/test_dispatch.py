@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from kubernetes.client import ApiException, BatchV1Api, CoreV1Api, V1Job, V1Pod, V1PodSpec
+from structlog.testing import capture_logs
 
 from execution_plane.cluster.cluster_store import ClusterStore
 from execution_plane.config.settings import Settings, get_settings
@@ -894,3 +895,78 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
     assert final_item.result is not None
     assert final_item.result["cancelled"] is True
     assert final_item.result["execution_started"] is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_work_item_operational_logs_are_forwarded_with_correlation(
+    ep_cluster: Cluster,
+    integration_credential_resolver: ClusterCredentialResolver,
+    integration_workload_credential_resolver: WorkloadCredentialResolver,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AAP-102015: toolbox-emitted operational records are forwarded with correlation.
+
+    The fixture workload always records two toolbox entries (one structured
+    with an event name, one plain). The in-process worker's forwarder must
+    emit them as structured log events tagged with the invocation, work item,
+    execution target, and the caller-supplied workflow context from the
+    runtime context.
+    """
+    from execution_plane import operational_logs
+
+    monkeypatch.setattr(operational_logs, "_forwarding_enabled", lambda: True)
+
+    database_url = os.environ["EP_TEST_DATABASE_URL"]
+    settings = get_settings()
+    client_id = "ep-it-log-batch"
+
+    async with (
+        ClusterStore.from_database_url(database_url) as cluster_store,
+        ExecutionTargetStore.from_database_url(database_url) as target_store,
+    ):
+        async with _work_service(
+            database_url,
+            cluster_store,
+            target_store,
+            settings,
+            integration_credential_resolver,
+            integration_workload_credential_resolver,
+        ) as work:
+            with capture_logs() as logs:
+                dispatched = await _dispatch_item(
+                    work,
+                    work.worker_managers,
+                    client_id=client_id,
+                    payload=build_payload(
+                        language="bash",
+                        code="echo ep-integration-log-batch-ok",
+                        timeout_seconds=120,
+                        environment={},
+                        image=_NODE_IMAGE,
+                        runtime_context={"workflow_id": "ep-it-workflow", "execution_id": "ep-it-execution"},
+                    ),
+                )
+                final_item = await _process_until_terminal(
+                    dispatched.assigned, work, target_store, settings, client_id=client_id
+                )
+
+    assert final_item is not None
+    assert final_item.status is WorkItemStatus.COMPLETED, (
+        f"Expected COMPLETED but got {final_item.status}; result={final_item.result}"
+    )
+    step_logs = [entry for entry in logs if "step_log_severity" in entry]
+    assert {entry["event"] for entry in step_logs} == {
+        "fixture operational log from the toolbox",
+        "fixture second record",
+    }, "Expected the fixture's toolbox records to be forwarded"
+    for entry in step_logs:
+        assert entry["invocation_id"]
+        assert entry["work_item_id"] == str(final_item.id)
+        assert entry["execution_target_id"]
+        assert entry["workflow_id"] == "ep-it-workflow"
+        assert entry["execution_id"] == "ep-it-execution"
+        assert entry["step_log_timestamp"]
+    structured = next(entry for entry in step_logs if entry["event"] == "fixture operational log from the toolbox")
+    assert structured["step_log_event_name"] == "fixture.toolbox_log"
+    assert structured["step_log_attributes"] == {"fixture": True, "language": "bash"}
