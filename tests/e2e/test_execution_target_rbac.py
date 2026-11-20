@@ -30,11 +30,11 @@ def test_dispatcher_role_matches_vanilla_k8s_transport() -> None:
         (("",), ("pods",), ("list",)),
         (("",), ("pods/portforward",), ("get", "create")),
         (("",), ("configmaps",), ("create", "get", "patch", "delete")),
+        (("",), ("secrets",), ("create", "patch", "delete")),
         (("batch",), ("jobs",), ("create", "get", "delete")),
         (("networking.k8s.io",), ("networkpolicies",), ("create", "get", "list", "patch", "delete")),
     }
     resources = {resource for _, resource_names, _ in rules for resource in resource_names}
-    assert "secrets" not in resources
     assert "pods/log" not in resources
     assert "pods/exec" not in resources
 

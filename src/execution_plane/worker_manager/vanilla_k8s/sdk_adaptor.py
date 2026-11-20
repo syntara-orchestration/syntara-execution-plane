@@ -41,6 +41,7 @@ CHANNEL_OPTIONS = (
     ("grpc.max_receive_message_length", MAX_MESSAGE_BYTES),
     ("grpc.max_send_message_length", MAX_MESSAGE_BYTES),
     ("grpc.enable_retries", 0),
+    ("grpc.enable_http_proxy", 0),
 )
 
 
