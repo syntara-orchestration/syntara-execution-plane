@@ -32,6 +32,7 @@ from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane.work_item.work_scheduler import WorkScheduler
 from execution_plane.worker import _process_item
 from execution_plane.worker_manager.vanilla_k8s.manager import VanillaK8sWorkerManager
+from execution_plane_client.commands.bulk_work import WorkItemSelector
 from execution_plane_client.commands.work import WorkExecute
 from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
 from execution_plane_client.models.work_item import WorkItemStatus
@@ -306,7 +307,9 @@ async def _cancel_processing_task(
         return
 
     with suppress(Exception):
-        await work.store.request_cancel(item_id, client_id=client_id)
+        await work.store.request_bulk_control(
+            WorkItemSelector(work_item_ids=[item_id]), client_id=client_id, delete=False
+        )
 
     await asyncio.wait({processing_task}, timeout=_DISPATCH_CLEANUP_TIMEOUT_SECONDS)
     if processing_task.done():
@@ -615,9 +618,11 @@ async def test_work_item_cancel_reaches_cancelled(
                     timeout_seconds=_JOB_WAIT_TIMEOUT_SECONDS,
                 )
 
-                cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
+                await work.store.request_bulk_control(
+                    WorkItemSelector(work_item_ids=[item.id]), client_id=client_id, delete=False
+                )
+                cancel_requested = await work.store.get(item.id, client_id=client_id)
                 assert cancel_requested.cancellation_requested is True
-                assert cancel_requested.status is WorkItemStatus.RUNNING
                 assert running_item.status is WorkItemStatus.RUNNING
 
                 await processing_task
@@ -864,7 +869,10 @@ async def test_work_item_cancel_while_dispatched_before_running_reaches_cancelle
                     timeout_seconds=_JOB_WAIT_TIMEOUT_SECONDS,
                 )
 
-                cancel_requested = await work.store.request_cancel(item.id, client_id=client_id)
+                await work.store.request_bulk_control(
+                    WorkItemSelector(work_item_ids=[item.id]), client_id=client_id, delete=False
+                )
+                cancel_requested = await work.store.get(item.id, client_id=client_id)
                 assert cancel_requested.cancellation_requested is True
                 assert cancel_requested.status is WorkItemStatus.DISPATCHED
                 assert dispatched_item.status is WorkItemStatus.DISPATCHED

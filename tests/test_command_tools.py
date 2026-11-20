@@ -10,7 +10,14 @@ from tools import deploy_kind_execution_target, submit_work_item, work_item_clie
 
 def test_default_token_scopes_authorize_command_tools():
     scopes = str(work_item_client.service_token_claims()["scope"]).split()
-    assert {"work.execute", "work.cancel", "cluster.register", "clusters:read", "work-items:read"} <= set(scopes)
+    assert {
+        "work.execute",
+        "work.cancel_bulk",
+        "work.delete_bulk",
+        "cluster.register",
+        "clusters:read",
+        "work-items:read",
+    } <= set(scopes)
 
 
 def test_submit_tool_builds_valid_work_command(monkeypatch):

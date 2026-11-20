@@ -14,14 +14,14 @@ from execution_plane.commands.targets import TargetHealthCommandHandler, TargetU
 from execution_plane.execution_target.execution_target_store import TargetNotEligibleForDefaultError
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane_client.commands.base import CommandPayload
-from execution_plane_client.commands.control import WorkCancel
+from execution_plane_client.commands.bulk_work import WorkCancelBulk, WorkDeleteBulk
 from execution_plane_client.commands.results import TargetHealthCommandResult
-from execution_plane_client.commands.work import WorkDelete, WorkExecute
+from execution_plane_client.commands.work import WorkExecute
 from execution_plane_client.handlers import HandlingResult
 from execution_plane_client.protocol import ResourceReference
 
 
-def command_message(kind="work.cancel", payload=None):
+def command_message(kind="work.cancel_bulk", payload=None):
     return {
         "message_id": str(uuid4()),
         "source_id": "ao",
@@ -31,7 +31,7 @@ def command_message(kind="work.cancel", payload=None):
             "command_type": kind,
             "command_revision": 1,
             "occurred_at": datetime.now(UTC).isoformat(),
-            "payload": payload if payload is not None else {"work_item_id": str(uuid4())},
+            "payload": payload if payload is not None else {"selector": {"work_item_ids": [str(uuid4())]}},
         },
     }
 
@@ -53,7 +53,7 @@ def test_only_command_mutations_and_resource_queries_are_exposed():
         assert f"/v1/{resource}/{{resource_id}}" in paths
 
 
-@pytest.mark.parametrize("command_type", [WorkExecute, WorkCancel, WorkDelete])
+@pytest.mark.parametrize("command_type", [WorkExecute, WorkCancelBulk, WorkDeleteBulk])
 async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, command_type):
     work_id = uuid4()
     payload = (
@@ -67,11 +67,11 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
             },
         }
         if command_type is WorkExecute
-        else {"work_item_id": str(work_id)}
+        else {"selector": {"work_item_ids": [str(work_id)]}}
     )
     message = command_message(command_type.command_type, payload)
     store = AsyncMock(spec=WorkStore)
-    store.dispatch.return_value = store.request_cancel.return_value = SimpleNamespace(id=work_id)
+    store.dispatch.return_value = SimpleNamespace(id=work_id)
     monkeypatch.setattr(WorkStore, "from_engine", lambda _engine: store)
     parsed_payloads = []
     validate = command_type.model_validate
@@ -91,16 +91,17 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
         response = await client.post("/v1/commands", json=message)
     assert response.status_code == 202
     assert response.json()["message_id"] == message["message_id"]
-    assert response.json()["resource"]["resource_id"] == str(work_id)
     assert len(parsed_payloads) == 1
     if command_type is WorkExecute:
+        assert response.json()["resource"]["resource_id"] == str(work_id)
         store.dispatch.assert_awaited_once_with(
             client_id="ao", item_id=work_id, payload=parsed_payloads[0].model_dump(mode="json")
         )
-    elif command_type is WorkDelete:
-        store.request_delete.assert_awaited_once_with(work_id, client_id="ao")
     else:
-        store.request_cancel.assert_awaited_once_with(work_id, client_id="ao")
+        assert response.json().get("resource") is None
+        store.request_bulk_control.assert_awaited_once_with(
+            parsed_payloads[0].selector, client_id="ao", delete=command_type is WorkDeleteBulk
+        )
 
 
 @pytest.mark.parametrize(
@@ -108,7 +109,7 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
 )
 async def test_ingress_rejects_before_domain_effects(change, status):
     app = create_app()
-    scopes = frozenset() if change == "permission" else frozenset({"work.cancel"})
+    scopes = frozenset() if change == "permission" else frozenset({"work.cancel_bulk"})
     app.dependency_overrides[get_service_identity] = lambda: ServiceIdentity(client_id="ao", scopes=scopes)
     message = command_message()
     if change == "owner":
@@ -213,10 +214,21 @@ async def test_capabilities_do_not_advertise_uninstalled_completion_handlers():
         response = await client.get("/v1/capabilities")
     assert response.status_code == 200
     commands = response.json()["commands"]
-    assert len(commands) == 12
+    assert len(commands) == 10
     assert commands["work.cancel_bulk"] == [1]
     assert commands["work.delete_bulk"] == [1]
-    assert commands["work.delete"] == [1]
+    assert "work.delete" not in commands
     assert "cluster.provision" not in commands
-    assert commands["work.cancel"] == [1]
+    assert "work.cancel" not in commands
     assert "work.execute.completed" not in commands
+
+
+@pytest.mark.parametrize("command", ["work.cancel", "work.delete"])
+async def test_removed_single_item_commands_are_rejected(command):
+    app = create_app()
+    app.dependency_overrides[get_service_identity] = lambda: ServiceIdentity(
+        client_id="ao", scopes=frozenset({command})
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://ep.test") as client:
+        response = await client.post("/v1/commands", json=command_message(command, {"work_item_id": str(uuid4())}))
+    assert response.status_code == 422

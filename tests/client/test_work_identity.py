@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from execution_plane_client.catalog import CommandCatalog
-from execution_plane_client.commands.control import Completion, WorkCancel
+from execution_plane_client.commands.control import Completion
 from execution_plane_client.commands.credentials import CredentialResolveWorkload
 from execution_plane_client.commands.work import WorkExecute
 from tests.test_api_schemas import _payload
@@ -21,11 +21,10 @@ def test_rebuilt_submission_changes_only_delivery_identity():
 
 
 @pytest.mark.parametrize("value", [None, "bad-uuid", 42])
-@pytest.mark.parametrize("model", [WorkExecute, WorkCancel, Completion, CredentialResolveWorkload])
+@pytest.mark.parametrize("model", [WorkExecute, Completion, CredentialResolveWorkload])
 def test_work_item_identity_is_required_and_validated(model, value):
     payloads = {
         WorkExecute: _payload(),
-        WorkCancel: {},
         Completion: {"status": "completed"},
         CredentialResolveWorkload: {
             "attempt_id": "attempt-1",

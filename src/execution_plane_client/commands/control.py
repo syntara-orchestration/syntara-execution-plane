@@ -12,16 +12,6 @@ from execution_plane_client.models.work_item import WorkItemStatus
 from execution_plane_client.protocol import validate_json
 
 
-class WorkCancel(CommandPayload):
-    """Request cancellation of an existing work item."""
-
-    command_type: ClassVar[str] = "work.cancel"
-
-    work_item_id: UUID = Field(
-        description="Primary key (WorkItem.id) of the existing EP work item to cancel within the authenticated client."
-    )
-
-
 class CompletionStatus(StrEnum):
     """Work-item states that can be reported by a completion command."""
 

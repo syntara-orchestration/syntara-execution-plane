@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.bulk_work import WorkCancelBulk, WorkDeleteBulk
 from execution_plane_client.commands.clusters import ClusterDelete, ClusterRegister, ClusterUpdate
-from execution_plane_client.commands.control import Completion, WorkCancel
+from execution_plane_client.commands.control import Completion
 from execution_plane_client.commands.credentials import CredentialResolveCluster, CredentialResolveWorkload
 from execution_plane_client.commands.targets import TargetDelete, TargetHealth, TargetRegister, TargetUpdate
-from execution_plane_client.commands.work import WorkDelete, WorkExecute
+from execution_plane_client.commands.work import WorkExecute
 from execution_plane_client.errors import UnsupportedCommand
 from execution_plane_client.protocol import MessageEnvelope
 
@@ -31,7 +31,6 @@ class CommandCatalog:
             WorkExecute,
             WorkCancelBulk,
             WorkDeleteBulk,
-            WorkDelete,
             Completion,
             CredentialResolveCluster,
             CredentialResolveWorkload,
@@ -42,7 +41,6 @@ class CommandCatalog:
             TargetUpdate,
             TargetDelete,
             TargetHealth,
-            WorkCancel,
         )
         self._definitions = {
             (schema.command_type, schema.command_revision): CommandDefinition(

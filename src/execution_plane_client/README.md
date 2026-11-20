@@ -45,7 +45,9 @@ the caller; the helper does not authenticate them.
 
 `WorkExecute` requires a caller-assigned `work_item_id`, which becomes the new
 WorkItem's primary key. Submitting an existing ID returns HTTP 409. Use that same
-ID for `WorkCancel`, `Completion`, and `CredentialResolveWorkload` requests.
+ID for `Completion` and `CredentialResolveWorkload` requests. For cancellation or
+deletion, use `WorkCancelBulk` or `WorkDeleteBulk` with a `WorkItemSelector` containing
+a one-element `work_item_ids` list.
 
 Work execution accepts optional non-secret `runtime_context`, passed to the
 plugin and included in work-item reads and completion notifications. See

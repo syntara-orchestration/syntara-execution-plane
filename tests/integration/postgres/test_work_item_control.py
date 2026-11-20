@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from execution_plane.models.work_item import WorkItem, WorkItemStatus
 from execution_plane.work_item.work_item_store import WorkStore
+from execution_plane_client.commands.bulk_work import WorkItemSelector
 
 pytestmark = pytest.mark.integration
 
@@ -31,7 +32,7 @@ async def test_cancellation_survives_a_new_store_and_cannot_dispatch(controls):
     store, sessions, owner = controls
     item_id = uuid4()
     await store.dispatch(owner, item_id, {})
-    await store.request_cancel(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=False)
     async with sessions() as session:
         item = await session.get(WorkItem, item_id)
         assert item.cancellation_requested is True
@@ -49,10 +50,10 @@ async def test_pending_deletion_is_async_idempotent_and_client_scoped(controls):
     store, _sessions, owner = controls
     item_id = uuid4()
     await store.dispatch(owner, item_id, {})
-    await store.request_delete(item_id, client_id="foreign")
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id="foreign", delete=True)
     assert (await store.get(item_id, client_id=owner)).deletion_requested is False
-    await store.request_delete(item_id, client_id=owner)
-    await store.request_delete(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=True)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=True)
     item = await store.get(item_id, client_id=owner)
     assert item.deletion_requested
     assert item.cancellation_requested
@@ -60,7 +61,7 @@ async def test_pending_deletion_is_async_idempotent_and_client_scoped(controls):
     assert await store.mark_dispatched(item_id) is False
     await store.purge_deleted_work()
     assert await store.get(item_id, client_id=owner) is None
-    await store.request_delete(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=True)
 
 
 async def test_running_deletion_retains_work_until_resource_cleanup_is_confirmed(controls):
@@ -81,7 +82,7 @@ async def test_running_deletion_retains_work_until_resource_cleanup_is_confirmed
                 resource_cleanup_status="pending",
             )
         )
-    await store.request_delete(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=True)
     assert (await store.get(item_id, client_id=owner)).status is WorkItemStatus.RUNNING
     await store.purge_deleted_work()
     assert (await store.get(item_id, client_id=owner)).status is WorkItemStatus.RUNNING
@@ -109,7 +110,7 @@ async def test_deletion_suppresses_new_completion_delivery(controls):
     item_id = uuid4()
     await store.dispatch(owner, item_id, {})
     await store.set_result(item_id, {}, WorkItemStatus.COMPLETED)
-    await store.request_delete(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=True)
     assert item_id not in [item.id for item in await store.claim_work_items_that_need_completion_notification()]
 
 
@@ -134,7 +135,7 @@ async def test_database_rejects_deletion_without_cancellation_on_insert_and_upda
         with pytest.raises(IntegrityError, match="ck_work_items_deletion_requires_cancellation"):
             await session.execute(update(WorkItem).where(WorkItem.id == item_id).values(deletion_requested=True))
         await session.rollback()
-    await store.request_delete(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=True)
     async with sessions() as session:
         with pytest.raises(IntegrityError, match="ck_work_items_deletion_requires_cancellation"):
             await session.execute(update(WorkItem).where(WorkItem.id == item_id).values(cancellation_requested=False))
@@ -148,7 +149,7 @@ async def test_cancellation_intent_preserves_lifecycle_and_claim_timestamp(contr
     claimed_at = datetime.now(UTC)
     async with sessions.begin() as session:
         session.add(WorkItem(id=item_id, client_id=owner, status=status, created_at=claimed_at, claimed_at=claimed_at))
-    await store.request_cancel(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=False)
     await store.purge_deleted_work()
     item = await store.get(item_id, client_id=owner)
     assert item.cancellation_requested is True
@@ -178,9 +179,9 @@ async def test_request_records_intent_unconditionally_and_changes_no_outcome(con
     before = (await store.get(item_id, client_id=owner)).model_dump()
     for _ in range(2):
         if operation == "cancel":
-            await store.request_cancel(item_id, client_id=owner)
+            await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=False)
         else:
-            await store.request_delete(item_id, client_id=owner)
+            await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=True)
         after = (await store.get(item_id, client_id=owner)).model_dump()
         assert after == {**before, "cancellation_requested": True, "deletion_requested": operation == "delete"}
 
@@ -204,7 +205,7 @@ async def test_queued_cancellation_fences_dispatch_but_never_cancels_allocated_w
         )
     if dispatch_first:
         assert await store.mark_dispatched(item_id, claim_owner_id=claim_owner, claim_generation=1)
-    await store.request_cancel(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=False)
     if not dispatch_first:
         assert await store.mark_dispatched(item_id, claim_owner_id=claim_owner, claim_generation=1) is False
     await store.purge_deleted_work()
@@ -237,7 +238,7 @@ async def test_unconfirmed_pre_execute_cleanup_retains_uncertainty_and_cancel_in
                 resource_cleanup_status="failed",
             )
         )
-    await store.request_cancel(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=False)
     await store.requeue_pre_execute_failure(item_id, claim_owner_id=claim_owner, claim_generation=1)
     item = await store.get(item_id, client_id=owner)
     assert item.status is WorkItemStatus.RECONCILIATION_REQUIRED
@@ -273,7 +274,7 @@ async def test_queued_state_with_unconfirmed_resources_is_not_declared_cancelled
                 resource_cleanup_status="failed",
             )
         )
-    await store.request_cancel(item_id, client_id=owner)
+    await store.request_bulk_control(WorkItemSelector(work_item_ids=[item_id]), client_id=owner, delete=False)
     await store.purge_deleted_work()
     item = await store.get(item_id, client_id=owner)
     assert item.status is WorkItemStatus.PENDING

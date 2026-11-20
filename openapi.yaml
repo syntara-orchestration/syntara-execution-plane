@@ -1322,9 +1322,7 @@ components:
       - $ref: '#/components/schemas/TargetHealthCommandV1'
       - $ref: '#/components/schemas/TargetRegisterCommandV1'
       - $ref: '#/components/schemas/TargetUpdateCommandV1'
-      - $ref: '#/components/schemas/WorkCancelCommandV1'
       - $ref: '#/components/schemas/WorkCancelBulkCommandV1'
-      - $ref: '#/components/schemas/WorkDeleteCommandV1'
       - $ref: '#/components/schemas/WorkDeleteBulkCommandV1'
       - $ref: '#/components/schemas/WorkExecuteCommandV1'
       title: Command
@@ -1339,9 +1337,7 @@ components:
           execution_target.health: '#/components/schemas/TargetHealthCommandV1'
           execution_target.register: '#/components/schemas/TargetRegisterCommandV1'
           execution_target.update: '#/components/schemas/TargetUpdateCommandV1'
-          work.cancel: '#/components/schemas/WorkCancelCommandV1'
           work.cancel_bulk: '#/components/schemas/WorkCancelBulkCommandV1'
-          work.delete: '#/components/schemas/WorkDeleteCommandV1'
           work.delete_bulk: '#/components/schemas/WorkDeleteBulkCommandV1'
           work.execute: '#/components/schemas/WorkExecuteCommandV1'
     CommandScope:
@@ -1744,20 +1740,6 @@ components:
       - resource_id
       title: TargetUpdate
       description: Mutable target fields; `is_default=true` promotes this target.
-    WorkCancel:
-      properties:
-        work_item_id:
-          type: string
-          format: uuid
-          title: Work Item Id
-          description: Primary key (WorkItem.id) of the existing EP work item to cancel
-            within the authenticated client.
-      additionalProperties: false
-      type: object
-      required:
-      - work_item_id
-      title: WorkCancel
-      description: Request cancellation of an existing work item.
     WorkCancelBulk:
       properties:
         selector:
@@ -1797,19 +1779,6 @@ components:
       - credential_ref
       title: WorkCredentialBinding
       description: One Plugin SDK recipe-to-AO credential mapping for a work item.
-    WorkDelete:
-      properties:
-        work_item_id:
-          type: string
-          format: uuid
-          title: Work Item Id
-      additionalProperties: false
-      type: object
-      required:
-      - work_item_id
-      title: WorkDelete
-      description: Request asynchronous cancellation, resource cleanup, and removal
-        of owned work.
     WorkDeleteBulk:
       properties:
         selector:
@@ -2192,36 +2161,6 @@ components:
       - occurred_at
       title: TargetUpdateCommandV1
       description: One versioned operation; participants persist only its domain effects.
-    WorkCancelCommandV1:
-      properties:
-        command_type:
-          type: string
-          const: work.cancel
-          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
-          title: Command Type
-          description: Operation to perform; selects the payload contract.
-        command_revision:
-          type: integer
-          const: 1
-          exclusiveMinimum: 0.0
-          title: Command Revision
-          description: Version of this operation's payload contract, not a resource
-            revision.
-        payload:
-          $ref: '#/components/schemas/WorkCancel'
-        occurred_at:
-          type: string
-          format: date-time
-          title: Occurred At
-      additionalProperties: false
-      type: object
-      required:
-      - command_type
-      - command_revision
-      - payload
-      - occurred_at
-      title: WorkCancelCommandV1
-      description: One versioned operation; participants persist only its domain effects.
     WorkCancelBulkCommandV1:
       properties:
         command_type:
@@ -2251,36 +2190,6 @@ components:
       - payload
       - occurred_at
       title: WorkCancelBulkCommandV1
-      description: One versioned operation; participants persist only its domain effects.
-    WorkDeleteCommandV1:
-      properties:
-        command_type:
-          type: string
-          const: work.delete
-          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
-          title: Command Type
-          description: Operation to perform; selects the payload contract.
-        command_revision:
-          type: integer
-          const: 1
-          exclusiveMinimum: 0.0
-          title: Command Revision
-          description: Version of this operation's payload contract, not a resource
-            revision.
-        payload:
-          $ref: '#/components/schemas/WorkDelete'
-        occurred_at:
-          type: string
-          format: date-time
-          title: Occurred At
-      additionalProperties: false
-      type: object
-      required:
-      - command_type
-      - command_revision
-      - payload
-      - occurred_at
-      title: WorkDeleteCommandV1
       description: One versioned operation; participants persist only its domain effects.
     WorkDeleteBulkCommandV1:
       properties:

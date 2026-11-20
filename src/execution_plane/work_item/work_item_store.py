@@ -418,50 +418,6 @@ class WorkStore(StoreBase):
                 await session.rollback()
                 raise
 
-    async def request_cancel(
-        self,
-        item_id: uuid.UUID,
-        *,
-        client_id: str,
-    ) -> WorkItem:
-        """Record the caller's request for any owned item, including terminal work."""
-        async with self._session_context() as session:
-            try:
-                result = await session.execute(
-                    select(WorkItem)
-                    .where(col(WorkItem.id) == item_id)
-                    .where(col(WorkItem.client_id) == client_id)
-                    .with_for_update()
-                )
-                item = result.scalars().first()
-                if item is None:
-                    raise WorkItemNotFoundError(item_id)  # noqa: TRY301
-                item.cancellation_requested = True
-                await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
-                await session.commit()
-                return item
-            except Exception:
-                await session.rollback()
-                raise
-
-    async def request_delete(self, item_id: uuid.UUID, *, client_id: str) -> None:
-        """Durably request removal after the worker confirms resource cleanup.
-
-        Absent and foreign work are indistinguishable no-ops. No other client's
-        work is modified and repeated requests can safely recover a lost receipt.
-        """
-        async with self._session_context() as session, session.begin():
-            result = await session.execute(
-                select(WorkItem)
-                .where(col(WorkItem.id) == item_id, col(WorkItem.client_id) == client_id)
-                .with_for_update()
-            )
-            item = result.scalars().first()
-            if item is not None:
-                item.deletion_requested = True
-                item.cancellation_requested = True
-                await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
-
     async def request_bulk_control(self, selector: WorkItemSelector, *, client_id: str, delete: bool) -> None:
         """Set intent with one indexed, client-scoped UPDATE and one transactional wake-up.
 
