@@ -127,11 +127,3 @@ class WorkExecute(CommandPayload):
         default=WorkloadType.CONTAINER,
         description="Workload execution family; container is the only supported value.",
     )
-
-
-class WorkDelete(CommandPayload):
-    """Request asynchronous cancellation, resource cleanup, and removal of owned work."""
-
-    command_type: ClassVar[str] = "work.delete"
-
-    work_item_id: UUID

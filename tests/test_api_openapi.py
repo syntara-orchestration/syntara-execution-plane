@@ -59,8 +59,8 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
                 },
             },
         ),
-        ("work.cancel", {"work_item_id": str(uuid4())}),
-        ("work.delete", {"work_item_id": str(uuid4())}),
+        ("work.cancel_bulk", {"selector": {"work_item_ids": [str(uuid4())]}}),
+        ("work.delete_bulk", {"selector": {"work_item_ids": [str(uuid4())]}}),
         ("cluster.update", {"resource_id": str(uuid4()), "name": "renamed"}),
         ("cluster.delete", {"resource_id": str(uuid4())}),
         (
@@ -121,8 +121,6 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
     command = components["Command"]
     expected_payloads = {
         "work.execute": "WorkExecute",
-        "work.cancel": "WorkCancel",
-        "work.delete": "WorkDelete",
         "work.cancel_bulk": "WorkCancelBulk",
         "work.delete_bulk": "WorkDeleteBulk",
         "cluster.register": "ClusterRegister",

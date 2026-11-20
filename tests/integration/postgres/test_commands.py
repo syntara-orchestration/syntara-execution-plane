@@ -27,8 +27,6 @@ async def command_client(migrated_database):
         scopes=frozenset(
             {
                 "work.execute",
-                "work.cancel",
-                "work.delete",
                 "work.delete_bulk",
                 "work.cancel_bulk",
                 "cluster.register",
@@ -156,7 +154,9 @@ async def test_work_command_uses_work_item_uuid_and_cancel_uses_work_state(comma
     assert duplicate.status_code == 409
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["runtime_context"] == original_runtime_context
-    cancel = await client.post("/v1/commands", json=command_message("work.cancel", {"work_item_id": str(work_id)}))
+    cancel = await client.post(
+        "/v1/commands", json=command_message("work.cancel_bulk", {"selector": {"work_item_ids": [str(work_id)]}})
+    )
     assert cancel.status_code == 202
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "pending"
@@ -172,16 +172,15 @@ async def test_work_command_uses_work_item_uuid_and_cancel_uses_work_state(comma
     read = await client.get(f"/v1/work-items/{work_id}")
     assert read.json()["status"] == "cancelled"
     missing = await client.post("/v1/commands", json=command_message())
-    assert missing.status_code == 404
+    assert missing.status_code == 202
 
-    deletion = command_message("work.delete", {"work_item_id": str(work_id)})
+    deletion = command_message("work.delete_bulk", {"selector": {"work_item_ids": [str(work_id)]}})
     receipt = await client.post("/v1/commands", json=deletion)
     assert receipt.status_code == 202
     deletion_read = await client.get(f"/v1/work-items/{work_id}")
     assert deletion_read.json()["cancellation_requested"] is True
     assert deletion_read.json()["deletion_requested"] is True
     assert deletion_read.json()["status"] == "cancelled"
-    assert receipt.json()["resource"]["resource_id"] == str(work_id)
     async with sessions() as session:
         assert (await session.get(WorkItem, work_id)).deletion_requested is True
     async with sessions() as session:

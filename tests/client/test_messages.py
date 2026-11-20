@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from execution_plane_client.catalog import CommandCatalog
-from execution_plane_client.commands import clusters, control, targets, work
+from execution_plane_client.commands import bulk_work, clusters, control, targets, work
 from execution_plane_client.protocol import MessageEnvelope
 
 RESOURCE_ID = "00000000-0000-0000-0000-000000000001"
@@ -42,7 +42,8 @@ CLUSTER = {
             "work.execute.completed",
             {"work_item_id": RESOURCE_ID, "status": control.CompletionStatus.COMPLETED, "result": {"stdout": "done"}},
         ),
-        (control, "WorkCancel", "work.cancel", {"work_item_id": RESOURCE_ID}),
+        (bulk_work, "WorkCancelBulk", "work.cancel_bulk", {"selector": {"work_item_ids": [RESOURCE_ID]}}),
+        (bulk_work, "WorkDeleteBulk", "work.delete_bulk", {"selector": {"work_item_ids": [RESOURCE_ID]}}),
         (clusters, "ClusterRegister", "cluster.register", CLUSTER),
         (
             clusters,
@@ -204,7 +205,7 @@ def test_target_patch_can_change_enabled_state() -> None:
 
 def test_message_can_have_an_explicit_transport_identity():
     message_id = uuid4()
-    message = control.WorkCancel(work_item_id=uuid4()).to_message(
+    message = bulk_work.WorkCancelBulk(selector=bulk_work.WorkItemSelector(work_item_ids=[uuid4()])).to_message(
         source_id="ao",
         destination_id="ep",
         client_id="ao",
@@ -225,6 +226,6 @@ def test_message_can_have_an_explicit_transport_identity():
 )
 def test_message_helper_retains_envelope_validation(metadata):
     with pytest.raises(ValidationError):
-        control.WorkCancel(work_item_id=uuid4()).to_message(
+        bulk_work.WorkCancelBulk(selector=bulk_work.WorkItemSelector(work_item_ids=[uuid4()])).to_message(
             **{"source_id": "ao", "destination_id": "ep", "client_id": "ao", **metadata},
         )

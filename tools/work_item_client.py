@@ -40,7 +40,8 @@ DEFAULT_TOKEN_TTL = timedelta(hours=8)
 DEFAULT_TOKEN_SCOPES = (
     "work-items:read",
     "work.execute",
-    "work.cancel",
+    "work.cancel_bulk",
+    "work.delete_bulk",
     "execution-targets:read",
     "clusters:read",
     "cluster.register",
