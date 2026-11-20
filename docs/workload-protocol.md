@@ -67,6 +67,19 @@ at `/run/syntara/resolved.json`. EP sets `SYNTARA_RESOLVED_EXECUTION` to that
 path. The ConfigMap is labeled and cleaned up with the attempt. This metadata is
 separate from step inputs and credentials.
 
+SDK a7 TCP runtimes require mutual TLS. For each workload attempt, EP creates a
+short-lived CA plus separate runtime-server and EP-client certificates. It puts
+only the server certificate, server private key, and CA certificate into an
+immutable, attempt-labeled Kubernetes Secret mounted read-only at
+`/run/ep-runtime-tls`. This EP-specific path avoids collision with OpenShift's
+reserved `/run/secrets` RHSM mount. EP keeps the client certificate and private
+key in memory and opens a TLS gRPC channel over the existing Kubernetes
+port-forward. The runtime trusts the mounted CA for EP's client certificate; EP
+trusts that CA for the runtime server certificate. The Secret is owner-referenced
+to the attempt Job and explicitly deleted after confirmed Job cleanup. The target
+Role grants EP only `create`, `patch`, and `delete` on Secrets; it does not grant
+Secret reads or listing.
+
 Script environment variables are ordinary inputs. Optional `credential_bindings`
 map `credential_recipe_id` to an AO `credential_ref` UUID. EP accepts up to 16
 bindings with distinct recipe IDs and keeps them outside `inputs` and

@@ -20,6 +20,7 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import portforward
 
 from execution_plane.worker_manager.vanilla_k8s.forward import forward_socket
+from execution_plane.worker_manager.vanilla_k8s.runtime_tls import RuntimeTlsMaterial
 from execution_plane.worker_manager.vanilla_k8s.sdk_adaptor import CHANNEL_OPTIONS, PORT, WorkloadRpcError, invoke
 
 if TYPE_CHECKING:
@@ -51,6 +52,7 @@ def _network_contains(
 _MAX_LOGGED_BODY_CHARS = 2048
 _RESOLVED_EXECUTION_FILENAME = "resolved.json"
 _RESOLVED_EXECUTION_PATH = f"/run/syntara/{_RESOLVED_EXECUTION_FILENAME}"
+_RUNTIME_TLS_MOUNT_PATH = "/run/ep-runtime-tls"
 
 
 def _truncate_for_log(value: object) -> str | None:
@@ -136,6 +138,7 @@ def pod_body(
     startup: int,
     grace: int,
     resolved_execution_config_map: str | None = None,
+    runtime_tls_secret: str | None = None,
     node_selectors: list[str] | None = None,
     tolerations: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -169,7 +172,35 @@ def pod_body(
             }
         )
         mounts.append({"name": "resolved-execution", "mountPath": "/run/syntara", "readOnly": True})
-        container["env"] = [{"name": "SYNTARA_RESOLVED_EXECUTION", "value": _RESOLVED_EXECUTION_PATH}]
+        container.setdefault("env", []).append(
+            {"name": "SYNTARA_RESOLVED_EXECUTION", "value": _RESOLVED_EXECUTION_PATH}
+        )
+    if runtime_tls_secret is not None:
+        volumes.append(
+            {
+                "name": "runtime-tls",
+                "secret": {
+                    "secretName": runtime_tls_secret,
+                    "defaultMode": 0o444,
+                    "items": [
+                        {"key": "server.crt", "path": "server.crt"},
+                        {"key": "server.key", "path": "server.key"},
+                        {"key": "client-ca.crt", "path": "client-ca.crt"},
+                    ],
+                },
+            }
+        )
+        mounts.append({"name": "runtime-tls", "mountPath": _RUNTIME_TLS_MOUNT_PATH, "readOnly": True})
+        container.setdefault("env", []).extend(
+            [
+                {"name": "SYNTARA_RUNTIME_GRPC_TLS_CERT", "value": f"{_RUNTIME_TLS_MOUNT_PATH}/server.crt"},
+                {"name": "SYNTARA_RUNTIME_GRPC_TLS_KEY", "value": f"{_RUNTIME_TLS_MOUNT_PATH}/server.key"},
+                {
+                    "name": "SYNTARA_RUNTIME_GRPC_TLS_CLIENT_CA",
+                    "value": f"{_RUNTIME_TLS_MOUNT_PATH}/client-ca.crt",
+                },
+            ]
+        )
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -336,6 +367,7 @@ def job_body(
     startup: int,
     grace: int,
     resolved_execution_config_map: str | None = None,
+    runtime_tls_secret: str | None = None,
     node_selectors: list[str] | None = None,
     tolerations: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -349,6 +381,7 @@ def job_body(
         startup=startup,
         grace=grace,
         resolved_execution_config_map=resolved_execution_config_map,
+        runtime_tls_secret=runtime_tls_secret,
         node_selectors=node_selectors,
         tolerations=tolerations,
     )
@@ -398,9 +431,11 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
     allowed_egress_cidrs: list[str] | None = None,
     forbidden_egress_cidrs: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Execute once in a cold-start Job; invocation data uses gRPC and bindings use a read-only ConfigMap."""
+    """Execute once in a cold-start Job over an attempt-scoped mutual TLS channel."""
     name = "syntara-node-" + hashlib.sha256(attempt_id.encode()).hexdigest()[:32]
     resolved_execution_config_map = f"{name}-resolved" if invocation.resolved_execution is not None else None
+    runtime_tls_secret = f"{name}-tls"
+    runtime_tls = RuntimeTlsMaterial.create()
     namespace = target["namespace"]
     with tempfile.TemporaryDirectory(prefix="syntara-node-") as directory:
         config = client.Configuration()
@@ -436,6 +471,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
             policy_name = f"{name}-network"
             policy_owned = False
             resolved_execution_config_map_owned = False
+            runtime_tls_secret_owned = False
             pending_transport_error: TransportError | None = None
             deleted = False
             cleanup_status = "not_required"
@@ -492,6 +528,18 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                             message = "Resolved execution metadata already exists for this attempt"
                             raise TransportError(message) from None
                         raise
+                try:
+                    api.create_namespaced_secret(
+                        namespace,
+                        runtime_tls.secret_body(runtime_tls_secret, identity, attempt_id),
+                        _request_timeout=15,
+                    )
+                    runtime_tls_secret_owned = True
+                except ApiException as exc:
+                    if exc.status == HTTPStatus.CONFLICT:
+                        message = "Runtime TLS Secret already exists for this attempt"
+                        raise TransportError(message) from None
+                    raise
                 job_may_exist = True
                 try:
                     job = batch_api.create_namespaced_job(
@@ -505,6 +553,7 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                             startup=startup,
                             grace=grace,
                             resolved_execution_config_map=resolved_execution_config_map,
+                            runtime_tls_secret=runtime_tls_secret,
                             node_selectors=node_selectors,
                             tolerations=tolerations,
                         ),
@@ -515,6 +564,24 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                     if resolved_execution_config_map is not None and job_uid is not None:
                         api.patch_namespaced_config_map(
                             resolved_execution_config_map,
+                            namespace,
+                            {
+                                "metadata": {
+                                    "ownerReferences": [
+                                        {
+                                            "apiVersion": "batch/v1",
+                                            "kind": "Job",
+                                            "name": name,
+                                            "uid": job_uid,
+                                        }
+                                    ]
+                                }
+                            },
+                            _request_timeout=15,
+                        )
+                    if job_uid is not None:
+                        api.patch_namespaced_secret(
+                            runtime_tls_secret,
                             namespace,
                             {
                                 "metadata": {
@@ -617,7 +684,15 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                     try:
                         with (
                             forward_socket(connection.socket(PORT)) as address,
-                            grpc.insecure_channel(address, options=CHANNEL_OPTIONS) as channel,
+                            grpc.secure_channel(
+                                address,
+                                grpc.ssl_channel_credentials(
+                                    root_certificates=runtime_tls.ca_certificate,
+                                    private_key=runtime_tls.client_key,
+                                    certificate_chain=runtime_tls.client_certificate,
+                                ),
+                                options=CHANNEL_OPTIONS,
+                            ) as channel,
                         ):
 
                             def mark_submitted() -> None:
@@ -816,6 +891,41 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                             "kind": "progress",
                             "event": "cleanup_deferred",
                             "data": {"config_map": resolved_execution_config_map},
+                        }
+                    )
+                if runtime_tls_secret_owned and (deleted or not job_may_exist):
+                    try:
+                        api.delete_namespaced_secret(runtime_tls_secret, namespace, _request_timeout=15)
+                    except ApiException as exc:
+                        if exc.status != HTTPStatus.NOT_FOUND:
+                            cleanup_status = "failed"
+                            cleanup_error = "Runtime TLS Secret cleanup failed"
+                            progress(
+                                {
+                                    "version": 1,
+                                    "kind": "progress",
+                                    "event": "cleanup_failed",
+                                    "data": {"secret": runtime_tls_secret},
+                                }
+                            )
+                    except Exception:  # noqa: BLE001 - cleanup must not hide the execution result
+                        cleanup_status = "failed"
+                        cleanup_error = "Runtime TLS Secret cleanup failed"
+                        progress(
+                            {
+                                "version": 1,
+                                "kind": "progress",
+                                "event": "cleanup_failed",
+                                "data": {"secret": runtime_tls_secret},
+                            }
+                        )
+                elif runtime_tls_secret_owned:
+                    progress(
+                        {
+                            "version": 1,
+                            "kind": "progress",
+                            "event": "cleanup_deferred",
+                            "data": {"secret": runtime_tls_secret},
                         }
                     )
                 if pending_transport_error is not None and (

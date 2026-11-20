@@ -1,9 +1,9 @@
 # Target-cluster RBAC for the Execution Plane dispatcher ServiceAccount.
 # Applied by tools/deploy_kind_execution_target.py, the CI kind job, and
 # tools/ci/konflux-prepare-execution-plane.sh.
-# Namespaced Role: vanilla-k8s transport (Jobs, ConfigMaps, list Pods,
-# pods/portforward, NetworkPolicies). ClusterRole: Resource Monitor namespace GET.
-# Do not add Pod create, logs, or Secrets.
+# Namespaced Role: vanilla-k8s transport (Jobs, ConfigMaps, one attempt-scoped
+# runtime TLS Secret, list Pods, pods/portforward, NetworkPolicies). ClusterRole:
+# Resource Monitor namespace GET. Do not add Pod create, Secret read/list, or logs.
 ---
 apiVersion: v1
 kind: Namespace
@@ -31,6 +31,9 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "get", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "patch", "delete"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "delete"]
