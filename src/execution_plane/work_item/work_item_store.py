@@ -11,7 +11,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, case, func, or_, select, text
+from sqlalchemy import and_, case, cast, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col
 
@@ -35,6 +36,8 @@ from execution_plane_client.models.work_item import WorkItemStatus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
+    from execution_plane_client.commands.bulk_work import WorkItemSelector
 
 _NOTIFY_CHANNEL = "execution_plane_work_items"
 _COMPLETION_NOTIFICATION_CLAIM_SECONDS = 30
@@ -458,6 +461,29 @@ class WorkStore(StoreBase):
                 item.deletion_requested = True
                 item.cancellation_requested = True
                 await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
+
+    async def request_bulk_control(self, selector: WorkItemSelector, *, client_id: str, delete: bool) -> None:
+        """Set intent with one indexed, client-scoped UPDATE and one transactional wake-up.
+
+        No lifecycle or result fields change. Already-recorded intent need not
+        rewrite the row. Missing/foreign work is a no-op; transaction failures
+        roll back the entire request. JSONB containment uses the existing GIN index.
+        """
+        statement = update(WorkItem).where(col(WorkItem.client_id) == client_id)
+        if selector.work_item_ids is not None:
+            statement = statement.where(col(WorkItem.id).in_(selector.work_item_ids))
+        else:
+            context = selector.runtime_context
+            statement = statement.where(cast(WorkItem.runtime_context, JSONB).contains(context))
+        values = {"cancellation_requested": True}
+        if delete:
+            values["deletion_requested"] = True
+            statement = statement.where(col(WorkItem.deletion_requested).is_(False))
+        else:
+            statement = statement.where(col(WorkItem.cancellation_requested).is_(False))
+        async with self._session_context() as session, session.begin():
+            await session.execute(statement.values(**values).execution_options(synchronize_session=False))
+            await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
 
     async def purge_deleted_work(self, *, limit: int = 100) -> None:
         """Delete at most limit deletion-requested rows with no owner and confirmed cleanup.

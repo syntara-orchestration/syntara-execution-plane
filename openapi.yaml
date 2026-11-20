@@ -1323,7 +1323,9 @@ components:
       - $ref: '#/components/schemas/TargetRegisterCommandV1'
       - $ref: '#/components/schemas/TargetUpdateCommandV1'
       - $ref: '#/components/schemas/WorkCancelCommandV1'
+      - $ref: '#/components/schemas/WorkCancelBulkCommandV1'
       - $ref: '#/components/schemas/WorkDeleteCommandV1'
+      - $ref: '#/components/schemas/WorkDeleteBulkCommandV1'
       - $ref: '#/components/schemas/WorkExecuteCommandV1'
       title: Command
       description: A command type and revision paired with its corresponding payload.
@@ -1338,7 +1340,9 @@ components:
           execution_target.register: '#/components/schemas/TargetRegisterCommandV1'
           execution_target.update: '#/components/schemas/TargetUpdateCommandV1'
           work.cancel: '#/components/schemas/WorkCancelCommandV1'
+          work.cancel_bulk: '#/components/schemas/WorkCancelBulkCommandV1'
           work.delete: '#/components/schemas/WorkDeleteCommandV1'
+          work.delete_bulk: '#/components/schemas/WorkDeleteBulkCommandV1'
           work.execute: '#/components/schemas/WorkExecuteCommandV1'
     CommandScope:
       properties:
@@ -1474,6 +1478,7 @@ components:
       - step_revision_id
       title: CredentialResolveWorkload
       description: Resolve one credential reference for the identified work item.
+    JsonValue: {}
     ClientKubernetesPlacement:
       properties:
         type:
@@ -1753,6 +1758,22 @@ components:
       - work_item_id
       title: WorkCancel
       description: Request cancellation of an existing work item.
+    WorkCancelBulk:
+      properties:
+        selector:
+          $ref: '#/components/schemas/WorkItemSelector'
+          description: Exactly one selector; filter matches have no row-count limit.
+      additionalProperties: false
+      type: object
+      required:
+      - selector
+      title: WorkCancelBulk
+      description: 'Commit cancellation intent for all matches in one transaction.
+
+
+        Success acknowledges durable intent, not stopped execution. Lifecycle and
+
+        results are unchanged, including for terminal work. Repeating is safe.'
     WorkCredentialBinding:
       properties:
         credential_recipe_id:
@@ -1789,6 +1810,22 @@ components:
       title: WorkDelete
       description: Request asynchronous cancellation, resource cleanup, and removal
         of owned work.
+    WorkDeleteBulk:
+      properties:
+        selector:
+          $ref: '#/components/schemas/WorkItemSelector'
+          description: Exactly one selector; filter matches have no row-count limit.
+      additionalProperties: false
+      type: object
+      required:
+      - selector
+      title: WorkDeleteBulk
+      description: 'Commit deletion and cancellation intent together for all matches.
+
+
+        Success follows the transaction commit, not resource cleanup or physical
+
+        removal. EP workers own completion. Repeating after a lost receipt is safe.'
     WorkExecute:
       properties:
         work_item_id:
@@ -1854,6 +1891,43 @@ components:
       - invocation
       title: WorkExecute
       description: Schedule one workload implementing the SDK container service.
+    WorkItemSelector:
+      properties:
+        work_item_ids:
+          anyOf:
+          - items:
+              type: string
+              format: uuid
+            type: array
+            maxItems: 100
+            minItems: 1
+          - type: 'null'
+          title: Work Item Ids
+        runtime_context:
+          anyOf:
+          - additionalProperties:
+              $ref: '#/components/schemas/JsonValue'
+            type: object
+            minProperties: 1
+          - type: 'null'
+          title: Runtime Context
+          description: Non-empty JSON object matched using PostgreSQL JSONB containment
+            (@>). All supplied key/value pairs must be contained in the stored runtime_context.
+            Nested objects may contain additional keys; arrays use JSONB containment
+            semantics. Keys and values are caller-defined; EP assigns them no domain
+            meaning.
+      additionalProperties: false
+      type: object
+      title: WorkItemSelector
+      description: 'Select by exactly one ID list or a non-empty runtime-context containment
+        filter.
+
+
+        Selection is always restricted to the authenticated client. Missing IDs,
+
+        foreign IDs, and zero filter matches are successful no-ops. A filter selects
+
+        existing rows at execution time, not work submitted after the command.'
     WorkloadInvocation:
       properties:
         step_revision_id:
@@ -2148,6 +2222,36 @@ components:
       - occurred_at
       title: WorkCancelCommandV1
       description: One versioned operation; participants persist only its domain effects.
+    WorkCancelBulkCommandV1:
+      properties:
+        command_type:
+          type: string
+          const: work.cancel_bulk
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
+        command_revision:
+          type: integer
+          const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
+        payload:
+          $ref: '#/components/schemas/WorkCancelBulk'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: WorkCancelBulkCommandV1
+      description: One versioned operation; participants persist only its domain effects.
     WorkDeleteCommandV1:
       properties:
         command_type:
@@ -2177,6 +2281,36 @@ components:
       - payload
       - occurred_at
       title: WorkDeleteCommandV1
+      description: One versioned operation; participants persist only its domain effects.
+    WorkDeleteBulkCommandV1:
+      properties:
+        command_type:
+          type: string
+          const: work.delete_bulk
+          pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+          title: Command Type
+          description: Operation to perform; selects the payload contract.
+        command_revision:
+          type: integer
+          const: 1
+          exclusiveMinimum: 0.0
+          title: Command Revision
+          description: Version of this operation's payload contract, not a resource
+            revision.
+        payload:
+          $ref: '#/components/schemas/WorkDeleteBulk'
+        occurred_at:
+          type: string
+          format: date-time
+          title: Occurred At
+      additionalProperties: false
+      type: object
+      required:
+      - command_type
+      - command_revision
+      - payload
+      - occurred_at
+      title: WorkDeleteBulkCommandV1
       description: One versioned operation; participants persist only its domain effects.
     WorkExecuteCommandV1:
       properties:

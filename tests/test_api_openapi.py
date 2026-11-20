@@ -123,6 +123,8 @@ def test_command_ingress_references_components_with_discriminated_commands() -> 
         "work.execute": "WorkExecute",
         "work.cancel": "WorkCancel",
         "work.delete": "WorkDelete",
+        "work.cancel_bulk": "WorkCancelBulk",
+        "work.delete_bulk": "WorkDeleteBulk",
         "cluster.register": "ClusterRegister",
         "cluster.update": "ClusterUpdate",
         "cluster.delete": "ClusterDelete",
