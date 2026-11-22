@@ -705,7 +705,7 @@ async def run_parallel_batch(
                     await asyncio.sleep(PARALLEL_CLEANUP_SETTLE_SECONDS)
             finally:
                 try:
-                    await _cleanup_submitted_work_items(work_store, submitted_ids)
+                    await cleanup_work_items(work_store, submitted_ids)
                 finally:
                     executor.shutdown(wait=False, cancel_futures=True)
                     await engine.dispose()
@@ -803,7 +803,7 @@ async def run_sequential_batch(
                 if submitted_ids:
                     await asyncio.sleep(CLEANUP_SETTLE_SECONDS)
             finally:
-                await _cleanup_submitted_work_items(work_store, submitted_ids)
+                await cleanup_work_items(work_store, submitted_ids)
 
     return SequentialBatchResult(
         pre_pod_ms=pre_pod_ms,
@@ -814,14 +814,8 @@ async def run_sequential_batch(
     )
 
 
-async def _cleanup_submitted_work_items(work_store: WorkStore, work_ids: list[uuid.UUID]) -> None:
-    """Delete work-item rows created by this run from the shared perf database.
-
-    Args:
-        work_store: Work-item store used for the delete.
-        work_ids: Work item ids to remove.
-
-    """
+async def cleanup_work_items(work_store: WorkStore, work_ids: list[uuid.UUID]) -> None:
+    """Delete work-item rows created by this run from the shared perf database."""
     if not work_ids:
         return
     async with work_store._session_context() as session:

@@ -148,6 +148,7 @@ class TestDispatchOverhead:
         perf_token: str,
         perf_k8s_core_api: CoreV1Api,
         perf_ep_namespace: str,
+        perf_node_image: None,
     ) -> None:
         """Test 1.1: p99 pre-pod ≤ 500 ms and test 1.2: p99 post-pod ≤ 300 ms."""
         batch = await run_sequential_batch(
@@ -187,6 +188,7 @@ class TestDispatchOverhead:
         perf_token: str,
         perf_k8s_core_api: CoreV1Api,
         perf_ep_namespace: str,
+        perf_node_image: None,
         cluster_load_80pct,
     ) -> None:
         """Test 1.1 / 1.2 under 80 % cluster load — skipped until load fixture exists."""
