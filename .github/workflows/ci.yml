@@ -96,7 +96,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:19
         env:
           POSTGRES_PASSWORD: postgres
         options: >-
@@ -142,7 +142,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:19
         env:
           POSTGRES_PASSWORD: postgres
         options: >-
@@ -234,7 +234,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-test-logs
           path: |
@@ -328,7 +328,7 @@ jobs:
           test -s pytest-results.xml
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7.2.1
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets[vars.SONAR_TOKEN_SECRET_NAME] }}
         with:
