@@ -1,10 +1,15 @@
 """Contract checks for the cold-start Job and its workload network policy."""
 
 import pytest
+from kubernetes.client.exceptions import ApiException
 from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
-from execution_plane.worker_manager.vanilla_k8s.transport import job_body, network_policy_body
+from execution_plane.worker_manager.vanilla_k8s.transport import (
+    _is_retryable_portforward_error,
+    job_body,
+    network_policy_body,
+)
 from execution_plane_client.commands.work import WorkloadInvocation
 
 
@@ -14,6 +19,17 @@ def _invocation() -> WorkloadInvocation:
         inputs={},
         timeout_seconds=60,
     )
+
+
+def test_retryable_portforward_error_handles_kubernetes_response_body_bug() -> None:
+    api_error = ApiException(status=0, reason='pod not found ("worker_default")')
+    wrapper = AttributeError("'NoneType' object has no attribute 'decode'")
+    wrapper.__context__ = api_error
+
+    assert _is_retryable_portforward_error(wrapper)
+    assert _is_retryable_portforward_error(api_error)
+    assert not _is_retryable_portforward_error(ApiException(status=403, reason="Forbidden"))
+    assert not _is_retryable_portforward_error(AttributeError("unrelated"))
 
 
 def test_job_body_is_a_single_attempt_worker_allocation() -> None:

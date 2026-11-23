@@ -60,6 +60,24 @@ def _truncate_for_log(value: object) -> str | None:
     return text
 
 
+def _is_retryable_portforward_error(error: Exception) -> bool:
+    """Recognize Kubernetes' transient missing-Pod error without exposing it."""
+    api_error = error
+    if (
+        isinstance(error, AttributeError)
+        and str(error) == "'NoneType' object has no attribute 'decode'"
+        and isinstance(error.__context__, ApiException)
+    ):
+        # kubernetes-client/python attempts to decode a missing response body
+        # while wrapping a port-forward failure, masking the actual API error.
+        api_error = error.__context__
+    return (
+        isinstance(api_error, ApiException)
+        and api_error.status == 0
+        and "pod not found" in (api_error.reason or "").lower()
+    )
+
+
 class TransportError(Exception):
     """Failure with an explicit safe-to-retry classification."""
 
@@ -505,13 +523,23 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                     if pod_name is None:
                         message = "Kubernetes Job has no owned worker Pod"
                         raise TransportError(message, retryable=True)
-                    connection = portforward(
-                        api.connect_get_namespaced_pod_portforward,
-                        pod_name,
-                        namespace,
-                        ports=str(PORT),
-                        _request_timeout=15,
-                    )
+                    try:
+                        connection = portforward(
+                            api.connect_get_namespaced_pod_portforward,
+                            pod_name,
+                            namespace,
+                            ports=str(PORT),
+                            _request_timeout=15,
+                        )
+                    except (ApiException, AttributeError) as error:
+                        if (
+                            _is_retryable_portforward_error(error)
+                            and not submitted
+                            and time.monotonic() < grpc_deadline
+                        ):
+                            cancelled.wait(0.1)
+                            continue
+                        raise
                     try:
                         with (
                             forward_socket(connection.socket(PORT)) as address,
@@ -591,12 +619,12 @@ def run_job(  # noqa: C901, PLR0912, PLR0915 - one owned cold-start allocation
                     retryable=not submitted and exc.status in {429, 502, 503, 504},
                     submitted=submitted or (job_may_exist and not job_owned),
                 ) from None
-            except Exception as exc:  # noqa: BLE001 - never expose raw API credentials or responses
+            except Exception as exc:
                 # Catch-all for non-API failures (DNS, TLS, socket). Log both the
                 # exception type and message for admin triage. str(exc) is safe here
                 # because this branch only fires for non-ApiException errors (those are
                 # caught above) whose messages do not carry raw Kubernetes responses.
-                logger.warning(
+                logger.exception(
                     "Node transport failed",
                     work_item_id=identity,
                     pod=pod_name or name,
