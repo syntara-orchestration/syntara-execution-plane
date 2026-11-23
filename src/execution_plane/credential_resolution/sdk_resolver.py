@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+import structlog
 from syntara_plugin.runtime import CredentialAccessError, CredentialRequestContext
 
 from execution_plane.credential_resolution.errors import CredentialResolutionError
@@ -15,6 +16,7 @@ from execution_plane.credential_resolution.workload import WorkloadCredentialRes
 from execution_plane_client.commands.work import WorkCredentialBinding
 
 _POLL_INTERVAL_SECONDS = 0.05
+logger = structlog.stdlib.get_logger(__name__)
 
 
 class CredentialFailureReason(StrEnum):
@@ -64,11 +66,29 @@ class SDKCredentialResolver:
         """Resolve one invocation-scoped credential request without leaking details."""
         credential_ref = self._credential_bindings.get(context.name)
         if credential_ref is None:
+            logger.warning(
+                "SDK credential request has no binding",
+                work_item_id=str(self._work_item_id),
+                attempt_id=self._attempt_id,
+                credential_recipe_id=context.name,
+            )
             raise _credential_error(CredentialFailureReason.MISSING)
         if context.invocation_id != self._invocation_id or context.cancelled:
+            logger.warning(
+                "SDK credential request expired before dispatch",
+                work_item_id=str(self._work_item_id),
+                attempt_id=self._attempt_id,
+                credential_recipe_id=context.name,
+            )
             raise _credential_error(CredentialFailureReason.EXPIRED)
 
         if not self._acquire_read_slot(context):
+            logger.warning(
+                "SDK credential request expired while waiting for a read slot",
+                work_item_id=str(self._work_item_id),
+                attempt_id=self._attempt_id,
+                credential_recipe_id=context.name,
+            )
             raise _credential_error(CredentialFailureReason.EXPIRED)
         try:
             if context.cancelled:
@@ -78,7 +98,19 @@ class SDKCredentialResolver:
         finally:
             self._read_slots.release()
         if credential is None:
+            logger.warning(
+                "SDK credential request expired before resolution completed",
+                work_item_id=str(self._work_item_id),
+                attempt_id=self._attempt_id,
+                credential_recipe_id=context.name,
+            )
             raise _credential_error(CredentialFailureReason.EXPIRED)
+        logger.info(
+            "SDK credential request resolved",
+            work_item_id=str(self._work_item_id),
+            attempt_id=self._attempt_id,
+            credential_recipe_id=context.name,
+        )
         return credential
 
     def _acquire_read_slot(self, context: CredentialRequestContext) -> bool:
@@ -124,7 +156,19 @@ class SDKCredentialResolver:
         try:
             credential = future.result()
         except (asyncio.CancelledError, CredentialResolutionError):
+            logger.warning(
+                "SDK credential request could not be resolved",
+                work_item_id=str(self._work_item_id),
+                attempt_id=self._attempt_id,
+                credential_recipe_id=context.name,
+            )
             raise _credential_error(CredentialFailureReason.UNAVAILABLE) from None
         if not credential:
+            logger.warning(
+                "SDK credential request returned an empty credential",
+                work_item_id=str(self._work_item_id),
+                attempt_id=self._attempt_id,
+                credential_recipe_id=context.name,
+            )
             raise _credential_error(CredentialFailureReason.UNAVAILABLE)
         return credential

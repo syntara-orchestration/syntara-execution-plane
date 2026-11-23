@@ -10,6 +10,7 @@ import httpx
 import structlog
 
 from execution_plane.callback_client import CallbackHTTPClient
+from execution_plane.logging.command_payload import redacted_command_payload
 from execution_plane_client.commands.control import Completion, CompletionStatus
 from execution_plane_client.commands.results import TransportReceipt
 from execution_plane_client.models.work_item import WorkItemStatus
@@ -85,6 +86,15 @@ class CompletionNotifier:
             destination_id=item.client_id,
             client_id=item.client_id,
             occurred_at=item.completed_at or item.created_at,
+        )
+        logger.info(
+            "Completion command sent",
+            command_name=body.command.command_type,
+            command_revision=body.command.command_revision,
+            message_id=str(body.message_id),
+            destination_id=body.destination_id,
+            work_item_id=str(item.id),
+            payload=redacted_command_payload(body.command.payload),
         )
         try:
             response = await self._client.post_json(body.model_dump(mode="json"))

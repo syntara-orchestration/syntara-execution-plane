@@ -34,6 +34,7 @@ from execution_plane.execution_target.execution_target_store import (
     DefaultExecutionTargetError,
     TargetNotEligibleForDefaultError,
 )
+from execution_plane.logging.command_payload import redacted_command_payload
 from execution_plane.logging.lifecycle import start_loggers, stop_loggers
 from execution_plane.logging.logging import build_uvicorn_logging_config
 from execution_plane.work_item.errors import DuplicateWorkItemError, WorkItemNotFoundError
@@ -82,10 +83,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ep_settings = settings
     app.state.ep_engine = engine
     app.state.ep_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    logger.info("Execution Plane API started", service_jwt_audience=settings.service_jwt_audience)
     try:
         yield
     finally:
         await engine.dispose()
+        logger.info("Execution Plane API stopped")
         stop_loggers()
 
 
@@ -156,6 +159,7 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
         request: Request, identity: Annotated[ServiceIdentity, Depends(get_service_identity)]
     ) -> TransportReceipt:
         data = bytearray()
+        message: MessageEnvelope | None = None
         async for chunk in request.stream():
             if len(data) + len(chunk) > _BODY_LIMIT:
                 raise HTTPException(status_code=413, detail="Command too large")
@@ -164,15 +168,38 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             message = MessageEnvelope.model_validate(strict_json(bytes(data)))
             payload = catalog.validate(message)
             handler = registry.get(message.command.command_type, message.command.command_revision)
+            logger.info(
+                "Command received",
+                command_name=message.command.command_type,
+                command_revision=message.command.command_revision,
+                message_id=str(message.message_id),
+                source_id=message.source_id,
+                destination_id=message.destination_id,
+                client_id=message.scope.client_id,
+                payload=redacted_command_payload(message.command.payload),
+            )
             if (
                 message.scope.client_id != identity.client_id
                 or message.source_id != identity.client_id
                 or message.destination_id != get_settings().service_jwt_audience
                 or message.command.command_type not in identity.scopes
             ):
-                raise HTTPException(status_code=403, detail="Command is not authorized")
+                logger.warning(
+                    "Command rejected because it was not authorized",
+                    command_name=message.command.command_type,
+                    message_id=str(message.message_id),
+                )
+                raise HTTPException(status_code=403, detail="Command is not authorized")  # noqa: TRY301
             result = await handler.handle(
                 message, payload, EPCommandContext(identity.client_id, request.app.state.ep_engine)
+            )
+            logger.info(
+                "Command accepted",
+                command_name=message.command.command_type,
+                command_revision=message.command.command_revision,
+                message_id=str(message.message_id),
+                resource_kind=result.resource.kind if result.resource is not None else None,
+                resource_id=str(result.resource.resource_id) if result.resource is not None else None,
             )
         except (
             DuplicateWorkItemError,
@@ -181,13 +208,42 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
             ClusterNotAvailableError,
             TargetNotEligibleForDefaultError,
         ):
+            logger.warning(
+                "Command rejected because resource state conflicts with the request",
+                command_name=message.command.command_type if message is not None else None,
+                message_id=str(message.message_id) if message is not None else None,
+            )
             raise HTTPException(status_code=409, detail="Resource state conflicts with the request") from None
         except (ValidationError, ValueError, UnsupportedCommand):
+            logger.warning(
+                "Command rejected because it was invalid or unsupported",
+                command_name=message.command.command_type if message is not None else None,
+                message_id=str(message.message_id) if message is not None else None,
+            )
             raise HTTPException(status_code=422, detail="Invalid or unsupported command") from None
         except (ProtocolConflict, IntegrityError):
+            logger.warning(
+                "Command rejected because of a protocol conflict",
+                command_name=message.command.command_type if message is not None else None,
+                message_id=str(message.message_id) if message is not None else None,
+            )
             raise HTTPException(status_code=409, detail="Resource state conflicts with the request") from None
         except WorkItemNotFoundError:
+            logger.warning(
+                "Command rejected because the target resource was not found",
+                command_name=message.command.command_type if message is not None else None,
+                message_id=str(message.message_id) if message is not None else None,
+            )
             raise HTTPException(status_code=404, detail="Resource not found") from None
+        except Exception:
+            command_name = message.command.command_type if message is not None else None
+            message_id = str(message.message_id) if message is not None else None
+            logger.exception(
+                "Command processing failed",
+                command_name=command_name,
+                message_id=message_id,
+            )
+            raise
         return TransportReceipt(message_id=message.message_id, resource=result.resource, result=result.result)
 
     @app.get(

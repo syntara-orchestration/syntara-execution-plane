@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import structlog
+
 from execution_plane.credential_resolution.errors import (
     CREDENTIAL_RESOLUTION_MISMATCH,
     CredentialResolutionInvalidError,
@@ -18,6 +20,9 @@ if TYPE_CHECKING:
 
     from execution_plane.config.settings import Settings
     from execution_plane.credential_resolution.client import CredentialResolutionClient
+
+
+logger = structlog.stdlib.get_logger(__name__)
 
 
 class WorkloadCredentialResolver:
@@ -40,6 +45,11 @@ class WorkloadCredentialResolver:
         """Resolve one approved recipe for the work item that owns the attempt."""
         if credential_ref == UUID(int=0) or not work_item_id:
             message = "Invalid workload credential request"
+            logger.warning(
+                "Workload credential resolution rejected an invalid request",
+                work_item_id=str(work_item_id),
+                credential_recipe_id=credential_recipe_id,
+            )
             raise CredentialResolutionInvalidError(message)
         command = CredentialResolveWorkload(
             work_item_id=work_item_id,
@@ -61,5 +71,18 @@ class WorkloadCredentialResolver:
             or receipt.resource is None
             or receipt.resource.resource_id != work_item_id
         ):
+            logger.warning(
+                "Workload credential resolution receipt did not match its command",
+                command_name=envelope.command.command_type,
+                message_id=str(envelope.message_id),
+                work_item_id=str(work_item_id),
+            )
             raise CredentialResolutionMismatchError(CREDENTIAL_RESOLUTION_MISMATCH)
+        logger.info(
+            "Workload credential resolved",
+            command_name=envelope.command.command_type,
+            message_id=str(envelope.message_id),
+            work_item_id=str(work_item_id),
+            credential_recipe_id=credential_recipe_id,
+        )
         return result.credential

@@ -11,11 +11,16 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol
 
+import structlog
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from execution_plane.models.work_item import WorkItem
     from execution_plane.work_item.work_item_store import WorkStore
+
+
+logger = structlog.stdlib.get_logger(__name__)
 
 
 class ExecutionStartRejectedError(Exception):
@@ -52,6 +57,7 @@ class WorkerManagerBase(ABC):
             claim_generation=work_item.claim_generation,
         ):
             return None
+        logger.info("Work dispatch started", work_item_id=str(work_item.id))
         return await self._dispatch(work_item)
 
     @abstractmethod

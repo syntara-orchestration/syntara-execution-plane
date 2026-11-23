@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self
 
 import httpx
+import structlog
 from pydantic import ValidationError
 
 from execution_plane.callback_client import CallbackHTTPClient
@@ -12,7 +13,11 @@ from execution_plane.credential_resolution.errors import (
     CREDENTIAL_RESOLUTION_FAILED,
     CredentialResolutionUnavailableError,
 )
+from execution_plane.logging.command_payload import redacted_command_payload
 from execution_plane_client.commands.results import TransportReceipt
+
+logger = structlog.stdlib.get_logger(__name__)
+
 
 if TYPE_CHECKING:
     from execution_plane.config.settings import Settings
@@ -43,10 +48,30 @@ class CredentialResolutionClient:
             message = "Credential-resolution callback is not configured"
             raise CredentialResolutionUnavailableError(message)
         try:
+            logger.info(
+                "Credential resolution command sent",
+                command_name=envelope.command.command_type,
+                command_revision=envelope.command.command_revision,
+                message_id=str(envelope.message_id),
+                destination_id=envelope.destination_id,
+                payload=redacted_command_payload(envelope.command.payload),
+            )
             response = await self._client.post_json(envelope.model_dump(mode="json"))
             response.raise_for_status()
-            return TransportReceipt.model_validate(response.json())
+            receipt = TransportReceipt.model_validate(response.json())
+            logger.info(
+                "Credential resolution command receipt received",
+                command_name=envelope.command.command_type,
+                message_id=str(envelope.message_id),
+            )
+            return receipt
         except (httpx.HTTPError, ValidationError, ValueError) as exc:
+            logger.warning(
+                "Credential resolution command delivery failed",
+                command_name=envelope.command.command_type,
+                message_id=str(envelope.message_id),
+                error_type=type(exc).__name__,
+            )
             raise CredentialResolutionUnavailableError(CREDENTIAL_RESOLUTION_FAILED) from exc
 
     async def close(self) -> None:

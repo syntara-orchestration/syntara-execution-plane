@@ -68,7 +68,7 @@ class ExecutionTargetReconciler:
             available = _default_routing(available)
 
         outcome = ResolveOutcome.MATCHED if available else ResolveOutcome.NO_MATCHING_TARGETS
-        logger.debug(
+        logger.info(
             "Reconciled execution targets",
             outcome=outcome.value,
             available=len(available),
