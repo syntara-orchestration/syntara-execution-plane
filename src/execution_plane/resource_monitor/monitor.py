@@ -64,6 +64,7 @@ class ResourceMonitor:
 
     async def scan(self) -> None:
         """Probe each registered target once. One target failure does not abort the scan."""
+        logger.info("Resource monitor scan started")
         targets = await self._target_queries.list()
         clusters: dict[uuid.UUID, Cluster | None] = {}
         seen: set[uuid.UUID] = set()
@@ -77,6 +78,7 @@ class ResourceMonitor:
                 logger.exception("Resource monitor probe failed", target_id=str(target.id))
         self._failures = {target_id: count for target_id, count in self._failures.items() if target_id in seen}
         self._successes = {target_id: count for target_id, count in self._successes.items() if target_id in seen}
+        logger.info("Resource monitor scan completed", target_count=len(targets))
 
     async def _probe_one(self, target: ExecutionTarget, clusters: dict[uuid.UUID, Cluster | None]) -> None:
         """Load Cluster state, resolve its credential, and probe after hysteresis."""
@@ -84,6 +86,7 @@ class ResourceMonitor:
             clusters[target.cluster_id] = await self._cluster_credentials.get_with_credentials(target.cluster_id)
         cluster = clusters[target.cluster_id]
         if cluster is None:
+            logger.warning("Resource monitor target has no cluster", target_id=str(target.id))
             return
         if cluster.source_client_id is None:
             result = ProbeResult(healthy=False, message="Cluster credential could not be resolved")
@@ -94,12 +97,18 @@ class ResourceMonitor:
                     client_id=cluster.source_client_id,
                 )
             except CredentialResolutionError:
+                logger.warning(
+                    "Resource monitor could not resolve cluster credential",
+                    target_id=str(target.id),
+                    cluster_id=str(cluster.id),
+                )
                 result = ProbeResult(healthy=False, message="Cluster credential could not be resolved")
             else:
                 result = await self._probe.probe(cluster, credential, target)
         if result.skipped:
             self._failures.pop(target.id, None)
             self._successes.pop(target.id, None)
+            logger.info("Resource monitor probe skipped", target_id=str(target.id))
             return
         if not self._hysteresis_ready(target, result):
             return
@@ -111,11 +120,23 @@ class ResourceMonitor:
             self._successes[target.id] = self._successes.get(target.id, 0) + 1
             self._failures[target.id] = 0
             if self._successes[target.id] < self._success_threshold:
+                logger.info(
+                    "Resource monitor success threshold not reached",
+                    target_id=str(target.id),
+                    successes=self._successes[target.id],
+                    success_threshold=self._success_threshold,
+                )
                 return False
             return target.status is TargetStatus.DEGRADED or bool(target.status_message)
         self._failures[target.id] = self._failures.get(target.id, 0) + 1
         self._successes[target.id] = 0
         if self._failures[target.id] < self._failure_threshold:
+            logger.warning(
+                "Resource monitor failure threshold not reached",
+                target_id=str(target.id),
+                failures=self._failures[target.id],
+                failure_threshold=self._failure_threshold,
+            )
             return False
         return target.status is TargetStatus.ACTIVE or target.status_message != result.message
 

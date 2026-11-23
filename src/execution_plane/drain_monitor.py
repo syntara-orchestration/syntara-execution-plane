@@ -100,10 +100,12 @@ class DrainMonitor:
                 await self._target_drain.finalize_delete(target_id)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception:
+            logger.exception("Execution target drain failed", target_id=str(target_id))
             try:
                 await self._target_drain.mark_failed(target_id, updated_by)
-            except Exception:  # noqa: BLE001
+            except Exception:
+                logger.exception("Execution target drain failure could not be persisted", target_id=str(target_id))
                 return
 
     async def _drain_cluster(self, cluster_id: uuid.UUID, updated_by: uuid.UUID) -> None:
@@ -116,10 +118,12 @@ class DrainMonitor:
             await self._cluster_lifecycle.finalize_delete(cluster_id)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception:
+            logger.exception("Cluster drain failed", cluster_id=str(cluster_id))
             try:
                 await self._cluster_lifecycle.mark_drain_failed(cluster_id, "cluster drain failed", updated_by)
-            except Exception:  # noqa: BLE001
+            except Exception:
+                logger.exception("Cluster drain failure could not be persisted", cluster_id=str(cluster_id))
                 return
 
     async def _wait_until_drained(self, target_id: uuid.UUID) -> None:

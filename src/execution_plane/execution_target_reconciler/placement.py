@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import structlog
+
 from execution_plane.execution_target_reconciler.exceptions import UnknownBackendTypeError
 
 if TYPE_CHECKING:
@@ -17,6 +19,8 @@ if TYPE_CHECKING:
     from execution_plane.worker_manager.base import WorkerManager
     from execution_plane_client.types import BackendType
 
+logger = structlog.stdlib.get_logger(__name__)
+
 
 class WorkerManagerRegistry:
     """In-process map from ExecutionTarget `backend_type` to a WorkerManager instance."""
@@ -28,6 +32,7 @@ class WorkerManagerRegistry:
     def register(self, backend_type: BackendType, manager: WorkerManager) -> None:
         """Associate a WorkerManager with a backend type. Later registers overwrite."""
         self._managers[backend_type] = manager
+        logger.info("Worker manager registered", backend_type=backend_type.value)
 
     def get(self, backend_type: BackendType) -> WorkerManager:
         """Return the WorkerManager for `backend_type`, or raise if none is registered."""
@@ -64,4 +69,6 @@ class PlacementResolver:
 
     def worker_manager_for(self, target: ExecutionTargetSnapshot) -> WorkerManager:
         """Return the WorkerManager for this target's backend. Configuration error if missing."""
-        return self._worker_managers.get(target.backend_type)
+        manager = self._worker_managers.get(target.backend_type)
+        logger.info("Worker manager selected", target_id=str(target.id), backend_type=target.backend_type.value)
+        return manager

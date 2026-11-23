@@ -11,11 +11,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from sqlalchemy import and_, case, cast, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col
 
+from execution_plane.logging.command_payload import redacted_command_payload
 from execution_plane.models.cluster import Cluster
 from execution_plane.models.execution_target import ExecutionTarget
 from execution_plane.models.work_item import CompletionNotificationState, WorkItem
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
 
 _NOTIFY_CHANNEL = "execution_plane_work_items"
 _COMPLETION_NOTIFICATION_CLAIM_SECONDS = 30
+logger = structlog.stdlib.get_logger(__name__)
 
 
 class WorkStore(StoreBase):
@@ -55,6 +58,7 @@ class WorkStore(StoreBase):
         """
         async with self._session_context() as session:
             await session.execute(select(col(WorkItem.id)).limit(0))
+        logger.info("Work store readiness check succeeded")
 
     async def dispatch(
         self,
@@ -85,6 +89,13 @@ class WorkStore(StoreBase):
             except Exception:
                 await session.rollback()
                 raise
+        logger.info(
+            "Work command persisted",
+            command_name="work.execute",
+            work_item_id=str(item.id),
+            client_id=client_id,
+            payload=redacted_command_payload(payload),
+        )
         return item
 
     async def get(self, item_id: uuid.UUID, *, client_id: str) -> WorkItem | None:
@@ -194,6 +205,12 @@ class WorkStore(StoreBase):
                 item.claim_owner_id = uuid.uuid4()
                 item.claim_generation += 1
                 await session.commit()
+                logger.info(
+                    "Work item claimed",
+                    work_item_id=str(item.id),
+                    claim_generation=item.claim_generation,
+                    claim_owner_id=str(item.claim_owner_id),
+                )
                 return item
             except Exception:
                 await session.rollback()
@@ -231,6 +248,9 @@ class WorkStore(StoreBase):
                     return None
                 item.execution_target_id = target.id
                 await session.commit()
+                logger.info(
+                    "Execution target assigned to work item", work_item_id=str(item.id), target_id=str(target.id)
+                )
                 return item
             except Exception:
                 await session.rollback()
@@ -256,6 +276,7 @@ class WorkStore(StoreBase):
                 item.claimed_at = None
                 item.claim_owner_id = None
                 await session.commit()
+                logger.warning("Work item claim released before placement", work_item_id=str(item.id))
                 return True
             except Exception:
                 await session.rollback()
@@ -299,6 +320,7 @@ class WorkStore(StoreBase):
                 item.status = WorkItemStatus.DISPATCHED
                 item.claimed_at = datetime.now(UTC)
                 await session.commit()
+                logger.info("Work item marked dispatched", work_item_id=str(item.id))
                 return True
             except Exception:
                 await session.rollback()
@@ -413,6 +435,7 @@ class WorkStore(StoreBase):
                 item.claim_owner_id = None
                 self._initialize_completion_notification_fields(item, now)
                 await session.commit()
+                logger.info("Work item result persisted", work_item_id=str(item.id), status=item.status.value)
                 return item
             except Exception:
                 await session.rollback()
@@ -440,6 +463,13 @@ class WorkStore(StoreBase):
         async with self._session_context() as session, session.begin():
             await session.execute(statement.values(**values).execution_options(synchronize_session=False))
             await session.execute(text(f"SELECT pg_notify('{_NOTIFY_CHANNEL}', '')"))
+        logger.info(
+            "Bulk work control requested",
+            command_name="work.delete_bulk" if delete else "work.cancel_bulk",
+            client_id=client_id,
+            work_item_ids=[str(value) for value in selector.work_item_ids or []],
+            runtime_context=redacted_command_payload(selector.runtime_context),
+        )
 
     async def purge_deleted_work(self, *, limit: int = 100) -> None:
         """Delete at most limit deletion-requested rows with no owner and confirmed cleanup.
@@ -462,8 +492,10 @@ class WorkStore(StoreBase):
                 .limit(limit)
                 .with_for_update(skip_locked=True)
             )
-            for item in result.scalars().all():
+            items = result.scalars().all()
+            for item in items:
                 await session.delete(item)
+        logger.info("Deleted work items purged", count=len(items))
 
     async def work_awaiting_requested_cleanup(
         self, *, after_id: uuid.UUID | None = None, limit: int = 100
@@ -519,6 +551,7 @@ class WorkStore(StoreBase):
                 item.completed_at = now
                 self._initialize_completion_notification_fields(item, now)
                 await session.commit()
+                logger.warning("Work item marked for reconciliation", work_item_id=str(item.id))
                 return item
             except Exception:
                 await session.rollback()

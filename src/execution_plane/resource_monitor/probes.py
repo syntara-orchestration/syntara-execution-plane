@@ -48,7 +48,8 @@ class SkipProbe:
 
     async def probe(self, cluster: Cluster, _credential: str, target: ExecutionTarget) -> ProbeResult:
         """Return a skipped result so the monitor does not write health."""
-        del cluster, target
+        del cluster
+        logger.info("Target health probe skipped", target_id=str(target.id))
         return ProbeResult(healthy=True, skipped=True)
 
 
@@ -98,6 +99,7 @@ class KubernetesNamespaceProbe:
                 error_type="unreachable",
             )
             return ProbeResult(healthy=False, message="Kubernetes API is unreachable")
+        logger.info("Kubernetes namespace probe succeeded", target_id=str(target.id))
         return ProbeResult(healthy=True)
 
 

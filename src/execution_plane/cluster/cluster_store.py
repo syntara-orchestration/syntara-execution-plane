@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col
@@ -44,6 +45,7 @@ class ClusterNotEligibleForDefaultError(ValueError):
 
 
 DEFAULT_ADVISORY_LOCK = 703571
+logger = structlog.stdlib.get_logger(__name__)
 
 
 class ClusterStore(StoreBase):
@@ -84,6 +86,13 @@ class ClusterStore(StoreBase):
             try:
                 session.add(cluster)
                 await self._commit(session)
+                logger.info(
+                    "Cluster registered",
+                    command_name="cluster.register",
+                    cluster_id=str(cluster.id),
+                    cluster_name=cluster.name,
+                    endpoint=cluster.endpoint,
+                )
                 return self._without_secret(cluster)
             except Exception:
                 await self._rollback(session)
@@ -185,6 +194,7 @@ class ClusterStore(StoreBase):
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info("Cluster updated", command_name="cluster.update", cluster_id=str(cluster.id))
                 return self._without_secret(cluster)
             except Exception:
                 await self._rollback(session)
@@ -215,6 +225,7 @@ class ClusterStore(StoreBase):
                     cluster.updated_by = updated_by
                     cluster.updated_at = now
                 await self._commit(session)
+                logger.info("Cluster set as default", cluster_id=str(cluster.id))
                 return self._without_secret(cluster)
             except IntegrityError as exc:
                 await self._rollback(session)
@@ -241,6 +252,7 @@ class ClusterStore(StoreBase):
                     cluster.updated_by = updated_by
                     cluster.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info("Cluster default ensured", cluster_id=str(cluster.id))
                 return self._without_secret(cluster)
             except Exception:
                 await self._rollback(session)
@@ -276,6 +288,7 @@ class ClusterStore(StoreBase):
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info("Cluster reactivated", cluster_id=str(cluster.id))
                 return self._without_secret(cluster)
             except Exception:
                 await self._rollback(session)
@@ -299,6 +312,7 @@ class ClusterStore(StoreBase):
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info("Cluster activated", cluster_id=str(cluster.id))
                 return self._without_secret(cluster)
             except Exception:
                 await self._rollback(session)
@@ -322,6 +336,7 @@ class ClusterStore(StoreBase):
                 cluster.updated_by = updated_by
                 cluster.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.warning("Cluster drain failed", cluster_id=str(cluster.id), status_message=status_message)
                 return self._without_secret(cluster)
             except Exception:
                 await self._rollback(session)
@@ -350,6 +365,7 @@ class ClusterStore(StoreBase):
                     target.updated_by = updated_by
                     target.updated_at = now
                 await self._commit(session)
+                logger.info("Cluster deletion requested", command_name="cluster.delete", cluster_id=str(cluster.id))
                 return self._without_secret(cluster)
             except Exception:
                 await self._rollback(session)
@@ -371,6 +387,7 @@ class ClusterStore(StoreBase):
                     return
                 await session.delete(cluster)
                 await self._commit(session)
+                logger.info("Cluster deleted", cluster_id=str(cluster_id))
             except Exception:
                 await self._rollback(session)
                 raise

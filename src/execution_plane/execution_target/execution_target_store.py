@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col
@@ -55,6 +56,9 @@ class TargetNotEligibleForDefaultError(ValueError):
 
 class ClusterNotAvailableError(ValueError):
     """Raised when a target is created for a Cluster that cannot accept targets."""
+
+
+logger = structlog.stdlib.get_logger(__name__)
 
 
 class ExecutionTargetStore(StoreBase):
@@ -129,6 +133,14 @@ class ExecutionTargetStore(StoreBase):
                         raise DefaultExecutionTargetError  # noqa: TRY301
                 session.add(target)
                 await self._commit(session)
+                logger.info(
+                    "Execution target registered",
+                    command_name="execution_target.register",
+                    target_id=str(target.id),
+                    cluster_id=str(target.cluster_id),
+                    target_name=target.name,
+                    backend_type=target.backend_type.value,
+                )
                 return self._without_secret(target)
             except IntegrityError as exc:
                 await self._rollback(session)
@@ -228,6 +240,11 @@ class ExecutionTargetStore(StoreBase):
                 target.updated_by = updated_by
                 target.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info(
+                    "Execution target deletion requested",
+                    command_name="execution_target.delete",
+                    target_id=str(target.id),
+                )
                 return self._without_secret(target)
             except Exception:
                 await self._rollback(session)
@@ -247,6 +264,7 @@ class ExecutionTargetStore(StoreBase):
                 target.updated_by = updated_by
                 target.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info("Execution target activated", target_id=str(target.id))
                 return self._without_secret(target)
             except Exception:
                 await self._rollback(session)
@@ -286,6 +304,7 @@ class ExecutionTargetStore(StoreBase):
                     target.updated_by = updated_by
                     target.updated_at = now
                 await self._commit(session)
+                logger.info("Execution target set as default", target_id=str(target.id))
                 return self._without_secret(target)
             except IntegrityError as exc:
                 await self._rollback(session)
@@ -330,6 +349,9 @@ class ExecutionTargetStore(StoreBase):
                 target.updated_by = updated_by
                 target.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info(
+                    "Execution target updated", command_name="execution_target.update", target_id=str(target.id)
+                )
                 return self._without_secret(target)
             except Exception:
                 await self._rollback(session)
@@ -353,6 +375,7 @@ class ExecutionTargetStore(StoreBase):
                 target.updated_by = updated_by
                 target.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info("Execution target reactivated", target_id=str(target.id))
                 return self._without_secret(target)
             except Exception:
                 await self._rollback(session)
@@ -379,6 +402,7 @@ class ExecutionTargetStore(StoreBase):
                 target.updated_by = updated_by
                 target.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.info("Execution target health recorded", target_id=str(target.id), healthy=healthy)
                 return self._without_secret(target)
             except Exception:
                 await self._rollback(session)
@@ -397,6 +421,7 @@ class ExecutionTargetStore(StoreBase):
                 target.updated_by = updated_by
                 target.updated_at = datetime.now(UTC)
                 await self._commit(session)
+                logger.warning("Execution target drain failed", target_id=str(target.id))
                 return self._without_secret(target)
             except Exception:
                 await self._rollback(session)
@@ -426,6 +451,7 @@ class ExecutionTargetStore(StoreBase):
                 )
                 await session.delete(target)
                 await self._commit(session)
+                logger.info("Execution target deleted", target_id=str(target_id))
             except Exception:
                 await self._rollback(session)
                 raise

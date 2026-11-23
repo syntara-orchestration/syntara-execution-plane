@@ -150,9 +150,19 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
         """
         context = await self._dispatch_context(work_item)
         cancelled = threading.Event()
+        logger.info(
+            "Work execute command submitted to Kubernetes worker",
+            command_name="work.execute",
+            work_item_id=str(work_item.id),
+            image=context.image,
+            attempt_id=context.attempt_id,
+        )
         frame = await self._run_transport(work_item, context, cancelled)
 
         try:
+            logger.info(
+                "Kubernetes worker returned a result", command_name="work.execute", work_item_id=str(work_item.id)
+            )
             return _map_result(frame, context.output_config)
         except NodeExecutionError as exc:
             exc.persisted = True
@@ -412,7 +422,11 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
     @staticmethod
     def _log_progress(identity: str, frame: dict[str, Any]) -> None:
         """Log safe transport progress frames."""
-        logger.debug("node progress", work_item_id=identity, node_event=frame.get("event"))
+        node_event = frame.get("event")
+        if node_event == "cleanup_failed":
+            logger.warning("Kubernetes worker cleanup failed", work_item_id=identity)
+        elif node_event == "cleanup_deferred":
+            logger.info("Kubernetes worker cleanup deferred", work_item_id=identity)
 
     def _mark_execute_submitted(self, context: _DispatchContext) -> None:
         """Persist execution start at the exact Execute submission boundary."""
