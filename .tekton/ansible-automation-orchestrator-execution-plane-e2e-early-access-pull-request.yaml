@@ -22,13 +22,13 @@ metadata:
     pipelinesascode.tekton.dev/cancel-in-progress: "true"
     pipelinesascode.tekton.dev/max-keep-runs: "2"
     pipelinesascode.tekton.dev/on-cel-expression: >-
-      event == "pull_request" && target_branch == "devel"
+      event == "pull_request" && target_branch == "early-access"
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: ansible-automation-orchestrator-devel
-    appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-devel
+    appstudio.openshift.io/application: ansible-automation-orchestrator-early-access
+    appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-early-access
     pipelines.appstudio.openshift.io/type: test
-  name: automation-orchestrator-ep-e2e-devel-pull-request
+  name: ansible-automation-orchestrator-execution-plane-e2e-early-access-pull-request
   namespace: nexus-tenant
 spec:
   timeouts:
@@ -60,7 +60,7 @@ spec:
       - name: name
         value: ep-api-tests
       - name: bundle
-        value: quay.io/aap-ci/tekton-catalog/pipeline/test/ep-api-tests:0.1@sha256:a0b12780fabdc5872e2ff4f5b36c851edfa2672a62bad14457a550550075074a
+        value: quay.io/aap-ci/tekton-catalog/pipeline/test/ep-api-tests:0.1
       - name: kind
         value: pipeline
       - name: secret
