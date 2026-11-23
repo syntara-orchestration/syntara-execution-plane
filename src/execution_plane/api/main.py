@@ -201,10 +201,25 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
                 resource_kind=result.resource.kind if result.resource is not None else None,
                 resource_id=str(result.resource.resource_id) if result.resource is not None else None,
             )
+        except DefaultClusterError:
+            logger.warning(
+                "Command rejected because the default cluster is protected",
+                command_name=message.command.command_type if message is not None else None,
+                message_id=str(message.message_id) if message is not None else None,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "DEFAULT_CLUSTER_PROTECTED",
+                    "message": (
+                        "The default Execution Plane cluster cannot be disabled or deleted. "
+                        "Select another default cluster first."
+                    ),
+                },
+            ) from None
         except (
             DuplicateWorkItemError,
             DefaultExecutionTargetError,
-            DefaultClusterError,
             ClusterNotAvailableError,
             TargetNotEligibleForDefaultError,
         ):

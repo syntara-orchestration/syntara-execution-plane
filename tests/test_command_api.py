@@ -232,3 +232,33 @@ async def test_removed_single_item_commands_are_rejected(command):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://ep.test") as client:
         response = await client.post("/v1/commands", json=command_message(command, {"work_item_id": str(uuid4())}))
     assert response.status_code == 422
+
+
+async def test_default_cluster_conflict_has_specific_code(monkeypatch):
+    from execution_plane.cluster.cluster_store import DefaultClusterError
+    from execution_plane.commands.clusters import ClusterRegisterCommandHandler
+
+    async def reject(*_args: object, **_kwargs: object) -> None:
+        raise DefaultClusterError
+
+    monkeypatch.setattr(ClusterRegisterCommandHandler, "handle", reject)
+    app = create_app()
+    app.state.ep_engine = object()
+    app.dependency_overrides[get_service_identity] = lambda: ServiceIdentity(
+        client_id="ao", scopes=frozenset({"cluster.register"})
+    )
+    message = command_message(
+        "cluster.register",
+        {
+            "resource_id": str(uuid4()),
+            "name": "cluster",
+            "endpoint": "https://cluster.example.com",
+            "credential_ref": str(uuid4()),
+            "enabled": False,
+        },
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://ep.test") as client:
+        response = await client.post("/v1/commands", json=message)
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "DEFAULT_CLUSTER_PROTECTED"
+    assert "cannot be disabled" in response.json()["detail"]["message"]
