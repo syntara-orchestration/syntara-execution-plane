@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_NAME=$(basename "$0")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TEKTON_PUSH="$PROJECT_ROOT/.tekton/ansible-automation-orchestrator-ep-devel-push.yaml"
+TEKTON_PUSH="$PROJECT_ROOT/.tekton/ansible-automation-orchestrator-execution-plane-devel-push.yaml"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -46,7 +46,7 @@ OPTIONS:
 
 ENVIRONMENT:
     HERMETIC_BUILDER_IMAGE  Builder image. Default: BUILDER_IMAGE from
-                            .tekton/ansible-automation-orchestrator-ep-devel-push.yaml
+                            .tekton/ansible-automation-orchestrator-execution-plane-devel-push.yaml
                             (uv-builder, so the image does not pip-install uv).
 
 EXAMPLES:

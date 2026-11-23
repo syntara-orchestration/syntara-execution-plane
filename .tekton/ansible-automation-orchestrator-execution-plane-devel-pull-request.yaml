@@ -22,13 +22,13 @@ metadata:
         x == "rpms.lock.yaml" ||
         x == "alembic.ini" ||
         x == "LICENSE") ||
-      ".tekton/ansible-automation-orchestrator-ep-devel-pull-request.yaml".pathChanged())
+      ".tekton/ansible-automation-orchestrator-execution-plane-devel-pull-request.yaml".pathChanged())
   creationTimestamp: null
   labels:
     appstudio.openshift.io/application: ansible-automation-orchestrator-devel
     appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-devel
     pipelines.appstudio.openshift.io/type: build
-  name: ansible-automation-orchestrator-ep-devel-on-pull-request
+  name: ansible-automation-orchestrator-execution-plane-devel-on-pull-request
   namespace: nexus-tenant
 spec:
   params:

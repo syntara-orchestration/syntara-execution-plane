@@ -21,13 +21,13 @@ metadata:
         x == "rpms.lock.yaml" ||
         x == "alembic.ini" ||
         x == "LICENSE") ||
-      ".tekton/ansible-automation-orchestrator-ep-early-access-push.yaml".pathChanged())
+      ".tekton/ansible-automation-orchestrator-execution-plane-early-access-push.yaml".pathChanged())
   creationTimestamp: null
   labels:
     appstudio.openshift.io/application: ansible-automation-orchestrator-early-access
     appstudio.openshift.io/component: ansible-automation-orchestrator-execution-plane-early-access
     pipelines.appstudio.openshift.io/type: build
-  name: ansible-automation-orchestrator-ep-early-access-on-push
+  name: ansible-automation-orchestrator-execution-plane-early-access-on-push
   namespace: nexus-tenant
 spec:
   params:
