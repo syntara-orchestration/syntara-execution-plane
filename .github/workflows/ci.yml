@@ -63,9 +63,8 @@ jobs:
             exit 1
           fi
 
-  # Checks the runtime export against uv.lock. Build requirements are refreshed
-  # explicitly; resolving them here would make CI depend on new PyPI releases.
-  # The hermetic image build validates the committed build dependencies.
+  # Regenerates the pinned runtime requirements and fails if they differ.
+  # To fix: run `make sync-runtime-requirements` and commit the result.
   requirements-drift:
     runs-on: ubuntu-latest
     steps:
