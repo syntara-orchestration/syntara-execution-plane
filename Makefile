@@ -1,4 +1,4 @@
-.PHONY: install test test-coverage coverage-combine test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target submit-work sync-requirements sync-rpms-lock-yaml
+.PHONY: install test test-coverage coverage-combine test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target submit-work sync-requirements upgrade-build-requirements sync-rpms-lock-yaml
 
 TEST_ARGS ?= --ignore=tests/integration
 COVERAGE_FILES ?= coverage-artifacts/*/.coverage
@@ -40,10 +40,17 @@ openapi:
 # Konflux does not read uv.lock; keep these in sync after dependency changes.
 # requirements-build.txt is the PEP 517 backends needed to build those sdists
 # offline (setuptools, hatchling, cython, ...).
+# pip-tools uses pip internals; keep their compatible versions together.
+# Preserve build pins during normal regeneration; explicitly refresh them with
+# make upgrade-build-requirements when adding dependencies or upgrading backends.
 sync-requirements:
 	uv export --frozen --python=3.12 --no-dev --no-editable --no-emit-package colorama --no-emit-package execution-plane-client --no-emit-workspace --output-file requirements.txt >/dev/null
 	uv run tools/ci/filter_requirements_hashes.py
-	uvx --from pybuild-deps==0.6.1 --python 3.12 pybuild-deps compile --generate-hashes -o requirements-build.txt requirements.txt
+	uvx --from pybuild-deps==0.6.1 --with pip==25.3 --with pip-tools==7.6.0 --python 3.12 python tools/ci/compile_build_requirements.py $(BUILD_REQUIREMENTS_FLAGS) --generate-hashes -o requirements-build.txt requirements.txt
+
+# Resolve fresh build versions intentionally, then review and commit the lock.
+upgrade-build-requirements:
+	$(MAKE) sync-requirements BUILD_REQUIREMENTS_FLAGS=--upgrade
 
 # Resolve rpms.in.yaml against the runtime UBI image into rpms.lock.yaml.
 # Hermeto uses the lockfile to prefetch RPMs for isolated microdnf installs.
