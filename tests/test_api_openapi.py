@@ -51,7 +51,7 @@ def test_command_oneof_accepts_overlapping_payload_shapes_with_the_correct_type(
             "work.execute",
             {
                 "work_item_id": str(uuid4()),
-                "image": "node:test",
+                "image": "registry.example/node@sha256:" + "a" * 64,
                 "invocation": {
                     "step_revision_id": "script.v1",
                     "inputs": {},

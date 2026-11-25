@@ -18,6 +18,7 @@ RUN (command -v uv >/dev/null 2>&1 || pip3.12 install --no-cache-dir uv==0.12.3)
 
 COPY pyproject.toml requirements.txt uv.lock README.md alembic.ini ./
 COPY src/ ./src/
+COPY tools/install_cosign.py /usr/local/bin/install_cosign.py
 
 # Hermetic Konflux / local Hermeto: PIP_FIND_LINKS points at prefetched sdists.
 # uv.lock records platform wheels; do not use it (or any binary) offline.
@@ -44,6 +45,7 @@ RUN if [ -n "${PIP_FIND_LINKS:-}" ]; then \
     else \
         uv sync --frozen --no-dev --no-editable; \
     fi
+RUN python3.12 /usr/local/bin/install_cosign.py
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:2d4c4551af6831dcd26bbf86108c4385de5183ec8fe6b5868f6f9640fe47f4ed AS runtime
 
@@ -63,6 +65,7 @@ COPY deploy/kubernetes/execution-target/rbac.yaml /manifests/execution-target-rb
 COPY --from=builder /opt/app-root/src/alembic.ini ./alembic.ini
 COPY --from=builder /opt/app-root/src/src/execution_plane/migrations ./src/execution_plane/migrations
 COPY --from=builder /opt/app-root/src/.venv /opt/app-root/src/.venv
+COPY --from=builder /usr/local/bin/cosign /usr/local/bin/cosign
 COPY --from=builder /opt/app-root/src/alembic.ini /opt/app-root/src/alembic.ini
 COPY --from=builder /opt/app-root/src/src /opt/app-root/src/src
 

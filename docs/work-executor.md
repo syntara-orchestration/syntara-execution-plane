@@ -32,5 +32,7 @@ sends `pg_notify` on `execution_plane_work_items` to wake the worker. See
 
 ## Validation
 
-The Work command handler validates the command payload before the Service
-persists it. The database schema also enforces the persisted structure.
+The Work command handler validates the command payload and verifies that built-in
+Python and Bash Action references match their exact installed image approvals
+before the Service persists them. The worker verifies the signature again before
+creating a Job. The database schema also enforces the persisted structure.

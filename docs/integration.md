@@ -24,7 +24,7 @@ commands or provide command-status or command-children endpoints.
     "payload": {
       "work_item_id": "00000000-0000-0000-0000-000000000002",
       "runtime_context": {"project_id": "caller-project", "workflow_id": "caller-workflow", "execution_id": "caller-execution"},
-      "image": "registry.example/node:latest",
+      "image": "registry.example/node@sha256:<64-lowercase-hex-digest>",
       "invocation": {
         "step_revision_id": "script.v1",
         "inputs": {"language": "python", "code": "print('hello')"},
@@ -48,7 +48,10 @@ job, cluster setup or draining.
 
 The workload image must implement the [SDK container service](workload-protocol.md)
 and advertise the requested step revision. EP constructs the SDK invocation ID
-from the work UUID and claim generation.
+from the work UUID and claim generation. For the built-in Python and Bash
+Actions, the image must also equal the exact digest installed in EP's policy. EP
+checks this before persistence and verifies the Cosign signature again before
+Job creation.
 Script environment variables belong in `inputs.environment`. Workload credential
 references belong in `invocation.credential_bindings`; see the
 [workload protocol](workload-protocol.md#command-and-workload-data) for resolution behavior.

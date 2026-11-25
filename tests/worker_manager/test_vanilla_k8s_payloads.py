@@ -184,7 +184,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
         runtime_context={"project_id": "p", "execution_id": "e"},
         payload={
             "work_item_id": str(work_item_id),
-            "image": "node:test",
+            "image": "registry.example/node@sha256:" + "a" * 64,
             "invocation": {
                 "step_revision_id": "script.v1",
                 "inputs": {},

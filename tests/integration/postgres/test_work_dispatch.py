@@ -136,7 +136,7 @@ async def test_semantically_invalid_invocation_is_rejected_before_kubernetes(eng
     item_id = await _seed_claimed_item(
         sessions,
         payload={
-            "image": "node:test",
+            "image": "registry.example/node@sha256:" + "a" * 64,
             "invocation": {
                 "step_revision_id": "script.v1",
                 "inputs": {},

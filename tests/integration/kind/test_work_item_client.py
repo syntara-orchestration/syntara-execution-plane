@@ -12,7 +12,6 @@ from tools.work_item_client import (
     DEFAULT_JWT_AUDIENCE,
     DEFAULT_JWT_CLIENT_ID,
     DEFAULT_JWT_ISSUER,
-    DEFAULT_NODE_IMAGE,
     build_payload,
     default_api_url,
     default_node_image,
@@ -21,9 +20,11 @@ from tools.work_item_client import (
 )
 
 _PROJECT_ID = UUID("00000000-0000-0000-0000-000000000001")
+_TEST_IMAGE = "quay.io/example/node@sha256:" + "a" * 64
 
 
-def test_build_payload_is_accepted_by_work_execute_schema() -> None:
+def test_build_payload_is_accepted_by_work_execute_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EP_NODE_IMAGE", _TEST_IMAGE)
     payload = build_payload(
         language="python",
         code="print('hello')",
@@ -31,7 +32,7 @@ def test_build_payload_is_accepted_by_work_execute_schema() -> None:
         environment={},
     )
     WorkExecute.model_validate(payload | {"work_item_id": "00000000-0000-0000-0000-000000000001"})
-    assert payload["image"] == DEFAULT_NODE_IMAGE
+    assert payload["image"] == _TEST_IMAGE
     assert payload["runtime_context"] == {}
     assert payload["invocation"]["step_revision_id"] == "script.v1"
     assert "environment" not in payload["invocation"]["inputs"]
@@ -43,14 +44,15 @@ def test_build_payload_includes_environment_and_image_override() -> None:
         code="echo hi",
         timeout_seconds=30,
         environment={"FOO": "bar"},
-        image="quay.io/example/node:dev",
+        image="quay.io/example/node@sha256:" + "a" * 64,
     )
-    assert payload["image"] == "quay.io/example/node:dev"
+    assert payload["image"] == "quay.io/example/node@sha256:" + "a" * 64
     assert payload["invocation"]["inputs"]["environment"] == {"FOO": "bar"}
     WorkExecute.model_validate(payload | {"work_item_id": "00000000-0000-0000-0000-000000000001"})
 
 
-def test_build_payload_rejects_invalid_timeout_through_schema() -> None:
+def test_build_payload_rejects_invalid_timeout_through_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EP_NODE_IMAGE", _TEST_IMAGE)
     payload = build_payload(
         language="python",
         code="print(1)",
@@ -107,6 +109,6 @@ def test_resolve_private_key_path_errors_when_missing(monkeypatch: pytest.Monkey
 
 def test_default_urls_and_images_honor_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EP_API_URL", "https://ep.example:8443")
-    monkeypatch.setenv("EP_NODE_IMAGE", "quay.io/example/node:ci")
+    monkeypatch.setenv("EP_NODE_IMAGE", _TEST_IMAGE)
     assert default_api_url() == "https://ep.example:8443"
-    assert default_node_image() == "quay.io/example/node:ci"
+    assert default_node_image() == _TEST_IMAGE

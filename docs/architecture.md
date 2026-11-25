@@ -332,7 +332,7 @@ stateDiagram-v2
 | Completion delivery | Durable WorkItems-table state, at-least-once delivery, exponential backoff with jitter, receipt validation. |
 | Credential handling | Opaque references only in durable state, short-lived resolution through AO, no raw credential logging or API exposure. |
 | Logging and diagnostics | Structured logs, bounded Kubernetes response bodies, sanitized work-item errors, no raw credentials or private payloads in results. |
-| Image provenance | Image reference is caller-supplied; EP does not independently enforce registry policy or digest pinning. |
+| Image provenance | Script Action digests are pinned, matched to the installed Action approval at command intake, and signature-verified by EP immediately before Job creation. |
 
 ## Current limitations
 
@@ -340,7 +340,7 @@ stateDiagram-v2
 - Only the Kubernetes backend is registered for execution.
 - Only container workloads are dispatched; other workload types are future work.
 - Workload credential-file injection is not implemented.
-- EP does not enforce image provenance beyond accepting the caller-selected image reference.
+- Script Action execution requires an installed exact-image policy and Cosign trust key; missing or mismatched policy blocks command acceptance and workload creation.
 - EP-to-workload control traffic is tunneled through the Kubernetes API rather than exposed as direct pod networking.
 - A lost terminal result after Execute may have started is marked for reconciliation rather than automatically retried.
 - OpenShell is modelled as a backend type but is not part of the current execution path.

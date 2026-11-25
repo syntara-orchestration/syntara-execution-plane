@@ -12,8 +12,9 @@ import pytest
 from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.config.settings import Settings
+from execution_plane.image_policy import WorkloadImagePolicyError
 from execution_plane.worker_manager.vanilla_k8s import manager as manager_module
-from execution_plane.worker_manager.vanilla_k8s.manager import WorkloadCancelledError
+from execution_plane.worker_manager.vanilla_k8s.manager import WorkItemPayloadError, WorkloadCancelledError
 from execution_plane.worker_manager.vanilla_k8s.transport import TransportError
 from tests.worker_manager.factories import (
     WorkStoreStub,
@@ -113,6 +114,28 @@ async def test_dispatch_context_binds_credential_resolution_to_the_work_item_att
                 "runtime_context": work_item.runtime_context,
             }
         ]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_context_rejects_a_script_image_that_fails_policy_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings()
+    async with vanilla_k8s_credential_resolvers(settings) as (cluster_resolver, workload_resolver):
+        resources = vanilla_k8s_resources()
+        work_item = resources[2]
+        work_item.payload["image"] = "registry.example/script@sha256:" + "a" * 64
+        work_item.payload["invocation"]["step_revision_id"] = "syntara.script-python.script-python"
+
+        def reject_image(*_args: object) -> None:
+            message = "denied"
+            raise WorkloadImagePolicyError(message)
+
+        monkeypatch.setattr(manager_module, "verify_workload_image", reject_image)
+        manager = vanilla_k8s_manager(settings, cluster_resolver, workload_resolver, resources)
+
+        with pytest.raises(WorkItemPayloadError, match="image was rejected"):
+            await manager._dispatch_context(work_item)
 
 
 @pytest.mark.asyncio

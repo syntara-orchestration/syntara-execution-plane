@@ -38,6 +38,7 @@ def test_submit_tool_builds_valid_work_command(monkeypatch):
     message = MessageEnvelope.model_validate(body)
     CommandCatalog().validate(message)
     assert message.command.payload["work_item_id"] == str(work_id)
+    assert message.command.payload["image"] == "localhost/syntara-sdk-script:dev"
     assert message.command.payload["invocation"]["inputs"]["code"] == "print('hello')"
     assert message.command.payload["invocation"]["timeout_seconds"] == 41
 

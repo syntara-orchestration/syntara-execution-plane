@@ -1,6 +1,7 @@
 """Handle work commands through the existing work lifecycle."""
 
 from execution_plane.commands.context import EPCommandContext
+from execution_plane.image_policy import WorkloadImagePolicyError, is_script_step_identity, validate_workload_image
 from execution_plane.work_item.work_item_store import WorkStore
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.work import WorkExecute
@@ -19,6 +20,16 @@ class WorkCommandHandler:
         del message
         if not isinstance(payload, WorkExecute):
             raise UnsupportedCommand
+        if is_script_step_identity(payload.invocation.step_revision_id):
+            try:
+                validate_workload_image(
+                    payload.invocation.step_revision_id,
+                    payload.image,
+                    context.workload_image_policy_path,
+                )
+            except WorkloadImagePolicyError as error:
+                error_message = "Workload image was rejected by the installed image policy"
+                raise ValueError(error_message) from error
         work_store = WorkStore.from_engine(context.engine)
         item = await work_store.dispatch(
             client_id=context.client_id,
