@@ -105,7 +105,7 @@ def vanilla_k8s_resources() -> tuple[Cluster, ExecutionTarget, WorkItem]:
         execution_target_id=target.id,
         payload={
             "work_item_id": str(work_item_id),
-            "image": "registry.example/node",
+            "image": "registry.example/node@sha256:" + "a" * 64,
             "invocation": {
                 "step_revision_id": "script.v1",
                 "inputs": {},

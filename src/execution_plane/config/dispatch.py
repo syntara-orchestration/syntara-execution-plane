@@ -10,6 +10,7 @@ class DispatchSettings(BaseSettings):
     """Dispatch retry and concurrency settings."""
 
     dispatch_retry_backoff_seconds: float = Field(default=5.0, validation_alias="EP_DISPATCH_RETRY_BACKOFF_SECONDS")
+    workload_image_policy_path: str | None = Field(default=None, validation_alias="EP_WORKLOAD_IMAGE_POLICY_PATH")
     max_concurrent_dispatches: int = Field(
         default=8,
         ge=1,

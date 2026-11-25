@@ -191,7 +191,13 @@ def create_app() -> FastAPI:  # noqa: C901, PLR0915
                 )
                 raise HTTPException(status_code=403, detail="Command is not authorized")  # noqa: TRY301
             result = await handler.handle(
-                message, payload, EPCommandContext(identity.client_id, request.app.state.ep_engine)
+                message,
+                payload,
+                EPCommandContext(
+                    identity.client_id,
+                    request.app.state.ep_engine,
+                    getattr(getattr(request.app.state, "ep_settings", None), "workload_image_policy_path", None),
+                ),
             )
             logger.info(
                 "Command accepted",

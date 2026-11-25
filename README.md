@@ -168,10 +168,15 @@ endpoint. Set `KIND_EXPERIMENTAL_PROVIDER=podman` for Podman,
 
 The Kubernetes base manifests are in `deploy/kubernetes/base`; provide the
 database URLs, AES key, AO JWT verification key, outbound mTLS material, server
-TLS certificate, and AO completion-notification/credential-resolution/JWT issuer URLs as Kubernetes Secrets and a
-ConfigMap before applying them. Target-cluster dispatcher RBAC is
+TLS certificate, AO completion-notification/credential-resolution/JWT issuer URLs,
+and the exact Action image policy with Cosign public keys before applying them.
+The policy ConfigMap is named `execution-plane-script-image-policy` for the base
+worker manifest. See [workload image policy](docs/workload-image-policy.md) for
+its required contents. Target-cluster dispatcher RBAC is
 `deploy/kubernetes/execution-target/rbac.yaml`. AO supplies the node image reference in the
-request and must pin it by digest. EP applies a NetworkPolicy before creating the
+request and must pin it by digest. EP checks the Action's exact approved digest
+at command intake and verifies its signature immediately before creating the
+workload Job. EP applies a NetworkPolicy before creating the
 Job; it denies ingress and permits only DNS plus configured egress CIDRs. Verify
 that the target cluster's CNI enforces NetworkPolicy before enabling script
 workloads.

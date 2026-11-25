@@ -31,6 +31,11 @@ the lockfile and requirement exports.
 ## Command and workload data
 
 `work.execute` accepts `image`, `selectors`, and optional `output_config`.
+Generic workloads retain the existing `image` reference contract. The built-in
+Python and Bash script identities require a fully qualified
+`repository@sha256:<64 lowercase hex digits>` reference and must match the
+installed Action-to-image policy; EP verifies the configured Cosign signature
+before it creates the Kubernetes Job. See [workload image policy](workload-image-policy.md).
 The request's `runtime_context` is passed to plugin code as
 `context.runtime_context`; see [runtime context](integration.md#runtime-context).
 `invocation.step_revision_id` selects the handler advertised by the container.

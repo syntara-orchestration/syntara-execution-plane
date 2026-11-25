@@ -68,12 +68,17 @@ spec:
               value: /run/secrets/server/tls.key
             - name: EP_API_TLS_CLIENT_CA_PATH
               value: /run/secrets/ao/ca.pem
+            - name: EP_WORKLOAD_IMAGE_POLICY_PATH
+              value: /etc/ep/script-image-policy/policy.json
           volumeMounts:
             - name: ep-key
               mountPath: /run/secrets/ep
               readOnly: true
             - name: ao-auth
               mountPath: /run/secrets/ao
+              readOnly: true
+            - name: script-image-policy
+              mountPath: /etc/ep/script-image-policy
               readOnly: true
             - name: server-tls
               mountPath: /run/secrets/server
@@ -110,6 +115,9 @@ spec:
               path: jwt-public.pem
             - key: ca.pem
               path: ca.pem
+        - name: script-image-policy
+          configMap:
+            name: execution-plane-script-image-policy
         - name: server-tls
           secret:
             secretName: execution-plane-api-tls

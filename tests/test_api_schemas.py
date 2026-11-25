@@ -20,7 +20,11 @@ def _payload(**invocation_overrides: object) -> dict[str, Any]:
         "timeout_seconds": 60,
     }
     invocation.update(invocation_overrides)
-    return {"work_item_id": str(uuid4()), "invocation": invocation, "image": "registry.example/node:latest"}
+    return {
+        "work_item_id": str(uuid4()),
+        "invocation": invocation,
+        "image": "registry.example/node@sha256:" + "a" * 64,
+    }
 
 
 def test_work_item_submit_accepts_a_versioned_node_invocation() -> None:
@@ -103,6 +107,30 @@ def test_work_item_submit_rejects_invalid_credential_bindings(updates: dict[str,
 
     with pytest.raises(ValidationError, match=match):
         WorkExecute.model_validate(payload)
+
+
+@pytest.mark.parametrize("image", ["registry.example/node:latest", "node@sha256:" + "a" * 64])
+def test_work_item_submit_rejects_tagged_or_unqualified_script_images(image: str) -> None:
+    payload = _payload() | {"image": image}
+    payload["invocation"]["step_revision_id"] = "syntara.script-bash.script-bash"
+    with pytest.raises(ValidationError, match="image"):
+        WorkExecute.model_validate(payload)
+
+
+def test_work_item_submit_preserves_generic_workload_image_references() -> None:
+    command = WorkExecute.model_validate(_payload() | {"image": "registry.example/generic-workload:stable"})
+    assert command.image == "registry.example/generic-workload:stable"
+
+
+def test_work_execute_openapi_schema_applies_digest_pattern_only_to_builtin_scripts() -> None:
+    schema = WorkExecute.model_json_schema()
+    conditional = schema["allOf"][0]
+    assert conditional["if"]["properties"]["invocation"]["properties"]["step_revision_id"]["enum"] == [
+        "syntara.script-bash.script-bash",
+        "syntara.script-python.script-python",
+    ]
+    assert conditional["then"]["properties"]["image"]["pattern"]
+    assert "pattern" not in schema["properties"]["image"]
 
 
 def test_work_item_read_excludes_completion_delivery_internals() -> None:

@@ -23,6 +23,7 @@ from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.credential_resolution.errors import CredentialResolutionError
 from execution_plane.credential_resolution.sdk_resolver import SDKCredentialResolver
+from execution_plane.image_policy import WorkloadImagePolicyError, verify_workload_image
 from execution_plane.operational_logs import OperationalLogCorrelation, OperationalLogForwarder
 from execution_plane.worker_manager.base import (
     ExecutionStartPersistenceError,
@@ -170,6 +171,23 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
 
     async def _dispatch_context(self, work_item: WorkItem) -> _DispatchContext:
         """Resolve and validate everything needed before starting the transport."""
+        try:
+            command = WorkExecute.model_validate(work_item.payload)
+        except ValidationError as exc:
+            message = "Work item payload is not a valid work.execute command"
+            raise WorkItemPayloadError(message) from exc
+
+        try:
+            await asyncio.to_thread(
+                verify_workload_image,
+                command.invocation.step_revision_id,
+                command.image,
+                self._settings.workload_image_policy_path,
+            )
+        except WorkloadImagePolicyError as exc:
+            message = "Work item image was rejected by the installed image policy"
+            raise WorkItemPayloadError(message) from exc
+
         if work_item.execution_target_id is None:
             message = "Work item has no execution target assigned"
             raise RetryableDispatchError(message)
@@ -178,11 +196,6 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             message = "Assigned execution target is unavailable"
             raise RetryableDispatchError(message)
 
-        try:
-            command = WorkExecute.model_validate(work_item.payload)
-        except ValidationError as exc:
-            message = "Work item payload is not a valid work.execute command"
-            raise WorkItemPayloadError(message) from exc
         cluster = await self._cluster_credentials.get_with_credentials(target.cluster_id)
         if cluster is None or not cluster.enabled:
             message = "Assigned cluster is unavailable"

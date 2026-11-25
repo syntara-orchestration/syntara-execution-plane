@@ -30,6 +30,8 @@ spec:
                   key: runtime-url
             - name: EP_CREDENTIAL_ENCRYPTION_KEY_PATH
               value: /run/secrets/ep/credential-encryption-key
+            - name: EP_WORKLOAD_IMAGE_POLICY_PATH
+              value: /etc/automation-orchestrator/script-image-policy/policy.json
             - name: EP_COMPLETION_CALLBACK_URL
               valueFrom:
                 configMapKeyRef:
@@ -86,6 +88,9 @@ spec:
             - name: ao-callback
               mountPath: /run/secrets/ao-callback
               readOnly: true
+            - name: script-image-policy
+              mountPath: /etc/automation-orchestrator/script-image-policy
+              readOnly: true
           resources:
             requests:
               cpu: 250m
@@ -109,3 +114,6 @@ spec:
         - name: ao-callback
           secret:
             secretName: execution-plane-callback-client
+        - name: script-image-policy
+          configMap:
+            name: execution-plane-script-image-policy

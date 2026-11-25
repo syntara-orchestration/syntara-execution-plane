@@ -11,3 +11,4 @@ class EPCommandContext:
 
     client_id: str
     engine: AsyncEngine
+    workload_image_policy_path: str | None = None

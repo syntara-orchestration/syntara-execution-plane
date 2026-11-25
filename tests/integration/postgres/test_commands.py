@@ -131,7 +131,7 @@ async def test_work_command_uses_work_item_uuid_and_cancel_uses_work_state(comma
         {
             "work_item_id": str(uuid4()),
             "runtime_context": {"project_id": str(uuid4()), "context": {"tags": ["demo"]}},
-            "image": "node:test",
+            "image": "registry.example/node@sha256:" + "a" * 64,
             "invocation": {
                 "step_revision_id": "script.v1",
                 "inputs": {},

@@ -28,6 +28,7 @@ def test_submit_tool_builds_valid_work_command(monkeypatch):
         return 202, {"received": True}
 
     monkeypatch.setattr(work_item_client, "ep_request", request)
+    monkeypatch.setenv("EP_NODE_IMAGE", "quay.io/example/node@sha256:" + "a" * 64)
     payload = submit_work_item.build_payload(
         language="python", code="print('hello')", timeout_seconds=41, environment={"EXAMPLE": "value"}
     )
@@ -64,7 +65,7 @@ def test_submit_cli_preserves_image_override_and_waits_for_work(monkeypatch, cap
             "--work-id",
             str(work_id),
             "--image",
-            "quay.io/example/custom-node:test",
+            "quay.io/example/custom-node@sha256:" + "a" * 64,
             "--wait",
         ],
     )
@@ -72,7 +73,7 @@ def test_submit_cli_preserves_image_override_and_waits_for_work(monkeypatch, cap
     assert len(requests) == 2
     message = MessageEnvelope.model_validate(requests[0][2])
     assert message.command.payload["work_item_id"] == str(work_id)
-    assert message.command.payload["image"] == "quay.io/example/custom-node:test"
+    assert message.command.payload["image"] == "quay.io/example/custom-node@sha256:" + "a" * 64
     assert requests[1][:2] == ("GET", f"https://ep.test/v1/work-items/{work_id}")
     assert "reconciliation_required" in capsys.readouterr().out
 

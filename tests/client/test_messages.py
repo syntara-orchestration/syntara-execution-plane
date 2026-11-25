@@ -28,7 +28,7 @@ CLUSTER = {
             "work.execute",
             {
                 "work_item_id": RESOURCE_ID,
-                "image": "node:test",
+                "image": "registry.example/node@sha256:" + "a" * 64,
                 "invocation": {
                     "step_revision_id": "script.v1",
                     "inputs": {},

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import httpx
@@ -59,7 +59,7 @@ async def test_ingress_handles_work_with_one_payload_conversion(monkeypatch, com
     payload = (
         {
             "work_item_id": str(work_id),
-            "image": "node:test",
+            "image": "registry.example/node@sha256:" + "a" * 64,
             "invocation": {
                 "step_revision_id": "script.v1",
                 "inputs": {},
@@ -122,6 +122,34 @@ async def test_ingress_rejects_before_domain_effects(change, status):
         response = await client.post("/v1/commands", json=message)
     assert response.status_code == status
     assert "private-secret" not in response.text
+
+
+async def test_ingress_rejects_script_image_without_exact_approval(monkeypatch):
+    app = create_app()
+    app.state.ep_engine = object()
+    app.dependency_overrides[get_service_identity] = lambda: ServiceIdentity(
+        client_id="ao", scopes=frozenset({"work.execute"})
+    )
+    store_factory = Mock()
+    monkeypatch.setattr(WorkStore, "from_engine", store_factory)
+    message = command_message(
+        WorkExecute.command_type,
+        {
+            "work_item_id": str(uuid4()),
+            "image": "registry.example/ao-python@sha256:" + "a" * 64,
+            "invocation": {
+                "step_revision_id": "syntara.script-python.script-python",
+                "inputs": {},
+                "timeout_seconds": 60,
+            },
+        },
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://ep.test") as client:
+        response = await client.post("/v1/commands", json=message)
+
+    assert response.status_code == 422
+    store_factory.assert_not_called()
 
 
 async def test_ingress_maps_ineligible_default_promotion_to_conflict(monkeypatch):
