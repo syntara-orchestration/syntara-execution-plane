@@ -9,6 +9,7 @@ from pydantic import Field
 
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.work import CredentialRecipeId, StepIdentity  # noqa: TC001
+from execution_plane_client.models.runtime_context import RuntimeContext  # noqa: TC001
 from execution_plane_client.protocol import Identifier  # noqa: TC001
 
 
@@ -36,6 +37,7 @@ class CredentialResolveWorkload(CommandPayload):
     attempt_id: Identifier = Field(
         description="EP dispatch-attempt identifier, sent to the plugin as invocation_id; distinct from WorkItem.id."
     )
+    runtime_context: RuntimeContext = Field(default_factory=dict, repr=False)
     credential_ref: UUID = Field(
         repr=False,
         description="Opaque AO credential reference bound to the requested recipe.",

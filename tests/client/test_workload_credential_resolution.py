@@ -19,6 +19,7 @@ def _command() -> CredentialResolveWorkload:
         credential_ref=uuid4(),
         credential_recipe_id="acme.echo.api-token",
         step_revision_id="script.v1",
+        runtime_context={"execution_id": str(uuid4()), "temporal_activity_id": "script_iter_0"},
     )
 
 

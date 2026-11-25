@@ -62,6 +62,7 @@ def _resolver(
     loop: asyncio.AbstractEventLoop,
     *,
     work_item_id: UUID | None = None,
+    runtime_context: dict[str, object] | None = None,
     max_concurrent_reads: int = 2,
 ) -> SDKCredentialResolver:
     return SDKCredentialResolver(
@@ -72,6 +73,7 @@ def _resolver(
         attempt_id="work-1-attempt-2",
         invocation_id="work-1",
         step_revision_id="script.v1",
+        runtime_context=runtime_context or {},
         max_concurrent_reads=max_concurrent_reads,
     )
 
@@ -132,6 +134,13 @@ def test_credential_resolver_rejects_bound_recipes_when_resolution_fails() -> No
 def test_credential_resolver_dispatches_an_invocation_scoped_workload_command() -> None:
     work_item_id = uuid4()
     credential_ref = uuid4()
+    runtime_context = {
+        "execution_id": str(uuid4()),
+        "project_id": str(uuid4()),
+        "workflow_id": str(uuid4()),
+        "temporal_activity_id": "script_iter_0",
+    }
+    expected_runtime_context = dict(runtime_context)
     calls: list[dict[str, object]] = []
 
     async def resolve(credential_ref: UUID, recipe_id: str, **kwargs: object) -> dict[str, str]:
@@ -144,7 +153,9 @@ def test_credential_resolver_dispatches_an_invocation_scoped_workload_command() 
             resolve,
             loop,
             work_item_id=work_item_id,
+            runtime_context=runtime_context,
         )
+        runtime_context["temporal_activity_id"] = "mutated-after-construction"
         return resolver(_context())
 
     credential = _run_on_loop(body)
@@ -156,6 +167,7 @@ def test_credential_resolver_dispatches_an_invocation_scoped_workload_command() 
             "work_item_id": work_item_id,
             "attempt_id": "work-1-attempt-2",
             "step_revision_id": "script.v1",
+            "runtime_context": expected_runtime_context,
         }
     ]
 

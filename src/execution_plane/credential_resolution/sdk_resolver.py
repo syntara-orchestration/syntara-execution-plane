@@ -45,6 +45,7 @@ class SDKCredentialResolver:
         attempt_id: str,
         invocation_id: str,
         step_revision_id: str,
+        runtime_context: Mapping[str, object],
         max_concurrent_reads: int = 4,
     ) -> None:
         """Bind resolution to one workload attempt and bound concurrent reads."""
@@ -60,6 +61,7 @@ class SDKCredentialResolver:
         self._attempt_id = attempt_id
         self._invocation_id = invocation_id
         self._step_revision_id = step_revision_id
+        self._runtime_context = dict(runtime_context)
         self._read_slots = threading.BoundedSemaphore(max_concurrent_reads)
 
     def __call__(self, context: CredentialRequestContext) -> Mapping[str, Any]:
@@ -133,6 +135,7 @@ class SDKCredentialResolver:
                 work_item_id=self._work_item_id,
                 attempt_id=self._attempt_id,
                 step_revision_id=self._step_revision_id,
+                runtime_context=self._runtime_context,
             ),
             self._loop,
         )

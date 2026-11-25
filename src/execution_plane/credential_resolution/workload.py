@@ -41,6 +41,7 @@ class WorkloadCredentialResolver:
         work_item_id: UUID,
         attempt_id: str,
         step_revision_id: str,
+        runtime_context: Mapping[str, object],
     ) -> Mapping[str, str]:
         """Resolve one approved recipe for the work item that owns the attempt."""
         if credential_ref == UUID(int=0) or not work_item_id:
@@ -54,6 +55,7 @@ class WorkloadCredentialResolver:
         command = CredentialResolveWorkload(
             work_item_id=work_item_id,
             attempt_id=attempt_id,
+            runtime_context=dict(runtime_context),
             credential_ref=credential_ref,
             credential_recipe_id=credential_recipe_id,
             step_revision_id=step_revision_id,
