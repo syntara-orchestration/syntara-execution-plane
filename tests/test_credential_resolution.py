@@ -156,6 +156,7 @@ async def test_credential_resolver_rejects_document_without_supported_token():
 async def test_credential_resolver_posts_workload_command_and_returns_correlated_document():
     credential_ref = uuid4()
     work_item_id = uuid4()
+    runtime_context = {"execution_id": str(uuid4()), "temporal_activity_id": "script_iter_0"}
     requests: list[httpx.Request] = []
 
     def receive(request: httpx.Request) -> httpx.Response:
@@ -190,6 +191,7 @@ async def test_credential_resolver_posts_workload_command_and_returns_correlated
             work_item_id=work_item_id,
             attempt_id=f"{work_item_id}-2",
             step_revision_id="script.v1",
+            runtime_context=runtime_context,
         )
     finally:
         await credential_client.close()
@@ -201,6 +203,7 @@ async def test_credential_resolver_posts_workload_command_and_returns_correlated
     assert body["command"]["payload"] == {
         "work_item_id": str(work_item_id),
         "attempt_id": f"{work_item_id}-2",
+        "runtime_context": runtime_context,
         "credential_ref": str(credential_ref),
         "credential_recipe_id": "acme.echo.api-token",
         "step_revision_id": "script.v1",

@@ -64,8 +64,9 @@ bindings with distinct recipe IDs and keeps them outside `inputs` and
 `runtime_context`. The SDK stream receives a credential handler configured with
 these bindings. The handler rejects unbound recipes as `missing`, checks the
 request against the active invocation and attempt, and resolves approved recipes
-by sending a `credential.resolve.workload` command to AO with the work item as its 
-parent command. It discards late responses from the syntara API after cancellation 
+by sending a `credential.resolve.workload` command to AO with the work item and its
+stored `runtime_context` for loop-aware correlation. It discards late responses
+from the syntara API after cancellation
 or deadline expiry by the SDK, bounds concurrent reads, maps callback failures to 
 safe `unavailable` errors, and neither caches nor persists credential documents.
 
