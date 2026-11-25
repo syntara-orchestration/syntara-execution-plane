@@ -21,6 +21,7 @@ EP_NAMESPACE="${EP_NAMESPACE:-${AO_NAMESPACE}}"
 EP_API_SERVICE="${EP_API_SERVICE:-${AO_NAME}-execution-plane-api}"
 EP_WORKER_DEPLOY="${EP_WORKER_DEPLOY:-${AO_NAME}-execution-plane-worker}"
 EP_API_FORWARD_PORT="${EP_API_FORWARD_PORT:-18443}"
+AO_WORKER_EP_API_URL="${AO_WORKER_EP_API_URL:-https://${EP_API_SERVICE}.${EP_NAMESPACE}.svc.cluster.local:8443}"
 E2E_DIR="${REPO_ROOT}/tests/e2e"
 EP_JWT_FILE="${EP_AO_JWT_PRIVATE_KEY_FILE:-/tmp/ep-e2e-jwt-primary.pem}"
 EP_CA_FILE="${EP_API_CA_FILE:-/tmp/ep-e2e-ca.pem}"
@@ -109,6 +110,21 @@ _ep_jwt_issuer() {
   printf '%s' "https://0.0.0.0:8000"
 }
 
+_ensure_ao_worker_ep_api_url() {
+  local current
+  current=$(kubectl get deploy "${AO_NAME}-worker" -n "${AO_NAMESPACE}" \
+    -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='APP_EP_API_URL')].value}" \
+    2>/dev/null || true)
+  if [[ -n "${current}" ]]; then
+    return 0
+  fi
+  echo "configuring AO worker Execution Plane API URL" >&2
+  kubectl set env "deploy/${AO_NAME}-worker" -n "${AO_NAMESPACE}" \
+    "APP_EP_API_URL=${AO_WORKER_EP_API_URL}" >/dev/null
+  kubectl rollout status "deploy/${AO_NAME}-worker" -n "${AO_NAMESPACE}" \
+    --timeout="${ROLLOUT_TIMEOUT_SECONDS:-180}s"
+}
+
 _ensure_uv() {
   if command -v uv >/dev/null 2>&1; then
     return 0
@@ -170,6 +186,7 @@ if ! _ep_api_reachable "${ep_base}"; then
   cat /tmp/ep-api-pf.log >&2 || true
   exit 1
 fi
+_ensure_ao_worker_ep_api_url
 _secret_to_file "${AO_NAME}-jwt-primary" "${AO_NAMESPACE}" jwt-primary.pem "${EP_JWT_FILE}"
 _secret_to_file "${AO_NAME}-internal-ca" "${AO_NAMESPACE}" ca.crt "${EP_CA_FILE}"
 ep_issuer=$(_ep_jwt_issuer)
