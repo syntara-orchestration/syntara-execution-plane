@@ -199,6 +199,7 @@ class VanillaK8sWorkerManager(WorkerManagerBase):
             attempt_id=attempt_id,
             invocation_id=attempt_id,
             step_revision_id=command.invocation.step_revision_id,
+            runtime_context=work_item.runtime_context,
         )
         # Correlation for the operational log conduit (AAP-102015): the
         # attempt identity and work item come from EP; the caller-supplied

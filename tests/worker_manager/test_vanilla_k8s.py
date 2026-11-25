@@ -110,6 +110,7 @@ async def test_dispatch_context_binds_credential_resolution_to_the_work_item_att
                 "attempt_id": f"{work_item.id}-{work_item.claim_generation}",
                 "invocation_id": f"{work_item.id}-{work_item.claim_generation}",
                 "step_revision_id": "script.v1",
+                "runtime_context": work_item.runtime_context,
             }
         ]
 

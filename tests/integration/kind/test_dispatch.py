@@ -20,7 +20,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import pytest
-from kubernetes.client import ApiException, BatchV1Api, CoreV1Api, V1Job, V1Pod, V1PodSpec
+from kubernetes.client import ApiException, BatchV1Api, CoreV1Api, V1Job, V1PodSpec
 from structlog.testing import capture_logs
 
 from execution_plane.cluster.cluster_store import ClusterStore
@@ -91,29 +91,6 @@ async def _wait_for_job(batch_api: BatchV1Api, job_name: str, namespace: str, ti
             return job
         if time.monotonic() >= deadline:
             pytest.fail(f"Job {job_name} was not created within {timeout_seconds}s")
-        await asyncio.sleep(0.5)
-
-
-async def _wait_for_running_pod(
-    core_api: CoreV1Api,
-    job_name: str,
-    namespace: str,
-    timeout_seconds: int,
-) -> V1Pod:
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        pods = await asyncio.to_thread(
-            core_api.list_namespaced_pod,
-            namespace,
-            label_selector=f"batch.kubernetes.io/job-name={job_name}",
-            _request_timeout=5,
-        )
-        running_pods = [pod for pod in pods.items if pod.status is not None and pod.status.phase == "Running"]
-        if running_pods:
-            assert len(running_pods) == 1
-            return running_pods[0]
-        if time.monotonic() >= deadline:
-            pytest.fail(f"Job {job_name} had no Running worker Pod within {timeout_seconds}s")
         await asyncio.sleep(0.5)
 
 

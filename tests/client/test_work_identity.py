@@ -44,8 +44,19 @@ def test_work_item_identity_is_required_and_validated(model, value):
 @pytest.mark.parametrize(
     "runtime_context", [[], "text", {"number": float("nan")}, {1: "key"}, {"large": "x" * (512 * 1024)}]
 )
-@pytest.mark.parametrize("model", [WorkExecute, Completion])
+@pytest.mark.parametrize("model", [WorkExecute, Completion, CredentialResolveWorkload])
 def test_runtime_context_requires_bounded_finite_json_object(model, runtime_context):
-    payload = _payload() if model is WorkExecute else {"work_item_id": str(uuid4()), "status": "completed"}
+    if model is WorkExecute:
+        payload = _payload()
+    elif model is Completion:
+        payload = {"work_item_id": str(uuid4()), "status": "completed"}
+    else:
+        payload = {
+            "work_item_id": str(uuid4()),
+            "attempt_id": "attempt-1",
+            "credential_ref": str(uuid4()),
+            "credential_recipe_id": "acme.token",
+            "step_revision_id": "script.v1",
+        }
     with pytest.raises(ValidationError):
         model.model_validate(payload | {"runtime_context": runtime_context})

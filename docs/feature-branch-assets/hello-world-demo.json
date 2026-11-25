@@ -15,10 +15,9 @@
       {
         "id": "script_node",
         "name": "Hello Script",
-        "type": "script",
+        "type": "script_bash",
         "parameters": {
-          "code": "echo 'hello world'",
-          "language": "bash"
+          "code": "echo 'hello world'"
         }
       }
     ],
