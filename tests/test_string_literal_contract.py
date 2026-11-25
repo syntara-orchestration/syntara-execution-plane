@@ -33,6 +33,10 @@ ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "src/execution_plane_client/commands/work.py",
         ("agent.mcp.call", "agent.model.turn"),
     ): "The work invocation grants these exact host operation tags.",
+    (
+        "src/execution_plane_client/commands/work.py",
+        ("error", "input", "output"),
+    ): "The resolved binding uses these schema digest map keys as a closed set.",
 }
 
 

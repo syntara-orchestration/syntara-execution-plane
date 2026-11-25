@@ -77,7 +77,7 @@ def _invoke(
     kwargs.update(overrides)
     invocation = {
         "step_revision_id": "script.v1",
-        "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**60, "null": None},
+        "inputs": {"environment": {"GREETING": "hello"}, "large_integer": 2**53 - 1, "null": None},
         "timeout_seconds": 2,
     }
     if credential_bindings is not None:
@@ -138,7 +138,7 @@ def test_sdk_service_receives_identity_inputs_and_rejects_credential_requests(
 
         assert invocation.step_revision_id == "script.v1"
         assert invocation.inputs["environment"] == {"GREETING": "hello"}
-        assert invocation.inputs["large_integer"] == 2**60
+        assert invocation.inputs["large_integer"] == 2**53 - 1
         assert invocation.inputs["null"] is None
         assert invocation.runtime_context == {"driver": "test"}
         calls.append("execute")
@@ -210,7 +210,7 @@ def test_deliberate_failure_retains_partial_output_and_status_metadata():
         status_code=17,
         status_message="script exited",
         error_result={
-            "code": "SCRIPT_FAILED",
+            "code": "BUSINESS_RULE_FAILED",
             "message": "Script returned nonzero status",
             "retryable": True,
             "category": "business",
@@ -226,7 +226,7 @@ def test_deliberate_failure_retains_partial_output_and_status_metadata():
         "output_schema_digest": _DIGEST,
         "status_code": 17,
         "status_message": "script exited",
-        "error_code": "SCRIPT_FAILED",
+        "error_code": "BUSINESS_RULE_FAILED",
         "error_message": "Script returned nonzero status",
         "retryable": True,
     }
@@ -236,7 +236,12 @@ def test_deliberate_failure_without_output_is_still_a_terminal_failure():
     terminal = ContainerResult(
         _DIGEST,
         status_code=300,
-        error_result={"code": "FAILED", "message": "Failed", "retryable": False, "category": "business"},
+        error_result={
+            "code": "BUSINESS_RULE_FAILED",
+            "message": "Failed",
+            "retryable": False,
+            "category": "business",
+        },
         error_schema_digest="sha256:" + "b" * 64,
     )
     with _server(handler=lambda _: terminal) as channel:

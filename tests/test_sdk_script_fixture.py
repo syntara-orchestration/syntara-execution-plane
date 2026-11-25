@@ -189,7 +189,7 @@ def test_failed_script_returns_terminal_failure() -> None:
     assert result.status_code == 1
     assert result.output["return_code"] == 7
     assert result.error_result is not None
-    assert result.error_result["code"] == "SCRIPT_FAILED"
+    assert result.error_result["code"] == "BUSINESS_RULE_FAILED"
 
 
 def test_credential_is_not_requested_without_opt_in() -> None:

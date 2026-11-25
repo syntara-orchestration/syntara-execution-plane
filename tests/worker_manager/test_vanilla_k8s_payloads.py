@@ -134,7 +134,7 @@ def test_node_result_preserves_partial_output_on_failure() -> None:
             status_code=2,
             status_message="failed",
             error_result={
-                "code": "SCRIPT_EXECUTION_ERROR",
+                "code": "BUSINESS_RULE_FAILED",
                 "message": "node exited with failure",
                 "retryable": True,
                 "category": "business",
@@ -146,7 +146,7 @@ def test_node_result_preserves_partial_output_on_failure() -> None:
 
     with pytest.raises(NodeExecutionError) as exc_info:
         _map_result(frame, {"stdout": "${result.stdout}", "exit_code": "${result.exit_code}"})
-    assert exc_info.value.error_type == "SCRIPT_EXECUTION_ERROR"
+    assert exc_info.value.error_type == "BUSINESS_RULE_FAILED"
     assert exc_info.value.output == {"stdout": "partial", "exit_code": 2}
     assert exc_info.value.details["status_code"] == 2
     assert exc_info.value.details["retryable"] is True
@@ -176,7 +176,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
             output={"stdout": "partial"},
             status_code=status_code,
             error_result={
-                "code": "SCRIPT_FAILED",
+                "code": "BUSINESS_RULE_FAILED",
                 "message": "Script failed",
                 "retryable": False,
                 "category": "business",

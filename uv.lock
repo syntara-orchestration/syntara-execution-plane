@@ -606,7 +606,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "syntara-plugin-contracts", git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git?subdirectory=sdks%2Fpython%2Fpackages%2Fcontracts&rev=ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef" },
+    { name = "syntara-plugin-contracts", git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git?subdirectory=sdks%2Fpython%2Fpackages%2Fcontracts&rev=3beee24d59c62b52b8df5a435a36022682173ab2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 
@@ -1932,10 +1932,11 @@ wheels = [
 [[package]]
 name = "syntara-plugin-contracts"
 version = "0.1.0a7"
-source = { git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git?subdirectory=sdks%2Fpython%2Fpackages%2Fcontracts&rev=ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef#ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef" }
+source = { git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git?subdirectory=sdks%2Fpython%2Fpackages%2Fcontracts&rev=3beee24d59c62b52b8df5a435a36022682173ab2#3beee24d59c62b52b8df5a435a36022682173ab2" }
 dependencies = [
     { name = "grpcio" },
     { name = "jsonschema" },
+    { name = "opentelemetry-api" },
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "pyyaml" },

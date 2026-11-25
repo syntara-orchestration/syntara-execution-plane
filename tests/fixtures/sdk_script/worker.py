@@ -239,7 +239,7 @@ def execute(invocation: ContainerInvocation) -> ContainerResult:
         status_code=1,
         status_message="failed",
         error_result={
-            "code": "SCRIPT_FAILED",
+            "code": "BUSINESS_RULE_FAILED",
             "message": "Script returned nonzero status",
             "retryable": False,
             "category": "business",

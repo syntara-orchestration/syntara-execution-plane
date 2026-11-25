@@ -254,6 +254,7 @@ opentelemetry-api==1.45.2 \
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   syntara-plugin-contracts
 opentelemetry-exporter-http-transport==0.66b2 \
     --hash=sha256:66d6ed810a515432c8891da9a834464332fd70badeca45bdeeae81b4280c903b \
     --hash=sha256:fd5f5b490c099acda1cd7b909d5e8981436bf18cc8c6098d302d114c271720e9
@@ -433,7 +434,7 @@ structlog==26.1.0 \
     --hash=sha256:e081a26d6c373e6d201eca24eede26d8ffab07f88f477822e679183428d3d91e \
     --hash=sha256:f63a716cbd1b1291cf7661de7794b455acfa4c43c5bcf1630e6ad5ddc1adb3b7
     # via execution-plane
-syntara-plugin-contracts @ git+https://github.com/syntara-orchestration/syntara-plugin-sdk.git@ceb974ea4b27c6ecfee1fa14ba771f8ac65763ef#subdirectory=sdks/python/packages/contracts
+syntara-plugin-contracts @ git+https://github.com/syntara-orchestration/syntara-plugin-sdk.git@3beee24d59c62b52b8df5a435a36022682173ab2#subdirectory=sdks/python/packages/contracts
     # via execution-plane
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \

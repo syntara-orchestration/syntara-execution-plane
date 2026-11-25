@@ -32,6 +32,7 @@ def resources(monkeypatch):
     batch, pods, network = Mock(), Mock(), Mock()
     batch.read_namespaced_job.side_effect = ApiException(status=404)
     pods.list_namespaced_pod.return_value.items = []
+    pods.read_namespaced_config_map.side_effect = ApiException(status=404)
     network.read_namespaced_network_policy.side_effect = ApiException(status=404)
     monkeypatch.setattr(resource_cleanup, "api_client_from_cluster", lambda *_: nullcontext(object()))
     monkeypatch.setattr(resource_cleanup.client, "BatchV1Api", lambda _: batch)
