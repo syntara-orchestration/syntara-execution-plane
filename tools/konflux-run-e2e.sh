@@ -197,7 +197,8 @@ ADMIN_PASSWORD="${password}" BASE="${base}" \
   EP_AO_JWT_PRIVATE_KEY_FILE="${EP_JWT_FILE}" \
   EP_AO_JWT_ISSUER="${ep_issuer}" \
   E2E_POLL_TIMEOUT="${E2E_POLL_TIMEOUT:-180}" \
-  uv run --directory "${REPO_ROOT}" --no-project --with "pytest>=9,<10" --with "httpx>=0.28" --with "PyJWT[crypto]>=2.13" -- \
+  uv run --directory "${REPO_ROOT}" --no-project --with "pytest>=9,<10" --with "httpx>=0.28" \
+    --with "PyJWT[crypto]>=2.13" --with "syntara-plugin-contracts==0.1.0a6" -- \
     pytest --confcutdir="${E2E_DIR}" "${E2E_DIR}" \
       -m e2e -v --tb=short --log-cli-level=INFO --color=no
 e2e_rc=$?
