@@ -1,4 +1,4 @@
-.PHONY: install test test-coverage coverage-combine test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target submit-work sync-requirements sync-rpms-lock-yaml
+.PHONY: install test test-coverage coverage-combine test-integration lint format typecheck openapi migrate image secrets certs setup compose-up compose-down generate-token kind-target submit-work sync-requirements sync-runtime-requirements sync-rpms-lock-yaml
 
 TEST_ARGS ?= --ignore=tests/integration
 COVERAGE_FILES ?= coverage-artifacts/*/.coverage
@@ -40,10 +40,16 @@ openapi:
 # Konflux does not read uv.lock; keep these in sync after dependency changes.
 # requirements-build.txt is the PEP 517 backends needed to build those sdists
 # offline (setuptools, hatchling, cython, ...).
-sync-requirements:
+# Runtime requirements are a deterministic export of uv.lock, suitable for CI.
+sync-runtime-requirements:
 	uv export --frozen --python=3.12 --no-dev --no-editable --no-emit-package colorama --no-emit-package execution-plane-client --no-emit-workspace --output-file requirements.txt >/dev/null
 	uv run tools/ci/filter_requirements_hashes.py
-	uvx --from pybuild-deps==0.6.1 --python 3.12 pybuild-deps compile --generate-hashes -o requirements-build.txt requirements.txt
+
+# Explicitly refresh the build lock after dependency changes. This resolves
+# against the current index, so it must not be used as a CI drift check.
+# pip-tools uses pip internals; keep their compatible versions together.
+sync-requirements: sync-runtime-requirements
+	uvx --from pybuild-deps==0.6.1 --with pip==25.3 --with pip-tools==7.6.0 --python 3.12 pybuild-deps compile --generate-hashes -o requirements-build.txt requirements.txt
 
 # Resolve rpms.in.yaml against the runtime UBI image into rpms.lock.yaml.
 # Hermeto uses the lockfile to prefetch RPMs for isolated microdnf installs.

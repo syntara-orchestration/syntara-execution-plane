@@ -63,8 +63,8 @@ jobs:
             exit 1
           fi
 
-  # Regenerates the pinned Python requirements and fails if they differ.
-  # To fix: run `make sync-requirements` and commit the result.
+  # Regenerates the pinned runtime requirements and fails if they differ.
+  # To fix: run `make sync-runtime-requirements` and commit the result.
   requirements-drift:
     runs-on: ubuntu-latest
     steps:
@@ -78,13 +78,11 @@ jobs:
           enable-cache: true
           prune-cache: true
       - run: uv sync --locked --all-groups
-      - name: Create pybuild-deps cache directory
-        run: mkdir -p /home/runner/.cache/pybuild-deps
-      - run: make sync-requirements
+      - run: make sync-runtime-requirements
       - name: Fail if generated requirements have uncommitted changes
         run: |
-          if ! git diff --exit-code -- requirements.txt requirements-build.txt; then
-            echo "requirements files are out of sync. Run 'make sync-requirements' and commit the result."
+          if ! git diff --exit-code -- requirements.txt; then
+            echo "requirements.txt is out of sync. Run 'make sync-runtime-requirements' and commit the result."
             exit 1
           fi
 
