@@ -28,8 +28,8 @@ class WorkCommandHandler:
                     context.workload_image_policy_path,
                 )
             except WorkloadImagePolicyError as error:
-                message = "Workload image was rejected by the installed image policy"
-                raise ValueError(message) from error
+                error_message = "Workload image was rejected by the installed image policy"
+                raise ValueError(error_message) from error
         work_store = WorkStore.from_engine(context.engine)
         item = await work_store.dispatch(
             client_id=context.client_id,

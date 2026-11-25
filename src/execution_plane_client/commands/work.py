@@ -2,10 +2,10 @@
 
 import re
 from enum import StrEnum
-from typing import Annotated, ClassVar, Self
+from typing import Annotated, ClassVar, Self, cast
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, StrictStr, field_validator, model_validator
+from pydantic import ConfigDict, Field, JsonValue, StrictStr, field_validator, model_validator
 
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.models.runtime_context import RuntimeContext
@@ -113,7 +113,9 @@ class WorkExecute(CommandPayload):
                     "if": {
                         "properties": {
                             "invocation": {
-                                "properties": {"step_revision_id": {"enum": sorted(SCRIPT_STEP_IDENTITIES)}},
+                                "properties": {
+                                    "step_revision_id": {"enum": cast("JsonValue", sorted(SCRIPT_STEP_IDENTITIES))}
+                                },
                                 "required": ["step_revision_id"],
                             }
                         },
