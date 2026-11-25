@@ -19,13 +19,13 @@ from urllib.parse import urlencode, urlparse
 import httpx
 import jwt
 
-from execution_plane_client.commands.work import WorkExecute, is_digest_image_reference
+from execution_plane_client.commands.work import WorkExecute
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT_NODE_IMAGE = ""
+_DEFAULT_NODE_IMAGE = "localhost/syntara-sdk-script:dev"
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _POLL_PAUSE_SECONDS = 2.0
 _PRIVATE_KEY_CANDIDATES = (
@@ -55,17 +55,13 @@ DEFAULT_TOKEN_SCOPES = (
 
 DEFAULT_API_URL = "https://127.0.0.1:8001"
 DEFAULT_PROJECT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-DEFAULT_NODE_IMAGE = "EP_NODE_IMAGE must be a fully qualified repository@sha256:digest reference"
+DEFAULT_NODE_IMAGE = _DEFAULT_NODE_IMAGE
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "reconciliation_required"})
 
 
 def default_node_image() -> str:
-    """Return a digest-pinned ``EP_NODE_IMAGE`` or fail before submitting work."""
-    image = os.environ.get("EP_NODE_IMAGE", _DEFAULT_NODE_IMAGE)
-    if not is_digest_image_reference(image):
-        msg = "EP_NODE_IMAGE must be a fully qualified repository@sha256:digest reference"
-        raise ValueError(msg)
-    return image
+    """Return ``EP_NODE_IMAGE`` or the local-dev script node image."""
+    return os.environ.get("EP_NODE_IMAGE", _DEFAULT_NODE_IMAGE)
 
 
 def default_api_url() -> str:

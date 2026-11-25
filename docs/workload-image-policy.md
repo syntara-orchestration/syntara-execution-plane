@@ -49,6 +49,7 @@ Product Security and Release Engineering must provide the production image
 digests and approved public keys; no sample values in this document are release
 approvals.
 
-The local `tools/submit_work_item.py` helper also requires `EP_NODE_IMAGE` or
-`--image` to name a fully qualified digest. Use a digest authorized by the
-installed policy; the helper has no mutable-tag default.
+The local `tools/submit_work_item.py` helper submits a generic `script.v1`
+identity and keeps its existing local-development image default. It is outside
+this policy. The digest and signature requirements above apply to the built-in
+Python and Bash Action identities only.

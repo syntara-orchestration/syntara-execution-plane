@@ -36,7 +36,7 @@ from execution_plane_client.commands.bulk_work import WorkItemSelector
 from execution_plane_client.commands.work import WorkExecute
 from execution_plane_client.models.execution_target import BackendType, KubernetesPlacement
 from execution_plane_client.models.work_item import WorkItemStatus
-from tools.work_item_client import build_payload
+from tools.work_item_client import build_payload, default_node_image
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from execution_plane.models.execution_target import ExecutionTarget
     from execution_plane.models.work_item import WorkItem
 
-_NODE_IMAGE = os.environ.get("EP_NODE_IMAGE", "")
+_NODE_IMAGE = default_node_image()
 _WORKLOAD_WAIT_SECONDS = 5
 _CANCEL_WORKLOAD_WAIT_SECONDS = 15
 _JOB_WAIT_TIMEOUT_SECONDS = 30
