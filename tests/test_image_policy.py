@@ -2,11 +2,16 @@
 
 import json
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
+from unittest.mock import Mock
 
 import pytest
 
-from execution_plane.image_policy import WorkloadImagePolicyError, verify_workload_image
+from execution_plane.image_policy import (
+    WorkloadImagePolicyError,
+    is_script_step_identity,
+    verify_workload_image,
+)
 
 _STEP_IDENTITY = "syntara.script-python.script-python"
 _REPOSITORY = "registry.redhat.io/ansible-automation-platform/ao-python-rhel9"
@@ -73,6 +78,38 @@ def test_workload_image_policy_rejects_keys_outside_policy_directory(tmp_path: P
         verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(policy_path))
 
 
+def test_workload_image_policy_rejects_missing_key_file(tmp_path: Path) -> None:
+    policy_path = _write_policy(tmp_path)
+    (tmp_path / "cosign-redhat.pub").unlink()
+
+    with pytest.raises(WorkloadImagePolicyError, match="key is unavailable"):
+        verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(policy_path))
+
+
+def test_workload_image_policy_rejects_key_path_traversal(tmp_path: Path) -> None:
+    policy_path = _write_policy(tmp_path)
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["actions"][_STEP_IDENTITY]["key_file"] = "../cosign-redhat.pub"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+    with pytest.raises(WorkloadImagePolicyError, match="No valid Cosign verification key"):
+        verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(policy_path))
+
+
+@pytest.mark.parametrize("contents", ["not-json", "[]", '{"version":2,"actions":{}}', '{"version":1,"actions":[]}'])
+def test_workload_image_policy_rejects_unreadable_or_unsupported_policy(tmp_path: Path, contents: str) -> None:
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(WorkloadImagePolicyError):
+        verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(policy_path))
+
+
+def test_workload_image_policy_rejects_missing_policy_file(tmp_path: Path) -> None:
+    with pytest.raises(WorkloadImagePolicyError, match="could not be read"):
+        verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(tmp_path / "missing-policy.json"))
+
+
 def test_workload_image_policy_rejects_digest_not_in_exact_action_approval(tmp_path: Path) -> None:
     policy_path = _write_policy(tmp_path)
     unapproved_digest = _REFERENCE[:-1] + "c"
@@ -95,3 +132,33 @@ def test_workload_image_policy_hides_cosign_output(monkeypatch: pytest.MonkeyPat
         verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(policy_path))
 
     assert "registry credentials" not in str(error.value)
+
+
+def test_workload_image_policy_requires_cosign_binary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    policy_path = _write_policy(tmp_path)
+    monkeypatch.setattr("execution_plane.image_policy.shutil.which", lambda _name: None)
+
+    with pytest.raises(WorkloadImagePolicyError, match="Cosign is required"):
+        verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(policy_path))
+
+
+@pytest.mark.parametrize("failure", [OSError("cosign unavailable"), TimeoutExpired("cosign", 120)])
+def test_workload_image_policy_fails_closed_when_cosign_cannot_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: Exception
+) -> None:
+    policy_path = _write_policy(tmp_path)
+    monkeypatch.setattr("execution_plane.image_policy.shutil.which", lambda _name: "/usr/bin/cosign")
+    monkeypatch.setattr("execution_plane.image_policy.subprocess.run", Mock(side_effect=failure))
+
+    with pytest.raises(WorkloadImagePolicyError, match="Cosign could not verify") as error:
+        verify_workload_image(_STEP_IDENTITY, _REFERENCE, str(policy_path))
+    assert error.value.__cause__ is failure
+
+
+def test_workload_image_policy_does_not_restrict_generic_workloads() -> None:
+    verify_workload_image("custom.script.v1", "registry.example/custom-node:dev", None)
+
+
+def test_script_identity_check_only_matches_builtin_actions() -> None:
+    assert is_script_step_identity(_STEP_IDENTITY)
+    assert not is_script_step_identity("custom.script.v1")
