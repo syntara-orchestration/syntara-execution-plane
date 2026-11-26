@@ -115,4 +115,4 @@ skip_covered = true
 
 [tool.uv.sources]
 execution-plane-client = { path = "src/execution_plane_client", editable = true }
-syntara-plugin-contracts = { git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git", rev = "3beee24d59c62b52b8df5a435a36022682173ab2", subdirectory = "sdks/python/packages/contracts" }
+syntara-plugin-contracts = { git = "https://github.com/syntara-orchestration/syntara-plugin-sdk.git", rev = "8777a54d772d599dd805d1ab1157b566ad0dc055", subdirectory = "sdks/python/packages/contracts" }
