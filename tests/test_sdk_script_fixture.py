@@ -58,16 +58,20 @@ class _RecordingCredentialProvider:
         return _ScopedRecordingCredentialProvider(self._documents, self.reads)
 
 
-def test_sdk_script_image_matches_ep_contracts_release() -> None:
+def test_sdk_script_image_uses_the_ep_contracts_source() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
-    dependency = next(
-        dependency
-        for dependency in project["project"]["dependencies"]
-        if dependency.startswith("syntara-plugin-contracts==")
+    contracts_source = project["tool"]["uv"]["sources"]["syntara-plugin-contracts"]
+    dependency = (
+        "syntara-plugin-contracts @ git+"
+        f"{contracts_source['git']}@{contracts_source['rev']}"
+        f"#subdirectory={contracts_source['subdirectory']}"
     )
     containerfile = (Path(__file__).parent / "fixtures" / "sdk_script" / "Containerfile").read_text()
+    assert "apt-get install -y --no-install-recommends git" in containerfile
     match = re.search(
-        r'^RUN pip install --no-cache-dir "(syntara-plugin-contracts==[^"\n]+)"$', containerfile, re.MULTILINE
+        r'^RUN pip install --no-cache-dir "(syntara-plugin-contracts @ git\+[^"\n]+)"$',
+        containerfile,
+        re.MULTILINE,
     )
 
     assert match is not None
@@ -185,7 +189,7 @@ def test_failed_script_returns_terminal_failure() -> None:
     assert result.status_code == 1
     assert result.output["return_code"] == 7
     assert result.error_result is not None
-    assert result.error_result["code"] == "SCRIPT_FAILED"
+    assert result.error_result["code"] == "BUSINESS_RULE_FAILED"
 
 
 def test_credential_is_not_requested_without_opt_in() -> None:

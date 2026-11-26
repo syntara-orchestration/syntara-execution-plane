@@ -1,11 +1,19 @@
 """Contract checks for the cold-start Job and its workload network policy."""
 
+import base64
+import ipaddress
+
 import pytest
+from cryptography import x509
+from cryptography.x509.oid import ExtendedKeyUsageOID
 from syntara_plugin.runtime import ContainerResult
 
 from execution_plane.worker_manager.vanilla_k8s.manager import NodeExecutionError, _map_result
+from execution_plane.worker_manager.vanilla_k8s.runtime_tls import RuntimeTlsMaterial
 from execution_plane.worker_manager.vanilla_k8s.transport import job_body, network_policy_body
 from execution_plane_client.commands.work import WorkloadInvocation
+
+RUNTIME_TLS_SECRET_NAME = "syntara-node-attempt-tls"  # noqa: S105 - Kubernetes resource name, not a credential.
 
 
 def _invocation() -> WorkloadInvocation:
@@ -25,6 +33,8 @@ def test_job_body_is_a_single_attempt_worker_allocation() -> None:
         _invocation(),
         startup=90,
         grace=15,
+        resolved_execution_config_map="syntara-node-attempt-resolved",
+        runtime_tls_secret=RUNTIME_TLS_SECRET_NAME,
     )
 
     assert job["kind"] == "Job"
@@ -36,6 +46,38 @@ def test_job_body_is_a_single_attempt_worker_allocation() -> None:
     assert pod_spec["automountServiceAccountToken"] is False
     assert pod_spec["activeDeadlineSeconds"] == 165
     assert pod_spec["containers"][0]["image"] == "registry.example/node@sha256:abc"
+    container = pod_spec["containers"][0]
+    environment = {entry["name"]: entry["value"] for entry in container["env"]}
+    assert environment["SYNTARA_RESOLVED_EXECUTION"] == "/run/syntara/resolved.json"
+    assert environment["SYNTARA_RUNTIME_GRPC_TLS_CERT"] == "/run/ep-runtime-tls/server.crt"
+    assert environment["SYNTARA_RUNTIME_GRPC_TLS_KEY"] == "/run/ep-runtime-tls/server.key"
+    assert environment["SYNTARA_RUNTIME_GRPC_TLS_CLIENT_CA"] == "/run/ep-runtime-tls/client-ca.crt"
+    assert {volume["name"] for volume in pod_spec["volumes"]} == {"tmp", "resolved-execution", "runtime-tls"}
+    tls_volume = next(volume for volume in pod_spec["volumes"] if volume["name"] == "runtime-tls")
+    assert tls_volume["secret"]["secretName"] == RUNTIME_TLS_SECRET_NAME
+    assert tls_volume["secret"]["defaultMode"] == 0o444
+    tls_mount = next(mount for mount in container["volumeMounts"] if mount["name"] == "runtime-tls")
+    assert tls_mount["mountPath"] == "/run/ep-runtime-tls"
+    assert tls_mount["readOnly"] is True
+
+
+def test_runtime_tls_material_uses_one_ca_for_mutual_authentication() -> None:
+    material = RuntimeTlsMaterial.create()
+    secret = material.secret_body("worker-tls", "work-item", "attempt-1")
+    data = secret["data"]
+    ca = x509.load_pem_x509_certificate(base64.b64decode(data["client-ca.crt"]))
+    server = x509.load_pem_x509_certificate(base64.b64decode(data["server.crt"]))
+    client = x509.load_pem_x509_certificate(material.client_certificate)
+
+    assert secret["immutable"] is True
+    assert secret["metadata"]["labels"]["execution-plane.syntara.io/attempt"] == "attempt-1"
+    assert server.issuer == ca.subject
+    assert client.issuer == ca.subject
+    server_sans = server.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert server_sans.get_values_for_type(x509.IPAddress) == [ipaddress.ip_address("127.0.0.1")]
+    assert ExtendedKeyUsageOID.SERVER_AUTH in server.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    assert ExtendedKeyUsageOID.CLIENT_AUTH in client.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    assert "client.key" not in data
 
 
 def test_network_policy_allows_dns_and_excludes_forbidden_workload_ranges() -> None:
@@ -92,7 +134,7 @@ def test_node_result_preserves_partial_output_on_failure() -> None:
             status_code=2,
             status_message="failed",
             error_result={
-                "code": "SCRIPT_EXECUTION_ERROR",
+                "code": "BUSINESS_RULE_FAILED",
                 "message": "node exited with failure",
                 "retryable": True,
                 "category": "business",
@@ -104,7 +146,7 @@ def test_node_result_preserves_partial_output_on_failure() -> None:
 
     with pytest.raises(NodeExecutionError) as exc_info:
         _map_result(frame, {"stdout": "${result.stdout}", "exit_code": "${result.exit_code}"})
-    assert exc_info.value.error_type == "SCRIPT_EXECUTION_ERROR"
+    assert exc_info.value.error_type == "BUSINESS_RULE_FAILED"
     assert exc_info.value.output == {"stdout": "partial", "exit_code": 2}
     assert exc_info.value.details["status_code"] == 2
     assert exc_info.value.details["retryable"] is True
@@ -134,7 +176,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
             output={"stdout": "partial"},
             status_code=status_code,
             error_result={
-                "code": "SCRIPT_FAILED",
+                "code": "BUSINESS_RULE_FAILED",
                 "message": "Script failed",
                 "retryable": False,
                 "category": "business",

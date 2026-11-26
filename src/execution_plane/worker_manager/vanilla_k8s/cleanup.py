@@ -41,10 +41,10 @@ def _owned_metadata(metadata: client.V1ObjectMeta | None, item: WorkItem) -> boo
     )
 
 
-def delete_work_item_resources(  # noqa: C901, PLR0911 - verify each resource boundary before deleting
+def delete_work_item_resources(  # noqa: C901, PLR0911, PLR0912 - verify each resource boundary before deleting
     cluster: Cluster, credential: str, namespace: str, item: WorkItem
 ) -> bool:
-    """Request owned Job deletion; confirm no Job/Pods remain before removing policy."""
+    """Request owned Job deletion; confirm no attempt resources remain before completion."""
     name = item.backend_resource_name
     if name is None:
         return False
@@ -90,6 +90,24 @@ def delete_work_item_resources(  # noqa: C901, PLR0911 - verify each resource bo
                 policy_name,
                 namespace,
                 body=client.V1DeleteOptions(preconditions=client.V1Preconditions(uid=str(policy.metadata.uid))),
+                _request_timeout=10,
+            )
+            return False
+        resolved_name = f"{name}-resolved"
+        try:
+            resolved_config = pods.read_namespaced_config_map(resolved_name, namespace, _request_timeout=10)
+        except ApiException as exc:
+            if exc.status != HTTPStatus.NOT_FOUND:
+                raise
+        else:
+            if not _owned_metadata(resolved_config.metadata, item) or not resolved_config.metadata.uid:
+                return False
+            pods.delete_namespaced_config_map(
+                resolved_name,
+                namespace,
+                body=client.V1DeleteOptions(
+                    preconditions=client.V1Preconditions(uid=str(resolved_config.metadata.uid))
+                ),
                 _request_timeout=10,
             )
             return False

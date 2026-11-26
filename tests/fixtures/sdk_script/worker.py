@@ -155,6 +155,10 @@ def _perf_timings_line(*, execute_entered_mono: float) -> str:
 def script_binding() -> StepBinding:
     """Return the trusted public binding for the fixture script step."""
     step = ScriptStep()
+    input_schema = ScriptInput.model_json_schema()
+    input_schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    output_schema = ScriptOutput.model_json_schema()
+    output_schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     installed_step = InstalledStepManifest.from_manifest(
         _STEP_REVISION_ID,
         {
@@ -168,8 +172,8 @@ def script_binding() -> StepBinding:
             "spec": {
                 "integrationType": _INTEGRATION_ID,
                 "runtime": {"kind": "custom-runner", "entryPoint": f"{__name__}:ScriptStep"},
-                "input": {"kind": "inline", "value": ScriptInput.model_json_schema()},
-                "output": {"kind": "inline", "value": ScriptOutput.model_json_schema()},
+                "input": {"kind": "inline", "value": input_schema},
+                "output": {"kind": "inline", "value": output_schema},
             },
         },
         {},
@@ -179,6 +183,10 @@ def script_binding() -> StepBinding:
 
 
 def _credential_targets() -> list[dict[str, object]]:
+    credential_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+    }
     return [
         {
             "apiVersion": "syntara.io/v1alpha1",
@@ -206,7 +214,7 @@ def _credential_targets() -> list[dict[str, object]]:
             "spec": {
                 "id": CREDENTIAL_RECIPE_ID,
                 "integrationType": _INTEGRATION_ID,
-                "credentialSchema": {"kind": "inline", "value": {"type": "object"}},
+                "credentialSchema": {"kind": "inline", "value": credential_schema},
                 "secretFields": ["bearer_token"],
                 "issuance": {"kind": "static-bearer.v1"},
             },
@@ -231,7 +239,7 @@ def execute(invocation: ContainerInvocation) -> ContainerResult:
         status_code=1,
         status_message="failed",
         error_result={
-            "code": "SCRIPT_FAILED",
+            "code": "BUSINESS_RULE_FAILED",
             "message": "Script returned nonzero status",
             "retryable": False,
             "category": "business",

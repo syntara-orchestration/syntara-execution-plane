@@ -24,9 +24,19 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 # (relative path, sorted tuple of the literal's string values) -> reason
 ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
-    # Intentionally empty: every multi-value string Literal has been
-    # converted to StrEnum. Discriminator tags and markers are all
-    # single-value and are not flagged by this contract.
+    # Exact operation tags in the SDK host-operation protocol.
+    (
+        "src/execution_plane_client/commands/agent.py",
+        ("agent.mcp.call", "agent.model.turn"),
+    ): "The SDK host operation field is a closed wire-tag union.",
+    (
+        "src/execution_plane_client/commands/work.py",
+        ("agent.mcp.call", "agent.model.turn"),
+    ): "The work invocation grants these exact host operation tags.",
+    (
+        "src/execution_plane_client/commands/work.py",
+        ("error", "input", "output"),
+    ): "The resolved binding uses these schema digest map keys as a closed set.",
 }
 
 

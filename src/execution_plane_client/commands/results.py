@@ -8,6 +8,7 @@ from uuid import UUID  # noqa: TC003 - Pydantic resolves this model field at run
 
 from pydantic import Field, StrictBool, StrictStr, field_validator
 
+from execution_plane_client.commands.agent import AgentOperationCommandResult
 from execution_plane_client.protocol import ResourceReference, WireModel
 
 MAX_CREDENTIAL_FIELDS = 32
@@ -80,7 +81,10 @@ class TargetHealthCommandResult(WireModel):
 
 
 CommandResult = Annotated[
-    CredentialResolveClusterCommandResult | CredentialResolveWorkloadCommandResult | TargetHealthCommandResult,
+    CredentialResolveClusterCommandResult
+    | CredentialResolveWorkloadCommandResult
+    | TargetHealthCommandResult
+    | AgentOperationCommandResult,
     Field(discriminator="command_type"),
 ]
 
