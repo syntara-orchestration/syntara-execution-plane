@@ -122,7 +122,7 @@ async def test_cleanup_records_completion_only_after_confirmed_absence(resources
         placement=KubernetesPlacement(namespace="namespace"),
         cluster_id=uuid4(),
     )
-    cluster = SimpleNamespace(source_client_id="ao", credential_ref=str(uuid4()))
+    cluster = SimpleNamespace(id=uuid4(), source_client_id="ao", credential_ref=str(uuid4()))
     clusters.get_with_credentials.return_value = cluster
     resolver.resolve.return_value = "test-token"
     cleanup = Mock(return_value=confirmed)
@@ -131,7 +131,7 @@ async def test_cleanup_records_completion_only_after_confirmed_absence(resources
     await resource_cleanup.cleanup_requested_work_item_resources(store, targets, clusters, resolver)
 
     cleanup.assert_called_once_with(cluster, "test-token", "namespace", item)
-    resolver.resolve.assert_awaited_once_with(cluster.credential_ref, client_id="ao")
+    resolver.resolve.assert_awaited_once_with(cluster.credential_ref, resource_id=cluster.id, client_id="ao")
     if confirmed:
         store.update_backend_resource.assert_awaited_once_with(
             item.id,

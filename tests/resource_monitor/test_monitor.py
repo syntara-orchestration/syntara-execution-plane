@@ -73,8 +73,8 @@ class _Resolver:
         self.credential = credential
         self.calls: list[tuple[object, str]] = []
 
-    async def resolve(self, credential_ref: object, *, client_id: str) -> str:
-        self.calls.append((credential_ref, client_id))
+    async def resolve(self, credential_ref: object, *, resource_id: object, client_id: str) -> str:
+        self.calls.append((credential_ref, resource_id, client_id))
         return self.credential
 
 
@@ -149,7 +149,7 @@ async def test_monitor_resolves_the_cluster_reference_before_probing() -> None:
 
     await monitor.scan()
 
-    assert resolver.calls == [(cluster.credential_ref, "syntara-orchestration")]
+    assert resolver.calls == [(cluster.credential_ref, cluster.id, "syntara-orchestration")]
     assert probe.credentials == ["resolved-token"]
 
 

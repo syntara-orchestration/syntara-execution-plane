@@ -1419,6 +1419,10 @@ components:
       description: Work-item states that can be reported by a completion command.
     CredentialResolveCluster:
       properties:
+        resource_id:
+          type: string
+          format: uuid
+          title: Resource Id
         credential_ref:
           type: string
           format: uuid
@@ -1427,6 +1431,7 @@ components:
       additionalProperties: false
       type: object
       required:
+      - resource_id
       - credential_ref
       title: CredentialResolveCluster
       description: Resolve an opaque cluster credential reference into its credential

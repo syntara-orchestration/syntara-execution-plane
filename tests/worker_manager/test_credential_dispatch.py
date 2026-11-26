@@ -31,8 +31,14 @@ async def test_dispatch_resolves_the_cluster_reference_and_passes_the_token_to_k
         cluster, target, work_item = resources
         calls: list[dict[str, Any]] = []
 
-        async def resolve(credential_ref: UUID, *, client_id: str) -> str:
-            calls.append({"credential_ref": credential_ref, "client_id": client_id})
+        async def resolve(credential_ref: UUID, *, resource_id: UUID, client_id: str) -> str:
+            calls.append(
+                {
+                    "credential_ref": credential_ref,
+                    "resource_id": resource_id,
+                    "client_id": client_id,
+                }
+            )
             return "resolved-token"
 
         monkeypatch.setattr(cluster_resolver, "resolve", resolve)
@@ -54,7 +60,11 @@ async def test_dispatch_resolves_the_cluster_reference_and_passes_the_token_to_k
 
     assert result["output"] == {}
     assert result["status_code"] == 0
-    assert calls[0] == {"credential_ref": cluster.credential_ref, "client_id": cluster.source_client_id}
+    assert calls[0] == {
+        "credential_ref": cluster.credential_ref,
+        "resource_id": cluster.id,
+        "client_id": cluster.source_client_id,
+    }
     assert calls[1]["target"]["token"] == "resolved-token"  # noqa: S105
     assert target.credential_ref != cluster.credential_ref
 

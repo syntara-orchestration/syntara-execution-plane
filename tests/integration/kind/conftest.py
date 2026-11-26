@@ -72,10 +72,20 @@ class StaticCredentialResolver(ClusterCredentialResolver):
         """Store the in-memory test credential."""
         self._credential = credential
 
-    async def resolve(self, credential_ref: uuid.UUID, *, client_id: str) -> str:
+    async def resolve(
+        self,
+        credential_ref: uuid.UUID,
+        *,
+        resource_id: uuid.UUID,
+        client_id: str,
+    ) -> str:
         """Return the configured test credential for the integration Cluster."""
-        if credential_ref != _CREDENTIAL_REF or client_id != _KIND_CLIENT_ID:
-            message = "Integration resolver received an unexpected credential reference"
+        if (
+            credential_ref != _CREDENTIAL_REF
+            or resource_id != _KIND_SOURCE_INTEGRATION_ID
+            or client_id != _KIND_CLIENT_ID
+        ):
+            message = "Integration resolver received unexpected cluster credential identity"
             raise CredentialResolutionError(message)
         return self._credential
 

@@ -94,6 +94,7 @@ class ResourceMonitor:
             try:
                 credential = await self._cluster_credential_resolver.resolve(
                     cluster.credential_ref,
+                    resource_id=cluster.id,
                     client_id=cluster.source_client_id,
                 )
             except CredentialResolutionError:

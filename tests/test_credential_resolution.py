@@ -74,6 +74,7 @@ async def test_credential_resolver_context_manager_closes_callback_client() -> N
 @pytest.mark.parametrize("token_field", ["bearer_token", "token", "api_key"])
 async def test_credential_resolver_posts_command_and_returns_extracted_token(token_field: str):
     credential_ref = uuid4()
+    resource_id = uuid4()
     requests: list[httpx.Request] = []
 
     def receive(request: httpx.Request) -> httpx.Response:
@@ -103,7 +104,11 @@ async def test_credential_resolver_posts_command_and_returns_extracted_token(tok
     resolver = ClusterCredentialResolver(settings, credential_client)
 
     try:
-        credential = await resolver.resolve(credential_ref, client_id="syntara-orchestration")
+        credential = await resolver.resolve(
+            credential_ref,
+            resource_id=resource_id,
+            client_id="syntara-orchestration",
+        )
     finally:
         await credential_client.close()
 
@@ -111,7 +116,10 @@ async def test_credential_resolver_posts_command_and_returns_extracted_token(tok
     assert len(requests) == 1
     body = json.loads(requests[0].content)
     assert body["command"]["command_type"] == "credential.resolve.cluster"
-    assert body["command"]["payload"] == {"credential_ref": str(credential_ref)}
+    assert body["command"]["payload"] == {
+        "resource_id": str(resource_id),
+        "credential_ref": str(credential_ref),
+    }
     assert body["source_id"] == "execution-plane"
     assert body["destination_id"] == "syntara-orchestration"
     assert body["scope"]["client_id"] == "syntara-orchestration"
@@ -120,6 +128,7 @@ async def test_credential_resolver_posts_command_and_returns_extracted_token(tok
 @pytest.mark.asyncio
 async def test_credential_resolver_rejects_document_without_supported_token():
     credential_ref = uuid4()
+    resource_id = uuid4()
 
     def receive(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -147,7 +156,11 @@ async def test_credential_resolver_rejects_document_without_supported_token():
 
     try:
         with pytest.raises(CredentialResolutionInvalidError, match="Credential did not resolve to an API token"):
-            await resolver.resolve(credential_ref, client_id="syntara-orchestration")
+            await resolver.resolve(
+                credential_ref,
+                resource_id=resource_id,
+                client_id="syntara-orchestration",
+            )
     finally:
         await credential_client.close()
 
@@ -216,6 +229,7 @@ async def test_credential_resolver_posts_workload_command_and_returns_correlated
 @pytest.mark.asyncio
 async def test_credential_resolver_rejects_an_unrelated_response():
     credential_ref = uuid4()
+    resource_id = uuid4()
     settings = Settings(EP_CREDENTIAL_RESOLUTION_CALLBACK_URL="https://ao.example.test/api/execution_plane/v1/commands")
     callback_client = CallbackHTTPClient(url=settings.credential_resolution_callback_url)
     await callback_client.close()
@@ -241,6 +255,10 @@ async def test_credential_resolver_rejects_an_unrelated_response():
 
     try:
         with pytest.raises(CredentialResolutionMismatchError):
-            await resolver.resolve(credential_ref, client_id="syntara-orchestration")
+            await resolver.resolve(
+                credential_ref,
+                resource_id=resource_id,
+                client_id="syntara-orchestration",
+            )
     finally:
         await credential_client.close()

@@ -31,13 +31,13 @@ class ClusterCredentialResolver:
         self._settings = settings
         self._client = client
 
-    async def resolve(self, credential_ref: UUID, *, client_id: str) -> str:
+    async def resolve(self, credential_ref: UUID, *, resource_id: UUID, client_id: str) -> str:
         """Resolve one reference for the client that owns the Cluster."""
         if credential_ref == UUID(int=0):
             message = "Cluster has no credential_ref"
             logger.warning("Cluster credential resolution rejected an invalid reference", client_id=client_id)
             raise CredentialResolutionInvalidError(message)
-        envelope = CredentialResolveCluster(credential_ref=credential_ref).to_message(
+        envelope = CredentialResolveCluster(resource_id=resource_id, credential_ref=credential_ref).to_message(
             source_id=self._settings.service_jwt_audience,
             destination_id=client_id,
             client_id=client_id,
