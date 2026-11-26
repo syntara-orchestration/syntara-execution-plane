@@ -228,7 +228,7 @@ def test_credential_resolution_payloads_are_documented_without_ingress_handlers(
 
     assert cluster_command["properties"]["command_type"]["const"] == "credential.resolve.cluster"
     assert cluster_command["properties"]["payload"]["$ref"] == "#/components/schemas/CredentialResolveCluster"
-    assert set(components["CredentialResolveCluster"]["required"]) == {"credential_ref"}
+    assert set(components["CredentialResolveCluster"]["required"]) == {"resource_id", "credential_ref"}
     assert command["properties"]["command_type"]["const"] == "credential.resolve.workload"
     assert {"command_type", "command_revision", "payload"} <= set(command["required"])
     assert payload["$ref"] == "#/components/schemas/CredentialResolveWorkload"

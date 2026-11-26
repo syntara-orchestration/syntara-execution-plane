@@ -117,7 +117,11 @@ async def cleanup_requested_work_item_resources(
                 cluster = await cluster_store.get_with_credentials(target.cluster_id)
                 if cluster is None or cluster.source_client_id is None:
                     continue
-                credential = await resolver.resolve(cluster.credential_ref, client_id=cluster.source_client_id)
+                credential = await resolver.resolve(
+                    cluster.credential_ref,
+                    resource_id=cluster.id,
+                    client_id=cluster.source_client_id,
+                )
                 if await asyncio.to_thread(
                     delete_work_item_resources, cluster, credential, target.placement.namespace, item
                 ):

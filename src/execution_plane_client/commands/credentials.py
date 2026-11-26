@@ -7,13 +7,14 @@ from uuid import UUID  # noqa: TC003 - Pydantic evaluates fields.
 
 from pydantic import Field
 
+from execution_plane_client.commands import ResourceIdentity
 from execution_plane_client.commands.base import CommandPayload
 from execution_plane_client.commands.work import CredentialRecipeId, StepIdentity  # noqa: TC001
 from execution_plane_client.models.runtime_context import RuntimeContext  # noqa: TC001
 from execution_plane_client.protocol import Identifier  # noqa: TC001
 
 
-class CredentialResolveCluster(CommandPayload):
+class CredentialResolveCluster(ResourceIdentity, CommandPayload):
     """Resolve an opaque cluster credential reference into its credential document."""
 
     command_type: ClassVar[str] = "credential.resolve.cluster"

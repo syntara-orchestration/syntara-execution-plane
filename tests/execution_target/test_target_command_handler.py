@@ -188,8 +188,8 @@ class _ScopedCredentialResolver:
     async def __aexit__(self, *_exc_info: object) -> None:
         self.events.append("resolver:exit")
 
-    async def resolve(self, credential_ref: UUID, *, client_id: str) -> str:
-        del credential_ref, client_id
+    async def resolve(self, credential_ref: UUID, *, resource_id: UUID, client_id: str) -> str:
+        del credential_ref, resource_id, client_id
         self.events.append("resolver:resolve")
         if self.error is not None:
             raise self.error

@@ -160,6 +160,7 @@ async def test_sdk_result_is_persisted_before_transport_cleanup(monkeypatch, sta
     monkeypatch.setattr(module, "run_job", run_job)
     target = SimpleNamespace(enabled=True, cluster_id=uuid4(), placement=KubernetesPlacement(namespace="ep"))
     cluster = SimpleNamespace(
+        id=uuid4(),
         enabled=True,
         endpoint="https://cluster.test",
         credential_ref=uuid4(),

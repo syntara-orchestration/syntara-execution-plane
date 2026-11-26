@@ -105,7 +105,8 @@ def test_credential_resolution_contract_hides_value_and_receipt_correlates_resul
     from execution_plane_client.commands.results import CredentialResolveClusterCommandResult, TransportReceipt
 
     credential_ref = uuid4()
-    message = CredentialResolveCluster(credential_ref=credential_ref).to_message(
+    resource_id = uuid4()
+    message = CredentialResolveCluster(resource_id=resource_id, credential_ref=credential_ref).to_message(
         source_id="execution-plane",
         destination_id="syntara-orchestration",
         client_id="syntara-orchestration",
@@ -118,7 +119,10 @@ def test_credential_resolution_contract_hides_value_and_receipt_correlates_resul
 
     assert isinstance(payload, CredentialResolveCluster)
     assert payload.credential_ref == credential_ref
-    assert message.command.payload == {"credential_ref": str(credential_ref)}
+    assert message.command.payload == {
+        "resource_id": str(resource_id),
+        "credential_ref": str(credential_ref),
+    }
     assert receipt.message_id == message.message_id
     assert receipt.result is result
     assert "secret-token" not in repr(result)

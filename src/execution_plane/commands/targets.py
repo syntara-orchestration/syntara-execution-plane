@@ -176,6 +176,7 @@ class TargetHealthCommandHandler:
             try:
                 credential = await credential_resolver.resolve(
                     cluster.credential_ref,
+                    resource_id=cluster.id,
                     client_id=context.client_id,
                 )
             except CredentialResolutionError:
